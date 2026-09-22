@@ -168,6 +168,8 @@ export interface AccommodationUpsertInput {
   sortOrder?: number;
   icon?: string | null;
   needsRoomBooking?: boolean;
+  /** Package C — selecting this accommodation makes the request require an ID card. */
+  requiresIdCard?: boolean;
 }
 
 export async function listAccommodations(
@@ -175,7 +177,7 @@ export async function listAccommodations(
 ): Promise<Accommodation[]> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
-    SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon, NeedsRoomBooking
+    SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon, NeedsRoomBooking, RequiresIdCard
     FROM [dbo].[AccTravelAccommodation]
     ${activeOnly ? "WHERE IsActive = 1" : ""} ORDER BY SortOrder, Name
   `);
@@ -187,6 +189,7 @@ export async function listAccommodations(
     requiresCustomReason: !!x.RequiresCustomReason,
     icon: (x.Icon as string) ?? null,
     needsRoomBooking: !!x.NeedsRoomBooking,
+    requiresIdCard: !!x.RequiresIdCard,
   }));
 }
 
@@ -202,16 +205,18 @@ export async function upsertAccommodation(
       .input("sort", sql.Int, row.sortOrder ?? 0)
       .input("icon", sql.NVarChar, row.icon?.trim() || null)
       .input("needRoom", sql.Bit, row.needsRoomBooking ? 1 : 0)
+      .input("requiresIdCard", sql.Bit, row.requiresIdCard ? 1 : 0)
       .input("user", sql.Int, userId || null);
     if (row.id) {
       req.input("id", sql.Int, row.id);
       await req.query(`UPDATE [dbo].[AccTravelAccommodation]
         SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon, NeedsRoomBooking=@needRoom,
+            RequiresIdCard=@requiresIdCard,
             UpdatedAt=SYSDATETIME() WHERE Id=@id`);
     } else {
       await req.query(`INSERT INTO [dbo].[AccTravelAccommodation]
-        (Name,IsActive,SortOrder,Icon,NeedsRoomBooking,CreatedBy)
-        VALUES (@name,@active,@sort,@icon,@needRoom,@user)`);
+        (Name,IsActive,SortOrder,Icon,NeedsRoomBooking,RequiresIdCard,CreatedBy)
+        VALUES (@name,@active,@sort,@icon,@needRoom,@requiresIdCard,@user)`);
     }
   });
 }
@@ -234,6 +239,8 @@ export interface VehicleUpsertInput {
   needsTicketBooking?: boolean;
   needsDepartTime?: boolean;
   needsVehicleRent?: boolean;
+  /** Package C — selecting this vehicle (either leg) makes the request require an ID card. */
+  requiresIdCard?: boolean;
   /** Full replacement list of place names (in order). `undefined` leaves places untouched. */
   places?: string[];
 }
@@ -244,7 +251,7 @@ export async function listVehicles(
   const pool = await getAccPool();
   const r = await pool.request().query(`
     SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon,
-           NeedsDepartureLocations, NeedsTicketBooking, NeedsDepartTime, NeedsVehicleRent
+           NeedsDepartureLocations, NeedsTicketBooking, NeedsDepartTime, NeedsVehicleRent, RequiresIdCard
     FROM [dbo].[AccTravelVehicleOption]
     ${activeOnly ? "WHERE IsActive = 1" : ""} ORDER BY SortOrder, Name
   `);
@@ -259,6 +266,7 @@ export async function listVehicles(
     needsTicketBooking: !!x.NeedsTicketBooking,
     needsDepartTime: !!x.NeedsDepartTime,
     needsVehicleRent: !!x.NeedsVehicleRent,
+    requiresIdCard: !!x.RequiresIdCard,
     places: [],
   }));
   if (vehicles.length) {
@@ -302,6 +310,7 @@ export async function upsertVehicle(
       .input("needTicket", sql.Bit, row.needsTicketBooking ? 1 : 0)
       .input("needTime", sql.Bit, row.needsDepartTime ? 1 : 0)
       .input("needRent", sql.Bit, row.needsVehicleRent ? 1 : 0)
+      .input("requiresIdCard", sql.Bit, row.requiresIdCard ? 1 : 0)
       .input("user", sql.Int, userId || null);
 
     if (row.id) {
@@ -309,20 +318,21 @@ export async function upsertVehicle(
       await req.query(`UPDATE [dbo].[AccTravelVehicleOption]
         SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon,
             NeedsDepartureLocations=@needDep, NeedsTicketBooking=@needTicket,
-            NeedsDepartTime=@needTime, NeedsVehicleRent=@needRent, UpdatedAt=SYSDATETIME()
+            NeedsDepartTime=@needTime, NeedsVehicleRent=@needRent, RequiresIdCard=@requiresIdCard,
+            UpdatedAt=SYSDATETIME()
         WHERE Id=@id`);
     } else if (isUatPass) {
       req.input("id", sql.Int, vehicleId);
       await req.query(`SET IDENTITY_INSERT [dbo].[AccTravelVehicleOption] ON;
         INSERT INTO [dbo].[AccTravelVehicleOption]
-        (Id,Name,IsActive,SortOrder,Icon,NeedsDepartureLocations,NeedsTicketBooking,NeedsDepartTime,NeedsVehicleRent,CreatedBy)
-        VALUES (@id,@name,@active,@sort,@icon,@needDep,@needTicket,@needTime,@needRent,@user);
+        (Id,Name,IsActive,SortOrder,Icon,NeedsDepartureLocations,NeedsTicketBooking,NeedsDepartTime,NeedsVehicleRent,RequiresIdCard,CreatedBy)
+        VALUES (@id,@name,@active,@sort,@icon,@needDep,@needTicket,@needTime,@needRent,@requiresIdCard,@user);
         SET IDENTITY_INSERT [dbo].[AccTravelVehicleOption] OFF;`);
     } else {
       const ins = await req.query(`INSERT INTO [dbo].[AccTravelVehicleOption]
-        (Name,IsActive,SortOrder,Icon,NeedsDepartureLocations,NeedsTicketBooking,NeedsDepartTime,NeedsVehicleRent,CreatedBy)
+        (Name,IsActive,SortOrder,Icon,NeedsDepartureLocations,NeedsTicketBooking,NeedsDepartTime,NeedsVehicleRent,RequiresIdCard,CreatedBy)
         OUTPUT INSERTED.Id
-        VALUES (@name,@active,@sort,@icon,@needDep,@needTicket,@needTime,@needRent,@user)`);
+        VALUES (@name,@active,@sort,@icon,@needDep,@needTicket,@needTime,@needRent,@requiresIdCard,@user)`);
       vehicleId = ins.recordset[0].Id as number;
     }
 
@@ -362,6 +372,8 @@ export interface RentVehicleUpsertInput {
   sortOrder?: number;
   icon?: string | null;
   needsRentBooking?: boolean;
+  /** Package C — selecting this rental makes the request require an ID card. */
+  requiresIdCard?: boolean;
 }
 
 export async function listRentVehicles(
@@ -369,7 +381,7 @@ export async function listRentVehicles(
 ): Promise<RentVehicle[]> {
   const pool = await getAccPool();
   const r = await pool.request().query(`
-    SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon, NeedsRentBooking
+    SELECT Id, Name, IsActive, SortOrder, RequiresCustomReason, Icon, NeedsRentBooking, RequiresIdCard
     FROM [dbo].[AccTravelRentVehicle]
     ${activeOnly ? "WHERE IsActive = 1" : ""} ORDER BY SortOrder, Name
   `);
@@ -381,6 +393,7 @@ export async function listRentVehicles(
     requiresCustomReason: !!x.RequiresCustomReason,
     icon: (x.Icon as string) ?? null,
     needsRentBooking: !!x.NeedsRentBooking,
+    requiresIdCard: !!x.RequiresIdCard,
   }));
 }
 
@@ -413,16 +426,18 @@ export async function upsertRentVehicle(
       .input("sort", sql.Int, row.sortOrder ?? 0)
       .input("icon", sql.NVarChar, row.icon?.trim() || null)
       .input("needRent", sql.Bit, row.needsRentBooking ? 1 : 0)
+      .input("requiresIdCard", sql.Bit, row.requiresIdCard ? 1 : 0)
       .input("user", sql.Int, userId || null);
     if (row.id) {
       req.input("id", sql.Int, row.id);
       await req.query(`UPDATE [dbo].[AccTravelRentVehicle]
         SET Name=@name, IsActive=@active, SortOrder=@sort, Icon=@icon, NeedsRentBooking=@needRent,
+            RequiresIdCard=@requiresIdCard,
             UpdatedAt=SYSDATETIME() WHERE Id=@id`);
     } else {
       await req.query(`INSERT INTO [dbo].[AccTravelRentVehicle]
-        (Name,IsActive,SortOrder,Icon,NeedsRentBooking,CreatedBy)
-        VALUES (@name,@active,@sort,@icon,@needRent,@user)`);
+        (Name,IsActive,SortOrder,Icon,NeedsRentBooking,RequiresIdCard,CreatedBy)
+        VALUES (@name,@active,@sort,@icon,@needRent,@requiresIdCard,@user)`);
     }
   });
 }

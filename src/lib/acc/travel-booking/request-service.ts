@@ -13,9 +13,13 @@ import {
 } from "@/lib/uat-tester/guards";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { allocateRequestNo } from "@/lib/acc/sequence";
-import { queueEmail } from "@/lib/acc/email-queue";
+import { processQueue, queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
+import {
+  IS_ROOM_SHARE_GUEST_COLUMN,
+  roomBookedOrShared,
+} from "@/lib/acc/travel-booking/perdiem-room";
 import { isTravelDateTooSoon } from "@/features/travel-booking/lib/earliest-travel-date";
 import { getPerDiemEmployeeLog } from "@/lib/acc/travel-booking/allowance-log";
 import {
@@ -36,12 +40,23 @@ import { listBrandRegistry } from "@/lib/brand-registry";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import { perDiemLogFor } from "@/lib/acc/travel-booking/perdiem-country";
 import { listPerDiemCountryRates } from "@/lib/acc/travel-booking/perdiem-source";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
+import { continuationFlags, continuationPredecessors, type ChainTrip } from "@/lib/acc/travel-booking/continuation-chain";
+import { loadRequesterTrips } from "@/lib/acc/travel-booking/requester-trips";
+import { rewriteSubmitAffectedTrips } from "@/lib/acc/travel-booking/perdiem-recompute";
+import {
+  applyRoomShareDates,
+  applyRoomShareDeath,
+} from "@/lib/acc/travel-booking/room-share-cascade-apply";
+import { ROOM_SHARE_CASCADE_ACTIONS } from "@/lib/acc/travel-booking/room-share-actions";
+import { applyRoomShareSelection } from "@/lib/acc/travel-booking/room-share-service";
 import type {
   Accommodation,
   BookingDetail,
   BookingType,
   DepartureLocation,
   RentVehicle,
+  RoomShareEvent,
   SaveTravelBookingGroupInput,
   SaveTravelBookingInput,
   TravelBookingApproval,
@@ -146,6 +161,22 @@ function mapTravelBookingRow(
     accommodationName: (t.AccommodationName as string) ?? null,
     accommodationCustomText: (t.AccommodationCustomText as string) ?? null,
     needsRoomBooking: !!t.NeedsRoomBooking,
+    // พักห้องเดียวกับ (package E). Computed by `IS_ROOM_SHARE_GUEST_COLUMN`,
+    // which BOTH readers of this mapper interpolate — a reader that dropped it
+    // would read `!!undefined === false` and price a guest at ฿0 with no error
+    // anywhere, the same failure mode `perdiem-recompute.ts`'s
+    // `PERDIEM_ROW_COLUMNS` doc comment records for `t.NeedsRoomBooking`.
+    isRoomShareGuest: !!r.IsRoomShareGuest,
+    // Display only, and only ever filled by the single-request load — the
+    // same arrangement `continuationFromRequestNo` above has, with the same
+    // reason: the list reads do not pay for the subquery. Nothing prices or
+    // decides anything from either field; `isRoomShareGuest` above is the one
+    // the pricing path reads, and it is a different expression entirely.
+    roomShareHostRequestNo: (r.RoomShareHostRequestNo as string) ?? null,
+    roomShareHostRequestId: (r.RoomShareHostRequestId as number) ?? null,
+    // Filled by `getTravelBookingRequest` after this mapper runs, exactly as
+    // `approvals` and `workLocations` are.
+    roomShareEvents: [],
 
     departDate: t.DepartDate ? toYmd(t.DepartDate as Date) : null,
     returnDate: t.ReturnDate ? toYmd(t.ReturnDate as Date) : null,
@@ -306,6 +337,39 @@ async function loadApprovals(pool: AccPool, requestId: number): Promise<TravelBo
   }));
 }
 
+/**
+ * What a room-share cascade has done to this request (final review I3).
+ *
+ * **Filtered to the three cascade actions by bound parameters**, never a
+ * `LIKE` and never unfiltered: `AccActivityLog` holds every action AP-17 and
+ * the shared engine write, and this list is a deliberately narrow read on the
+ * detail page rather than the beginnings of an activity feed. An unfiltered
+ * read here would put rows on screen whose audience nobody has thought about.
+ *
+ * Oldest first, matching the approval timeline it renders beneath.
+ */
+async function loadRoomShareEvents(pool: AccPool, requestId: number): Promise<RoomShareEvent[]> {
+  const req = pool.request().input("id", sql.Int, requestId);
+  const params: string[] = [];
+  // The SET, from the module that owns it — not three constants listed here,
+  // where a fourth action could be added to the writer and missed.
+  ROOM_SHARE_CASCADE_ACTIONS.forEach((action, i) => {
+    req.input(`rsa${i}`, sql.NVarChar(50), action);
+    params.push(`@rsa${i}`);
+  });
+  const res = await req.query(`SELECT Action, Note, CreatedAt
+                                 FROM [dbo].[AccActivityLog]
+                                WHERE RequestId = @id AND Action IN (${params.join(", ")})
+                                ORDER BY CreatedAt ASC, Id ASC`);
+  return (res.recordset as { Action: string; Note: string | null; CreatedAt: Date | null }[]).map(
+    (x) => ({
+      action: String(x.Action ?? ""),
+      note: x.Note ?? null,
+      createdAt: x.CreatedAt ? x.CreatedAt.toISOString() : "",
+    }),
+  );
+}
+
 /* ─────────────────────────── reads ─────────────────────────── */
 
 /**
@@ -318,30 +382,99 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
     .input("id", sql.Int, id)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .query(`SELECT r.*, e.PhotoUrl AS HrRequesterPhotoUrl, e.PhotoOverrideUrl AS HrRequesterPhotoOverrideUrl,
-              -- The trip whose per diem already covers this one's first day.
-              -- Matched the same way isContinuation was decided at save time:
-              -- the same group, an earlier SortOrder, and a ReturnDate that
-              -- touches this DepartDate. Nearest earlier sibling wins, so a
-              -- group of three trips meeting on one day names the immediate
-              -- predecessor rather than the first of them.
-              (SELECT TOP 1 pr.RequestNo
-                 FROM [dbo].[AccTravelBooking] pt
-                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
-                WHERE pt.GroupKey = mt.GroupKey
-                  AND pt.SortOrder < mt.SortOrder
-                  AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
-              (SELECT TOP 1 pr.Id
-                 FROM [dbo].[AccTravelBooking] pt
-                 INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-                 INNER JOIN [dbo].[AccTravelBooking] mt ON mt.RequestId = r.Id
-                WHERE pt.GroupKey = mt.GroupKey
-                  AND pt.SortOrder < mt.SortOrder
-                  AND pt.ReturnDate = mt.DepartDate
-                ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId
+              cont.RequestNo AS ContinuationFromRequestNo,
+              cont.Id AS ContinuationFromRequestId,
+              -- The host this request shares a room with, for the detail page
+              -- (package E; final review I3). OUTER APPLY rather than two
+              -- scalar subqueries or a JOIN, for the two reasons already
+              -- argued a few lines down and in IS_ROOM_SHARE_GUEST_COLUMN's
+              -- own comment: one row source means the number and the id
+              -- cannot come from different rows, and TOP 1 cannot fan the
+              -- outer row out even if a later edit points the predicate at
+              -- HostRequestId. Display only — nothing prices anything from
+              -- it, and IS_ROOM_SHARE_GUEST_COLUMN below is still what the
+              -- per-diem path reads.
+              -- (No backticks in here: this is inside a template literal.)
+              share.RequestNo AS RoomShareHostRequestNo,
+              share.Id AS RoomShareHostRequestId,
+              ${IS_ROOM_SHARE_GUEST_COLUMN}
             FROM [dbo].[AccRequest] r
             LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = r.StaffId AND e.Status = N'Active'
+            -- The trip whose per diem already covers this one's first day.
+            --
+            -- ONE row source for both columns (fix round 1, 2026-09-22) — the
+            -- two were previously separate scalar subqueries, each free to
+            -- pick a different top row under an ORDER BY regression, which
+            -- named the wrong RequestNo beside the right Id or the reverse.
+            -- OUTER APPLY makes that unrepresentable: both columns now come
+            -- from the same TOP 1 row.
+            --
+            -- Requester-scoped since 2026-09-22, not GroupKey-scoped. Until
+            -- then this read "the same group, an earlier SortOrder, and a
+            -- ReturnDate that touches this DepartDate" — which matched how
+            -- IsContinuation itself was decided at save time when this was
+            -- written, and stopped matching once the continuation chain
+            -- widened to a requester's WHOLE calendar (Tasks 3-5b, then the
+            -- draft-save path too): IsContinuation could read true for a
+            -- predecessor filed in a different booking group while this,
+            -- still GroupKey-scoped, found nothing and named no one — the
+            -- exact "20-24, 24-26 submitted คนละรอบ" case this feature exists
+            -- for.
+            --
+            -- The predicate is requester-trips.ts's / perdiem-dependency-
+            -- load.ts's own: same requester (StaffId OR EmployeeId, each arm
+            -- IS NOT NULL-guarded so a null on one side cannot match a null
+            -- row), FormCode = 'AP-17', Draft excluded — and, because this
+            -- names ONE predecessor rather than listing candidates for a
+            -- caller to filter, Cancelled and Rejected are excluded too: the
+            -- same "alive" notion perdiem-recompute.ts's own alive test and
+            -- date-overlap.ts's alive field both use. A dead trip cannot own
+            -- a day, so it must not be named as the reason one was dropped.
+            -- pt.RequestId <> r.Id keeps a request from matching itself — the
+            -- old SortOrder < comparison provided that for free by comparing
+            -- two different rows; without it, a single-day trip's own
+            -- ReturnDate = DepartDate would otherwise self-match.
+            --
+            -- Ordered nearest-first the way continuationFlags orders (depart
+            -- date, then SortOrder) — matching what the gate and the
+            -- recompute agree the predecessor is, or a requester can be told
+            -- a day was dropped by a trip that did not drop it. Id DESC is a
+            -- FURTHER tiebreak the TypeScript comparators do not have (they
+            -- rely on a stable sort / recordset order instead), added so the
+            -- SQL alone is deterministic.
+            --
+            -- That further tiebreak is reachable only on legacy rows.
+            -- Every candidate here already satisfies pt.ReturnDate =
+            -- mt.DepartDate (the same fixed value), so two candidates tying
+            -- on DepartDate would also share that ReturnDate — the same
+            -- range twice, which is itself an overlap findDateOverlap
+            -- refuses outright for anything submitted after Task 4. So a
+            -- DepartDate tie can only happen among rows filed before that
+            -- refusal existed — duplicate single-day ranges — confirmed by
+            -- running both selection rules over 176,020 generated
+            -- continuation calendars (fix round 1's review) with zero
+            -- mismatches on non-overlapping ones and only duplicate-range
+            -- ties among the legacy overlapping ones.
+            OUTER APPLY (
+              SELECT TOP 1 pr.RequestNo, pr.Id
+                FROM [dbo].[AccTravelBooking] mt
+                INNER JOIN [dbo].[AccTravelBooking] pt ON pt.ReturnDate = mt.DepartDate AND pt.RequestId <> r.Id
+                INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+               WHERE mt.RequestId = r.Id
+                 AND pr.FormCode = @form
+                 AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+                 AND (
+                   (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+                   OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+                 )
+               ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC
+            ) cont
+            OUTER APPLY (
+              SELECT TOP 1 hr2.RequestNo, hr2.Id
+                FROM [dbo].[AccTravelRoomShare] rs
+                INNER JOIN [dbo].[AccRequest] hr2 ON hr2.Id = rs.HostRequestId
+               WHERE rs.GuestRequestId = r.Id
+            ) share
             WHERE r.Id = @id AND r.FormCode = @form`);
   if (headRes.recordset.length === 0) return null;
   const reqRow = headRes.recordset[0] as Record<string, unknown>;
@@ -354,15 +487,25 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
 
   const base = mapTravelBookingRow(reqRow, tbRow);
 
-  const [workLocations, departureLocations, idCardFiles, bookingDetails, approvals] = await Promise.all([
-    loadWorkLocations(pool, travelBookingId),
-    loadDepartureLocations(pool, travelBookingId),
-    loadIdCardFiles(pool, id),
-    loadBookingDetails(pool, travelBookingId, id),
-    loadApprovals(pool, id),
-  ]);
+  const [workLocations, departureLocations, idCardFiles, bookingDetails, approvals, roomShareEvents] =
+    await Promise.all([
+      loadWorkLocations(pool, travelBookingId),
+      loadDepartureLocations(pool, travelBookingId),
+      loadIdCardFiles(pool, id),
+      loadBookingDetails(pool, travelBookingId, id),
+      loadApprovals(pool, id),
+      loadRoomShareEvents(pool, id),
+    ]);
 
-  return { ...base, workLocations, departureLocations, idCardFiles, bookingDetails, approvals };
+  return {
+    ...base,
+    workLocations,
+    departureLocations,
+    idCardFiles,
+    bookingDetails,
+    approvals,
+    roomShareEvents,
+  };
 }
 
 /** All tabs sharing one multi-request submission's GroupKey, ordered by SortOrder. */
@@ -396,7 +539,8 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
         t.GoVehicleId, t.GoVehicleName, t.GoVehicleCustomText, t.GoNeedsDepartureLocations, t.GoNeedsTicketBooking, t.GoNeedsDepartTime, t.GoNeedsVehicleRent,
         t.ReturnVehicleId, t.ReturnVehicleName, t.ReturnVehicleCustomText, t.ReturnNeedsDepartureLocations, t.ReturnNeedsTicketBooking, t.ReturnNeedsDepartTime, t.ReturnNeedsVehicleRent,
         t.RentVehicleId, t.RentVehicleName, t.RentVehicleCustomText, t.NeedsRentBooking, t.RentStartDate, t.RentEndDate,
-        t.Notes, t.IsContinuation, t.PerDiemDays, t.PerDiemTotal, t.GroupKey, t.SortOrder
+        t.Notes, t.IsContinuation, t.PerDiemDays, t.PerDiemTotal, t.GroupKey, t.SortOrder,
+        ${IS_ROOM_SHARE_GUEST_COLUMN}
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
       WHERE r.FormCode = @form AND (r.SubmittedBy = @uid OR r.CreatedBy = @uid)
@@ -405,6 +549,10 @@ export async function listMyTravelBookings(userId: number): Promise<TravelBookin
   return (res.recordset as Record<string, unknown>[]).map((row) => ({
     ...mapTravelBookingRow(row, row),
     workLocations: [], departureLocations: [], idCardFiles: [], bookingDetails: [], approvals: [],
+    // Empty for the same reason the five beside it are: this is the list
+    // read, and it pays for no child collection. `roomShareHostRequestNo` is
+    // null here too, from the mapper — see its own comment.
+    roomShareEvents: [],
   }));
 }
 
@@ -462,14 +610,15 @@ const NAME_TABLES = {
  */
 const NAME_TABLE_FLAGS: Record<keyof typeof NAME_TABLES, string[]> = {
   reason: [],
-  accommodation: ["NeedsRoomBooking"],
+  accommodation: ["NeedsRoomBooking", "RequiresIdCard"],
   vehicle: [
     "NeedsDepartureLocations",
     "NeedsTicketBooking",
     "NeedsDepartTime",
     "NeedsVehicleRent",
+    "RequiresIdCard",
   ],
-  rentVehicle: ["NeedsRentBooking"],
+  rentVehicle: ["NeedsRentBooking", "RequiresIdCard"],
 };
 
 /** One settings-option row: its display name, whether it is still offered, and its flags. */
@@ -483,6 +632,7 @@ export interface SettingOptionRow {
   needsDepartTime: boolean;
   needsVehicleRent: boolean;
   needsRentBooking: boolean;
+  requiresIdCard: boolean;
 }
 
 /**
@@ -519,6 +669,7 @@ async function resolveSettingOption(
     needsDepartTime: flag("NeedsDepartTime"),
     needsVehicleRent: flag("NeedsVehicleRent"),
     needsRentBooking: flag("NeedsRentBooking"),
+    requiresIdCard: flag("RequiresIdCard"),
   };
 }
 
@@ -699,6 +850,28 @@ async function persistDepartureLocations(
  * row pointing at the file had been deleted. See `@/lib/acc/stored-file`.
  */
 async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): Promise<StoredFileRef[]> {
+  /* A HARD DELETE IS A FIFTH CASCADE TRIGGER, and spec §4 names only four —
+     all of them status transitions. This one is not: a `Returned` request its
+     owner discards (or a tab dropped from a group on the next save) can be
+     somebody's room-share host, and simply deleting the binding rows below
+     would leave the guest un-cancelled, un-re-dated and untold, silently
+     pointing at nothing. That is precisely the state the feature exists to
+     prevent, so it cascades exactly as a cancellation does — same actions,
+     same activity rows, same transaction (user ruling, 2026-09-22).
+
+     It runs FIRST, before every delete below, for two reasons. The cascade
+     reads `AccTravelRoomShare` through `loadGuestsOf`, so it must see the rows
+     the delete at the bottom of this function is about to remove; and it can
+     write an `AccActivityLog` row or a per-diem figure onto THIS request when
+     the same person hosts and guests their own two trips in one group —
+     running first means the deletes below clean those up rather than leaving
+     rows pointing at a request that no longer exists.
+
+     Not wrapped in a `try`/`catch`: a delete that commits while the cascade
+     failed is the same silent survival the transaction boundary exists to
+     make impossible. */
+  await applyRoomShareDeath(tx, requestId);
+
   const filesRes = await tx.request().input("rid", sql.Int, requestId)
     .query(`SELECT StoragePath, StorageBackend FROM [dbo].[AccRequestFile] WHERE RequestId=@rid`);
   const paths = (filesRes.recordset as { StoragePath: string; StorageBackend: string | null }[]).map(
@@ -714,6 +887,30 @@ async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): P
   // AccTravelBooking cascade-deletes AccTravelWorkLocation, AccTravelDepartureLocation, AccTravelBookingDetail.
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccTravelBooking] WHERE RequestId=@rid`);
+  /* A room-share binding (AP-17 package E, migration 156) names an AccRequest
+     on BOTH sides and BOTH foreign keys are NO ACTION, so the row below raises
+     a raw foreign-key error unless the binding goes first. This function is
+     reached only for a Draft/Returned request — a discarded draft group, or a
+     tab dropped from a group on the next save — and both sides are genuinely
+     reachable:
+
+       - GuestRequestId: the common one. A requester attaches to a colleague's
+         room while their own request is a draft, then discards that draft.
+       - HostRequestId: only a `Returned` host, never a Draft one — the picker
+         and the attach re-check both refuse a host that has never been filed
+         (`hostHasBeenFiled`, room-share-service.ts). Its guests used to be
+         detached silently here, which was recorded at the time as a gap rather
+         than a decision — the cancel cascade fires on a status transition and
+         a hard delete is not one, so nobody was told. **That gap is closed:**
+         `applyRoomShareDeath` at the top of this function cancels and logs
+         every guest before anything is deleted, so by the time this statement
+         runs the bindings it removes name guests that have already been dealt
+         with. The statement itself is still required, and still names both
+         columns: both foreign keys are NO ACTION, so the `AccRequest` delete
+         below raises unless the binding goes first — the guest's side (a
+         requester discarding their own attached draft) as much as the host's. */
+  await tx.request().input("rid", sql.Int, requestId)
+    .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId=@rid OR HostRequestId=@rid`);
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccRequest] WHERE Id=@rid`);
 
@@ -748,6 +945,52 @@ export async function saveTravelBookingDraft(
 
 
   const pool = await getAccPool();
+
+  // The requester's other LIVE AP-17 trips, across their WHOLE calendar — the
+  // same `loadRequesterTrips` + `continuationFlags` walk `submitTravelBookingGroup`
+  // uses below. Before this, IsContinuation was estimated here from only
+  // `input.tabs[i - 1]` — the previous tab in THIS save, never a trip filed
+  // last week or in a different group — so a resumed draft's on-screen figure
+  // could disagree with what submit actually computes and stores. Tabs already
+  // persisted under THIS group are excluded via `knownIds`, or a resumed draft
+  // would be compared against its own earlier self.
+  //
+  // Read before the transaction, exactly where submit reads it: a small race
+  // against a concurrent save is accepted here as it is there, and this value
+  // is only ever an estimate — submit re-derives and re-stores it
+  // authoritatively regardless of what was saved as a draft.
+  const knownIds = input.tabs.map((t) => t.id).filter((id): id is number => id != null);
+  const otherTripsForDraft = await loadRequesterTrips(pool, {
+    staffId: emp.staffId,
+    employeeId: emp.id,
+    excludeRequestIds: knownIds,
+  });
+  const liveOtherTripsForDraft = otherTripsForDraft.filter(
+    (o) => o.alive && o.departDate && o.returnDate,
+  );
+  // A tab not yet saved has no id to key the chain on — a negative placeholder
+  // stands in, one per tab index. Real AccRequest ids are always positive
+  // (identity starts at 1 in production, 900000 in UAT), so this can never
+  // collide with a real id drawn from `liveOtherTripsForDraft`.
+  const draftChainKey = (i: number): number => input.tabs[i].id ?? -(i + 1);
+  const draftChainTrips: ChainTrip[] = input.tabs
+    .map((t, i) => ({
+      requestId: draftChainKey(i),
+      sortOrder: i,
+      departDate: t.departDate,
+      returnDate: t.returnDate,
+      alive: true,
+    }))
+    .concat(
+      liveOtherTripsForDraft.map((o) => ({
+        requestId: o.requestId,
+        sortOrder: o.sortOrder,
+        departDate: o.departDate,
+        returnDate: o.returnDate,
+        alive: true,
+      })),
+    );
+  const draftContinuationFlags = continuationFlags(draftChainTrips);
 
   // Resolve *Name fields + IsContinuation for every tab up front (small in-run cache
   // to dedupe repeated lookups when multiple tabs share the same reason/province/etc.).
@@ -790,8 +1033,10 @@ export async function saveTravelBookingDraft(
     ]);
     if (invalid) throw new Error(invalidOptionMessage(invalid));
 
-    const prev = i > 0 ? input.tabs[i - 1] : null;
-    const isContinuation = !!(prev && tab.departDate && prev.returnDate && tab.departDate === prev.returnDate);
+    // Requester-wide, not just this save's previous tab — see `draftContinuationFlags`
+    // above. A trip filed last week (or in a different group) whose return date
+    // meets this one's depart date still owns the day, exactly as it does at submit.
+    const isContinuation = draftContinuationFlags.get(draftChainKey(i)) ?? false;
     resolvedTabs.push({
       tab,
       names: {
@@ -827,12 +1072,31 @@ export async function saveTravelBookingDraft(
   try {
     // Existing tabs in this group (if editing) — guard ownership + status.
     const existingRes = await tx.request().input("gk", sql.NVarChar(40), groupKey)
-      .query(`SELECT t.Id AS TravelBookingId, t.RequestId, r.CreatedBy, r.Status
+      // DepartDate/ReturnDate are read here and nowhere else: they are the
+      // "before" half of the room-share date cascade below, and `BOOKING_SET`
+      // overwrites them a few lines later, so after `upsertTravelBooking` has
+      // run there is nothing left to compare the new dates against.
+      .query(`SELECT t.Id AS TravelBookingId, t.RequestId, r.CreatedBy, r.Status,
+                     t.DepartDate, t.ReturnDate
               FROM [dbo].[AccTravelBooking] t
               INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
               WHERE t.GroupKey = @gk`);
-    const existingRows = existingRes.recordset as
-      { TravelBookingId: number; RequestId: number; CreatedBy: number | null; Status: string }[];
+    const existingRows = existingRes.recordset as {
+      TravelBookingId: number;
+      RequestId: number;
+      CreatedBy: number | null;
+      Status: string;
+      DepartDate: Date | null;
+      ReturnDate: Date | null;
+    }[];
+    /** RequestId → the dates this tab held before this save, 'YYYY-MM-DD' or null. */
+    const datesBefore = new Map<number, { depart: string | null; return: string | null }>();
+    for (const row of existingRows) {
+      datesBefore.set(row.RequestId, {
+        depart: row.DepartDate ? toYmd(row.DepartDate) : null,
+        return: row.ReturnDate ? toYmd(row.ReturnDate) : null,
+      });
+    }
 
     if (input.id) {
       if (existingRows.length === 0) throw new Error("ไม่พบคำขอฉบับร่างนี้");
@@ -926,6 +1190,87 @@ export async function saveTravelBookingDraft(
       await persistWorkLocations(tx, travelBookingId, tab.workLocations ?? []);
       await persistDepartureLocations(tx, travelBookingId, tab.departureLocations ?? []);
 
+      /* THE ROOM-SHARE BINDING (AP-17 package E, reworked 2026-09-22).
+         พักห้องเดียวกับ is tab state now, so this is where it is persisted —
+         there is no attach endpoint any more, and `applyRoomShareSelection`'s
+         own docblock carries the whole argument for that move.
+
+         **ABSENT means "leave the stored row alone", and only an explicit
+         null clears it.** `roomShareHostFieldFor` on the client is the one
+         place that decides which a tab posts; here the test is `!== undefined`
+         rather than a truthiness check, because `null` and absent must not
+         collapse — the same distinction the API-key PATCH draws for
+         `expiresAt`, and with more at stake: collapsing them would delete a
+         binding on an ordinary save of a tab nobody had touched.
+
+         **AFTER `upsertTravelBooking`, and that ordering is load-bearing.**
+         A guest books nothing themselves (spec §1), which
+         `clearGuestOwnAccommodation` enforces inside this same transaction —
+         run before the upsert, the four columns it clears would simply be
+         written back from the posted tab a statement later.
+
+         **Order against the date cascade below does not matter**, which is
+         worth saying because it looks as though it should: the cascade acts on
+         THIS request's guests, and a request that is a guest can have none —
+         `canAttach` refuses `guest_already_hosts` — so for a tab that attaches
+         here the cascade is a no-op either way.
+
+         A refusal throws, rolling the whole save back. That is deliberate and
+         is the same treatment a retired accommodation or vehicle option gets
+         (`invalidOptionMessage` a few dozen lines up): the requester is told
+         the policy's own Thai sentence — the host was cancelled, it is
+         somebody else's guest, it books no room — and clears the choice. The
+         alternative, dropping the binding quietly and saving the rest, is the
+         silent-wrong-state this feature exists to prevent. */
+      if (tab.roomShareHostRequestId !== undefined) {
+        await applyRoomShareSelection(tx, {
+          guestRequestId: finalRequestId,
+          hostRequestId: tab.roomShareHostRequestId,
+          userId,
+        });
+      }
+
+      /* THE ROOM-SHARE DATE CASCADE (AP-17 package E, spec §4). `BOOKING_SET`
+         above is the only writer of DepartDate/ReturnDate in `src/`, so this
+         is the only place a host's dates can move, and the cascade belongs
+         beside it — inside this transaction, so a save that commits new dates
+         while failing to move its guests' is impossible.
+
+         The trigger is narrow on purpose, three conditions deep:
+
+         - `requestId` — an existing tab. A row inserted moments ago cannot be
+           anybody's host, so a first save never pays for this read;
+         - the dates actually CHANGED. `cascadeForHostDates` would skip a guest
+           already on the host's dates anyway, but a guest who is NOT on them —
+           because they attached before any cascade ran — would otherwise be
+           re-dated by a save that touched only the work detail, and handed an
+           activity row claiming the host had changed its dates when it had
+           not;
+         - both new dates are PRESENT. A draft save legitimately passes through
+           a half-filled state, and following a host into a blank date range is
+           worse than not following at all.
+
+         A host can only reach here while `Returned` — the guard above admits
+         Draft/Returned, and `hostHasBeenFiled` refuses a Draft host — so this
+         is specifically "a Returned host is edited and saved again". The
+         host's own change goes back through its manager on resubmit; only the
+         GUEST's approval is not reset, which is exactly what spec §2 accepted
+         for throughput. */
+      const before = requestId ? datesBefore.get(finalRequestId) : undefined;
+      const newDepart = tab.departDate || null;
+      const newReturn = tab.returnDate || null;
+      if (
+        before &&
+        newDepart &&
+        newReturn &&
+        (before.depart !== newDepart || before.return !== newReturn)
+      ) {
+        await applyRoomShareDates(tx, finalRequestId, {
+          depart: newDepart,
+          return: newReturn,
+        });
+      }
+
       keptRequestIds.add(finalRequestId);
       requestIds.push(finalRequestId);
     }
@@ -946,6 +1291,18 @@ export async function saveTravelBookingDraft(
   // After the commit, and reported rather than swallowed — the rows that named
   // these objects are already gone, so the log is the only remaining record.
   await deleteStoredFiles(removedFilePaths, "AP-17 saveTravelBookingGroup removed tabs");
+
+  /* Both room-share cascades can fire inside the transaction above — the date
+     cascade when a Returned host's dates move, the death cascade when a tab is
+     dropped from the group — and each queues its notices on `tx`
+     (`room-share-notify.ts`). Unlike every approve/reject/cancel path, this
+     one has no route-level drain, so without this the guest whose trip was
+     just cancelled or re-dated would wait for somebody else's action to flush
+     the queue. Unconditional rather than gated on whether a cascade ran: an
+     empty queue costs one `SELECT TOP 20`, and threading a "did anything
+     queue" flag out through `collectAndDeleteRequestArtifacts`'s return type
+     is more moving parts than the read it would save. */
+  void processQueue().catch(() => {});
 
   return { groupKey, requestIds };
 }
@@ -985,6 +1342,12 @@ export async function deleteTravelBookingDraft(groupKey: string, userId: number)
   }
 
   await deleteStoredFiles(allPaths, "AP-17 deleteTravelBookingDraft");
+
+  // The hard delete is the cascade's fifth trigger (see
+  // `collectAndDeleteRequestArtifacts`), so discarding a Returned host cancels
+  // its guests and queues their notices on that transaction. This route has no
+  // drain of its own either — same reasoning as `saveTravelBookingDraft`'s.
+  void processQueue().catch(() => {});
 }
 
 /* ─────────────────────────── validation + submit (Task 5) ─────────────────────────── */
@@ -1009,6 +1372,20 @@ export async function loadTravelBookingSettingsMaps(): Promise<TravelBookingSett
     vehicleById: new Map(vehicles.map((v) => [v.id, v])),
     rentVehicleById: new Map(rentVehicles.map((v) => [v.id, v])),
   };
+}
+
+/**
+ * One selected option out of its settings map, as `deriveBookingFlags` wants it.
+ *
+ * Nothing selected and an id naming no row collapse to the same `null`, which
+ * is the answer `deriveBookingFlags` already documents for a null option: it
+ * contributes nothing. An id that names no row cannot reach a submit anyway —
+ * `saveTravelBookingDraft` refuses one through `firstInvalidOption` before the
+ * draft is ever written.
+ */
+function settingOptionFor<T>(map: Map<number, T>, id: number | null | undefined): T | null {
+  if (id == null) return null;
+  return map.get(id) ?? null;
 }
 
 /**
@@ -1061,8 +1438,27 @@ export function validateTravelBookingTab(
   if (tab.returnNeedsDepartTime && !tab.returnTime) return fail("กรุณาระบุเวลาออกเดินทางขากลับ");
 
   // ข้อ10 — ที่พักค้างคืน
-  if (!tab.accommodationId) return fail("กรุณาเลือกที่พักค้างคืน");
-  if (settings.accommodationById.get(tab.accommodationId)?.requiresCustomReason && !tab.accommodationCustomText?.trim()) {
+  //
+  // **Unless this request is a พักห้องเดียวกับ guest** (AP-17 package E, spec
+  // §1). Attaching to a colleague's booking REPLACES choosing an accommodation
+  // — the guest "books nothing themselves" — so `AccommodationId` is null by
+  // design on exactly those rows, and `deriveBookingFlags` reads that as
+  // `NeedsRoomBooking = false`, which is correct: the Admin desk has no room
+  // to book for them. They are paid all the same, through
+  // `roomBookedOrShared`.
+  //
+  // `isRoomShareGuest` is read off the persisted row this validator was handed
+  // (`IS_ROOM_SHARE_GUEST_COLUMN`), never off a posted DTO — the same rule
+  // `needsRoomBooking` beside it follows. The form's own `validateTab`
+  // (`useTravelBookingForm.ts`) carries the identical arm so the two cannot
+  // disagree about whether a guest's tab is complete; this one is the real
+  // check.
+  if (!tab.accommodationId) {
+    if (!tab.isRoomShareGuest) return fail("กรุณาเลือกที่พักค้างคืน");
+  } else if (
+    settings.accommodationById.get(tab.accommodationId)?.requiresCustomReason &&
+    !tab.accommodationCustomText?.trim()
+  ) {
     return fail("กรุณาระบุที่พักค้างคืนเพิ่มเติม");
   }
 
@@ -1106,52 +1502,119 @@ export function validateTravelBookingTab(
     }
   }
 
-  // ข้อ17 — แนบบัตรประชาชน (>=1)
-  if (!tab.idCardFiles || tab.idCardFiles.length === 0) {
-    return fail("กรุณาแนบรูปบัตรประชาชนอย่างน้อย 1 ไฟล์");
+  // ข้อ17 — แนบบัตรประชาชน หรือ Passport (>=1), **only when one of the options
+  // this trip selected is configured to ask for one** (package C, migration
+  // 154's `RequiresIdCard` on the three option tables).
+  //
+  // **Derived from the persisted option rows, never from the posted tab.**
+  // `settings` is `loadTravelBookingSettingsMaps()`, read straight out of
+  // `AccTravelAccommodation` / `AccTravelVehicleOption` / `AccTravelRentVehicle`
+  // — the same authority `resolveSettingOption` hands the draft-save path — and
+  // `deriveBookingFlags` is the one rule both sides run. Its docblock says why a
+  // posted flag cannot be believed, and the reason is unchanged here: a request
+  // posting `needsIdCard: false` beside a hotel that requires one must not be
+  // believed.
+  //
+  // **This changes WHEN a card is asked for, never HOW one is judged.** Where
+  // one is required, the 2026-08-24 fail-closed rule still stands — an image
+  // the check could not verify never becomes a file, so an empty
+  // `tab.idCardFiles` is exactly what an unverified upload leaves behind.
+  const needsIdCard = deriveBookingFlags({
+    accommodation: settingOptionFor(settings.accommodationById, tab.accommodationId),
+    goVehicle: settingOptionFor(settings.vehicleById, tab.goVehicleId),
+    returnVehicle: settingOptionFor(settings.vehicleById, tab.returnVehicleId),
+    rentVehicle: settingOptionFor(settings.rentVehicleById, tab.rentVehicleId),
+  }).needsIdCard;
+  if (needsIdCard && (!tab.idCardFiles || tab.idCardFiles.length === 0)) {
+    return fail("กรุณาแนบรูปบัตรประชาชน หรือ Passport อย่างน้อย 1 ไฟล์");
   }
 
   return { ok: true };
 }
 
 /**
- * The requester's other travel-date ranges — excludes a given group and any rejected/cancelled
- * requests — used to block overlapping trips. Returns YYYY-MM-DD [depart, return] pairs.
+ * The requester's other travel-date ranges — excludes a given group and any
+ * rejected/cancelled requests — used to block overlapping trips in the date
+ * picker. Returns YYYY-MM-DD [depart, return] pairs. **Drafts are included on
+ * purpose**: the picker locks days a requester's OWN unfinished trip already
+ * occupies, so two tabs open at once cannot be walked into overlapping dates
+ * before either is submitted.
+ *
+ * **`requestId`/`requestNo`/`status` travel with the dates** so a caller can
+ * run the same `findDateOverlap` the server's submit does, and name which
+ * request a clash belongs to — not only that one exists. **`status` is not
+ * decoration**: `findDateOverlap`'s refusal must match `loadRequesterTrips`'
+ * (`requester-trips.ts`), the loader submit actually refuses against, and
+ * that loader excludes `Draft` outright (`r.Status <> 'Draft'`) — a Draft
+ * will never be paid and may never even be finished, so it must not block a
+ * DIFFERENT submission the server would accept. This query cannot exclude
+ * Draft in its own WHERE clause without also removing it from the picker's
+ * day-lock above, which needs it; the two uses read the same rows and decide
+ * "alive, for this purpose" differently from `status`.
+ *
+ * **`sortOrder` travels too (Task 8 fix round 1)**, the same
+ * `AccTravelBooking.SortOrder` column `loadRequesterTrips` selects for the
+ * server's own continuation chain. Without it, the client's live per-diem
+ * estimate had no real depart-date tiebreak for the requester's OTHER trips
+ * to feed `continuationFlags` (`continuation-chain.ts`) — see
+ * `perdiem-estimate-inputs.ts`'s `buildEstimateChainTrips`, its only reader.
  */
 export async function listTravelBookingDateRanges(
   staffId: number,
   excludeGroupKey: string | null,
-): Promise<{ departDate: string; returnDate: string }[]> {
+): Promise<
+  {
+    departDate: string;
+    returnDate: string;
+    requestId: number;
+    requestNo: string | null;
+    status: string;
+    sortOrder: number;
+  }[]
+> {
   if (!staffId) return [];
   const pool = await getAccPool();
   const res = await pool.request()
     .input("staff", sql.Int, staffId)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
     .input("gk", sql.NVarChar(40), excludeGroupKey)
-    .query(`SELECT t.DepartDate, t.ReturnDate
+    .query(`SELECT t.DepartDate, t.ReturnDate, t.SortOrder, r.Id AS RequestId, r.RequestNo, r.Status
             FROM [dbo].[AccTravelBooking] t
             INNER JOIN [dbo].[AccRequest] r ON r.Id = t.RequestId
             WHERE r.FormCode = @form AND r.StaffId = @staff
               AND r.Status NOT IN ('Rejected', 'Cancelled')
               AND t.DepartDate IS NOT NULL AND t.ReturnDate IS NOT NULL
               AND (@gk IS NULL OR t.GroupKey <> @gk)`);
-  return (res.recordset as { DepartDate: Date; ReturnDate: Date }[]).map((row) => ({
+  return (
+    res.recordset as {
+      DepartDate: Date;
+      ReturnDate: Date;
+      RequestId: number;
+      RequestNo: string | null;
+      Status: string;
+      SortOrder: number | null;
+    }[]
+  ).map((row) => ({
     departDate: toYmd(row.DepartDate),
     returnDate: toYmd(row.ReturnDate),
+    requestId: row.RequestId,
+    requestNo: row.RequestNo ?? null,
+    status: row.Status,
+    sortOrder: row.SortOrder ?? 0,
   }));
-}
-
-/** Two closed date ranges overlap by ≥2 days. Touching at a single boundary day is allowed. */
-export function travelRangesConflict(a1: string, a2: string, b1: string, b2: string): boolean {
-  return a1 < b2 && b1 < a2;
 }
 
 /**
  * Submit every tab (Draft/Returned) of a multi-request draft group as N independent
- * documents: validate every tab, detect continuation (SortOrder order), compute per-diem,
- * allocate one running number per tab, transition each Draft/Returned → Submitted, create
- * the MANAGER approval step, log, and queue one "Submitted" email per request to the
- * shared manager. Returns the N submitted requests (re-read after commit).
+ * documents: validate every tab, detect continuation across the requester's whole
+ * calendar (depart date order, `SortOrder` a tiebreak only — not the SortOrder order
+ * this comment described before 2026-09-21), compute per-diem, allocate one running
+ * number per tab, transition each Draft/Returned → Submitted, create the MANAGER
+ * approval step, log, and queue one "Submitted" email per request to the shared
+ * manager. **Since 2026-09-22 (I1) it also rewrites any of the requester's OTHER
+ * live trips whose continuation flag this submission changes** — see
+ * `rewriteSubmitAffectedTrips` below, after the main per-tab loop. Returns the N
+ * submitted requests (re-read after commit).
  */
 export async function submitTravelBookingGroup(
   groupKey: string,
@@ -1208,28 +1671,74 @@ export async function submitTravelBookingGroup(
     }
   }
 
-  // No overlapping travel dates for this requester (rejected/cancelled excluded; two trips may
-  // still share a single boundary day — continuation).
-  const existingRanges = await listTravelBookingDateRanges(emp.staffId, groupKey);
+  // No overlapping travel dates — checked against every other live AP-17
+  // request of this person, whether it is this submission's own sibling tab
+  // or one already sitting in the database. **One rule governs both, via
+  // `findDateOverlap`.** Before this fix, the intra-group half ran on
+  // `travelRangesConflict` — strict on both sides (`a1 < b2 && b1 < a2`), so a
+  // same-day trip sitting exactly on a sibling's RETURN date passed
+  // ("20–24" + "24–24" → `20<24 && 24<24` → false, allowed) while the
+  // identical collision against an already-submitted request was refused by
+  // the new rule below. That let a requester get a free duplicate day simply
+  // by putting both trips in one submission instead of filing them
+  // separately — a hole in the rule, not a difference of scope, so both
+  // halves now go through the same check.
+  //
+  // **Refused before the transaction opens**: an overlap is a property of the
+  // request as filed, so nothing should be claimed, numbered or written
+  // before it is checked, and the requester gets the same answer whether they
+  // are first or tenth in the queue today. One shared boundary day is allowed
+  // — the previous trip's return date may equal this one's depart date, or
+  // the reverse — `findDateOverlap` owns that rule and is tested on it; only
+  // the aliveness of the DATES is filtered here, `findDateOverlap` owns the
+  // live/dead rule itself.
+  const others = await loadRequesterTrips(pool, {
+    staffId: emp.staffId ?? null,
+    employeeId: emp.id ?? null,
+    excludeRequestIds: tabs.map((t) => t.id as number),
+  });
+  const datedOthers = others.filter((o) => o.departDate && o.returnDate);
+  const overlapInput: OtherTrip[] = datedOthers.map((o) => ({
+    requestId: o.requestId,
+    requestNo: o.requestNo,
+    departDate: o.departDate as string,
+    returnDate: o.returnDate as string,
+    alive: o.alive,
+  }));
   for (let i = 0; i < tabs.length; i++) {
-    const d1 = tabs[i].departDate;
-    const r1 = tabs[i].returnDate;
-    if (!d1 || !r1) continue;
-    for (let j = i + 1; j < tabs.length; j++) {
-      const d2 = tabs[j].departDate;
-      const r2 = tabs[j].returnDate;
-      if (d2 && r2 && travelRangesConflict(d1, r1, d2, r2)) {
-        throw new Error(`ช่วงวันเดินทางของทริปที่ ${i + 1} ซ้อนทับกับทริปที่ ${j + 1} — เลือกช่วงวันที่ไม่ให้ซ้อนกัน`);
-      }
-    }
-    for (const ex of existingRanges) {
-      if (travelRangesConflict(d1, r1, ex.departDate, ex.returnDate)) {
-        throw new Error(`ช่วงวันเดินทางของทริปที่ ${i + 1} (${d1} – ${r1}) ซ้อนทับกับคำขออื่นของผู้ขอเบิกที่มีอยู่แล้ว`);
-      }
+    if (!tabs[i].departDate || !tabs[i].returnDate) continue;
+    // Every OTHER tab of this same submission — always "alive" for this
+    // purpose, since none of them is Cancelled/Rejected while being filed.
+    // `requestNo` is null for a tab not yet submitted; `findDateOverlap`
+    // already renders that as "คำขอฉบับร่าง", which is the correct label for
+    // a sibling that has not been numbered yet.
+    const siblings: OtherTrip[] = tabs
+      .filter((_, j) => j !== i)
+      .filter((t) => t.departDate && t.returnDate)
+      .map((t) => ({
+        requestId: t.id ?? 0,
+        requestNo: t.requestNo ?? null,
+        departDate: t.departDate as string,
+        returnDate: t.returnDate as string,
+        alive: true,
+      }));
+    const clash = findDateOverlap(
+      { departDate: tabs[i].departDate as string, returnDate: tabs[i].returnDate as string },
+      siblings.concat(overlapInput),
+    );
+    if (clash) {
+      throw new Error(tabs.length > 1 ? `(คำขอที่ ${i + 1}) ${clash.message}` : clash.message);
     }
   }
+  // Live only, from here on — this feeds the continuation chain below, which
+  // (like `continuation-chain.ts` everywhere else) must never let a dead trip
+  // go on absorbing a day nobody will be paid for.
+  const liveOthers = datedOthers.filter((o) => o.alive);
 
-  // Continuation detection + per-diem, over the SortOrder-ordered tabs.
+  // Continuation detection + per-diem. The chain now spans this person's
+  // WHOLE calendar, not just this submission's own group — a trip filed last
+  // week whose return date meets this one's depart date still owns that day.
+  // `continuationFlags` orders by depart date for exactly this reason.
   //
   // TWO queries, not two per tab. The employee's HR log is one per person and
   // the country rates are one list; the country itself is per TAB, because a
@@ -1243,21 +1752,83 @@ export async function submitTravelBookingGroup(
     getPerDiemEmployeeLog(emp.id, emp.staffId ?? null, uat),
     listPerDiemCountryRates(),
   ]);
-  const continuationFlags: boolean[] = [];
+
+  // Every trip with a null depart/return date is excluded before it can reach
+  // this array: `tabs` was already required to carry both dates by
+  // `validateTravelBookingTab` above, and `liveOthers` descends from
+  // `datedOthers`, which dropped anything with either date missing. A
+  // live-but-undated row can therefore never sort to the front of
+  // `continuationFlags`' chronological walk and be picked up as a false
+  // predecessor.
+  const chainTrips: ChainTrip[] = tabs
+    .map((t, i) => ({
+      requestId: t.id as number,
+      sortOrder: i,
+      departDate: t.departDate as string,
+      returnDate: t.returnDate as string,
+      alive: true,
+    }))
+    .concat(
+      liveOthers.map((o) => ({
+        requestId: o.requestId,
+        sortOrder: o.sortOrder,
+        departDate: o.departDate as string,
+        returnDate: o.returnDate as string,
+        alive: true,
+      })),
+    );
+  const flagsByRequest = continuationFlags(chainTrips);
+  // Who each trip's own nearest predecessor is — needed only to name the
+  // right cause when an EXISTING trip (a `liveOthers` row) gets rewritten
+  // below, never for the tabs' own IsContinuation, which flagsByRequest
+  // already answers. See the rewrite step after the main per-tab loop.
+  const predecessors = continuationPredecessors(chainTrips);
+  const tabIds = new Set(tabs.map((t) => t.id as number));
+
+  const continuationFlagList: boolean[] = [];
   const perDiems: { days: number; total: number }[] = [];
   for (let i = 0; i < tabs.length; i++) {
-    const prev = i > 0 ? tabs[i - 1] : null;
-    const isContinuation = !!(prev && tabs[i].departDate === prev.returnDate);
-    continuationFlags.push(isContinuation);
+    const isContinuation = flagsByRequest.get(tabs[i].id as number) ?? false;
+    continuationFlagList.push(isContinuation);
     // perDiemLogFor is the single decision — the estimate on the form, this
     // write, the recompute after a cancellation and the report's rate column all
     // go through it, so none of them can price a trip differently from the
     // figure actually stored here.
     const resolved = perDiemLogFor(tabs[i].countryCode, log, countryRates);
     perDiems.push(
-      computePerDiem(tabs[i].departDate as string, tabs[i].returnDate as string, isContinuation, resolved.log),
+      computePerDiem(
+        tabs[i].departDate as string,
+        tabs[i].returnDate as string,
+        isContinuation,
+        resolved.log,
+        // No room booked, no per diem (2026-09-21). Read from the persisted
+        // flag, never from the posted DTO — `derive-flags.ts` makes the same
+        // point for every other booking flag.
+        //
+        // **Through `roomBookedOrShared`, not off `needsRoomBooking` alone
+        // (package E).** A พักห้องเดียวกับ guest books no room of their own
+        // and IS paid — spec §1, the user's own *"(ถ้าเลือกอันนี้จะได้
+        // เบี้ยเลี้ยง)"* — so the room question has two inputs now and one
+        // predicate answers it for this write, the recompute and the form's
+        // live estimate alike. `isRoomShareGuest` is server-derived on the
+        // same read that gave `needsRoomBooking`, so the two cannot come from
+        // different states of the database.
+        {
+          roomBooked: roomBookedOrShared({
+            needsRoomBooking: tabs[i].needsRoomBooking,
+            isRoomShareGuest: tabs[i].isRoomShareGuest,
+          }),
+        },
+      ),
     );
   }
+
+  // Each tab's own running number, collected as the loop below allocates it —
+  // needed only after the loop, to name a newly filed tab as the CAUSE when an
+  // existing trip (`liveOthers`) gets rewritten. A tab's number does not exist
+  // yet before its own claim/allocate step runs, which is why the rewrite
+  // happens after this loop rather than interleaved with it.
+  const tabRequestNoById = new Map<number, string>();
 
   const tx = pool.transaction();
   await tx.begin();
@@ -1307,6 +1878,7 @@ export async function submitTravelBookingGroup(
           .input("no", sql.NVarChar, requestNo)
           .query(`UPDATE [dbo].[AccRequest] SET RequestNo=@no WHERE Id=@id`);
       }
+      tabRequestNoById.set(requestId, requestNo);
 
       // AllowanceSnapshot is otherwise written only by upsertTravelBooking, at
       // save. A draft saved before a rate changed — a UAT rate being set, or an
@@ -1315,7 +1887,7 @@ export async function submitTravelBookingGroup(
       // so the snapshot is fixed with it.
       await tx.request()
         .input("id", sql.Int, requestId)
-        .input("cont", sql.Bit, continuationFlags[i] ? 1 : 0)
+        .input("cont", sql.Bit, continuationFlagList[i] ? 1 : 0)
         .input("days", sql.Int, perDiems[i].days)
         .input("total", sql.Decimal(18, 2), perDiems[i].total)
         .input("allowance", sql.Decimal(18, 2), emp.allowance ?? null)
@@ -1339,6 +1911,67 @@ export async function submitTravelBookingGroup(
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
                 VALUES (@id, @by, 'submitted', @no)`);
     }
+
+    // I1 (2026-09-22): `flagsByRequest` was computed over the requester's WHOLE
+    // calendar — this submission's own tabs AND `liveOthers` — but until this,
+    // only the tabs were ever written back. `liveOthers` were inputs and never
+    // outputs, so filing a trip that makes an ALREADY-STORED trip a
+    // continuation never rewrote that stored trip: file B (24–26) first, then A
+    // (20–24) — allowed, B correctly becomes a continuation, but B kept its
+    // original figure, and the 24th was paid on both. This is the symmetric
+    // counterpart of what `recomputeGroupPerDiem` already does for a
+    // cancellation, reusing the same `rewritePerDiemRow` body and
+    // `perDiemWritable` gate rather than a second recompute.
+    //
+    // Every id here comes from `liveOthers`, which is already alive-filtered
+    // (see its own definition above) — never a dead trip, so
+    // `rewriteSubmitAffectedTrips` never has to name a dead cause.
+    await rewriteSubmitAffectedTrips(
+      tx,
+      liveOthers.map((o) => o.requestId),
+      flagsByRequest,
+      (requestId) => {
+        // The trip immediately before this one in the SAME chain that decided
+        // flagsByRequest.
+        //
+        // **RULING (fix round 2, 2026-09-22, N1): when that predecessor is NOT
+        // one of this submission's own tabs, return null — SKIP the row. Do
+        // not rewrite it and do not name a cause.** An earlier version of this
+        // comment claimed that case was unreachable ("a liveOthers row whose
+        // flag actually differs from what is stored can only have gotten
+        // there because a newly filed tab is now standing where its
+        // predecessor used to be … so this predecessor … is always one of
+        // tabs") and named `tabs[0]` as a "defensive fallback". That claim was
+        // false, measured false by execution: cross-group pairs always
+        // double-paid in BOTH orders before this branch, which means a stored
+        // `IsContinuation` can already disagree with the calendar-wide chain
+        // with NO new tab involved at all — two trips A and B filed pre-branch
+        // in different groups, both stored `false`; file any THIRD, unrelated
+        // trip anywhere on the calendar and B's freshly computed flag now
+        // reads `true` against predecessor A, which is not a tab. The old
+        // fallback fired there, named the unrelated new tab as the cause, and
+        // silently re-priced B — `Submitted` or `ManagerApproved` included —
+        // as a side effect of a filing that had nothing to do with B. That is
+        // exactly the backfill CLAUDE.md's "Nothing backfills" refuses to do,
+        // and it takes back a day someone had already been granted.
+        //
+        // **Skipping here cannot reopen I1.** I1's own case is *precisely* the
+        // one where the predecessor IS a newly filed tab — the two cases are
+        // disjoint (predecessor ∈ tabs, or not), so the branch that used to
+        // read "so as not to reopen I1" could never actually have reopened it
+        // by being skipped instead: I1 is answered entirely by the `if`
+        // branch below. A pre-existing wrong figure like A/B above is a
+        // RECONCILIATION, not a side effect of an unrelated filing — fixing it
+        // belongs to a deliberate, visible pass (see
+        // `scripts/checks/verify-ap17-continuation.ts`), not to whichever
+        // unrelated trip happens to be filed next.
+        const predecessor = predecessors.get(requestId);
+        if (!predecessor || !tabIds.has(predecessor.requestId)) return null;
+        const causeId = predecessor.requestId;
+        return { requestId: causeId, requestNo: tabRequestNoById.get(causeId) ?? null, kind: "submitted" };
+      },
+    );
+
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});

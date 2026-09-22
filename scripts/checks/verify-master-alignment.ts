@@ -135,6 +135,27 @@ function normalise(table: string, rows: Record<string, unknown>[]): string[] {
       const out: Record<string, unknown> = {};
       Object.keys(r)
         .filter((k) => !(r[k] instanceof Date))
+        // `AccTravelVehiclePlace.Id` is EXPECTED to differ, and this is the one
+        // table where that is true by design rather than by drift.
+        //
+        // `upsertVehicle` (travel-booking/settings-service.ts) is the only
+        // `SET IDENTITY_INSERT` in `src/`, and it replays **the vehicle's** id
+        // into UAT because these rows carry an FK to it (migration 052). The
+        // place rows themselves are inserted plainly and take their ids from
+        // each database's own counter — CLAUDE.md says so in as many words:
+        // *"even here only the parent id is copied."*
+        //
+        // So every save of a vehicle rewrites its places and re-allocates those
+        // ids independently, and this table reds on the next run with identical
+        // data. Measured 2026-09-23: production held Id 8/9/10 and UAT
+        // 1007/1008/1009 for the same three places, same options, same order.
+        //
+        // **Only the id is dropped, and only here.** `VehicleOptionId`, `Name`
+        // and `SortOrder` are still compared, so a place genuinely added to one
+        // database alone still reports. Nothing references a place id — no FK
+        // points at it and no code reads one — which is what makes the id
+        // meaningless rather than merely inconvenient.
+        .filter((k) => !(table === "AccTravelVehiclePlace" && k === "Id"))
         .sort()
         .forEach((k) => (out[k] = r[k]));
       return JSON.stringify(out);

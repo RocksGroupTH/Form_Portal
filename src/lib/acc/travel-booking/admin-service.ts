@@ -178,10 +178,12 @@ export interface AccountQueueItem {
    */
   perDiemHistory: string[];
   /**
-   * The trip in this request's `GroupKey` group whose fate this figure still
-   * hangs on — see `perdiem-dependency.ts`. Null when nothing can move it.
-   * `settled: false` is the one that blocks: the queue names it and disables the
-   * row's controls, and `approveByAccount` refuses it server-side.
+   * The trip on this requester's calendar whose fate this figure still hangs
+   * on — see `perdiem-dependency.ts`. Not scoped to this request's own
+   * `GroupKey`: since 2026-09-22 it can be a trip filed in a different
+   * group entirely. Null when nothing can move it. `settled: false` is the
+   * one that blocks: the queue names it and disables the row's controls, and
+   * `approveByAccount` refuses it server-side.
    */
   perDiemDependency: PerDiemDependency | null;
 }
@@ -249,9 +251,11 @@ export async function listAccountQueue(access: BookingBrandAccess): Promise<Acco
   }
 
   // Batched for the same reason the history above is, and it matters more here:
-  // this one needs every *sibling* of every queued request's group, which a
-  // per-row query would fetch over and over for rows that share a group. One
-  // round trip whatever the queue holds — see `loadPerDiemDependencies`.
+  // this one needs every *candidate predecessor* on every queued request's
+  // requester's calendar — not only the rows sharing its `GroupKey` — which a
+  // per-row query would fetch over and over for requesters with several rows
+  // in the same batch. One round trip whatever the queue holds — see
+  // `loadPerDiemDependencies`.
   const dependencies = await loadPerDiemDependencies(pool, ids);
 
   return rows.map((x) => ({

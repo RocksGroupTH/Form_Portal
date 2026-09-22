@@ -1,6 +1,11 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { filterStorableAdvClrKeys } from "@/lib/adv/settings-tabs";
+import {
+  filterAdvClrKeysForForm,
+  filterStorableAdvClrKeys,
+  storableAdvClrKeysForForm,
+  type AdvClrForm,
+} from "@/lib/adv/settings-tabs";
 
 /**
  * AP-2 and AP-3's shared access list (migration 152), and the per-tab and
@@ -12,6 +17,13 @@ import { filterStorableAdvClrKeys } from "@/lib/adv/settings-tabs";
  * already do with brands — `setBrandActiveShared` writes `AccFormBrand` for
  * both codes in one transaction — and it is the user's decision (2026-09-14).
  * The *keys* still name their form; see `./settings-tabs`.
+ *
+ * **Each form is GRANTED on its own screen since 2026-09-22** (user:
+ * *"สิทธิ์เข้าถึง AP-2 จะใช้แค่ AP-2 เท่านั้น..."*), and the roster did not split
+ * with it — one person, one row, no `FormCode`, no migration. What became
+ * form-scoped is the grid and, load-bearingly, the **write**:
+ * `setAdvClrAccessTabs` takes the form and replaces only its keys. Read its
+ * docblock before touching that statement.
  *
  * **Deliberately not the approver rosters.** `AccAdvanceApprover` and
  * `AccClearAdvanceApprover` are the pools that take real approval steps, so a
@@ -34,9 +46,12 @@ export interface AdvClrAccessRow {
   /**
    * Everything this person holds in `AccAdvClrAccessTab` — **both
    * vocabularies**, because `loadAdvClrTabsByAccessIds` narrows with the union
-   * filter `filterStorableAdvClrKeys`. The grid renders two checkbox groups off
-   * this one list and each authorization surface re-narrows it with its own
-   * filter.
+   * filter `filterStorableAdvClrKeys`. That stayed deliberately wide when the
+   * screens split: each form's grid narrows this list to its own keys for
+   * rendering, and each authorization surface re-narrows it with its own
+   * filter, but the row itself must keep carrying both — a save posts back what
+   * it was given, and a read that had already dropped the other form's keys
+   * would make every save a silent revocation of them.
    *
    * `[]` means none — the rows ARE the granted set, never "all". An admin's own
    * grants do not come from here; they see every tab and every menu.
@@ -58,7 +73,10 @@ export interface AdvClrAccessRow {
  * admin's EDITING grid cannot: there an empty result is indistinguishable from
  * "this person has no grants", so the admin's next tick POSTs a one-element set
  * — and `setAdvClrAccessTabs` replaces rather than merges, silently deleting
- * the rest in BOTH databases. Rethrowing turns it into the panel's error state
+ * the rest of **that form's** keys in BOTH databases. (The form scope added on
+ * 2026-09-22 bounds the blast radius to one form; it does not remove it, and
+ * the other form's keys are equally at risk from its own screen.)
+ * Rethrowing turns it into the panel's error state
  * instead. Both halves of the test must hold: the missing-object error, about
  * this object; ORing them would let a permission error, a deadlock or a timeout
  * merely *naming* the table degrade to no grants.
@@ -221,20 +239,59 @@ export async function getAdvClrAccessTabs(accessId: number): Promise<string[]> {
 }
 
 /**
- * Replace one person's granted tabs and menus. The list IS the granted set —
- * `[]` clears it.
+ * Replace one person's granted tabs and menus **for ONE form**. Within that
+ * form the list IS the granted set — `[]` clears it; the other form's keys are
+ * not read, not deleted and not re-inserted.
+ *
+ * **`form` is required, and the bound `DELETE` is the whole point of this
+ * function.** Until 2026-09-22 both forms' grants were edited on one screen, so
+ * the posted list really was everything the person held and
+ * `DELETE … WHERE AccessId = @aid` was correct. Splitting the screen made that
+ * statement a data-destroyer: AP-2's page now posts only AP-2's keys, and an
+ * unbounded delete would take every AP-3 grant with it — silently, in BOTH
+ * databases, on the screen whose whole job is handing out access. It is the
+ * write-side twin of the read-side failure CLAUDE.md records for AP-4, *"the
+ * next tick would POST a one-element set and revoke the rest."*
+ *
+ * **The bound comes from `storableAdvClrKeysForForm`, never from a list
+ * retyped here.** That partition is asserted disjoint and covering in
+ * `settings-tabs.test.ts`; a second copy beside the SQL is how one of them
+ * loses a key. `access-service-form-scope.test.ts` pins the statement to it.
+ *
+ * **A key belonging to neither form is left alone rather than swept up.** The
+ * table has no CHECK on `TabKey` (migration 152, deliberately), so a row naming
+ * any string can appear — and `filterStorableAdvClrKeys` on the read is what
+ * makes such a row inert. Deleting it here would be this save reaching outside
+ * what it owns, which is the property that just cost AP-3 its grants.
  *
  * Delete and insert happen inside one `writeBothPools` callback, so a partial
  * grant set cannot commit: either both databases end up with the whole new set
  * or neither moves.
  */
-export async function setAdvClrAccessTabs(accessId: number, keys: string[]): Promise<void> {
-  const wanted = filterStorableAdvClrKeys(keys);
+export async function setAdvClrAccessTabs(
+  accessId: number,
+  keys: string[],
+  form: AdvClrForm,
+): Promise<void> {
+  // What this save may remove, and what it puts back. Narrowing the insert too
+  // means a payload carrying the other form's keys — a stale tab, a replayed
+  // POST — cannot add rows the delete did not clear, which would duplicate them.
+  const scope = storableAdvClrKeysForForm(form);
+  const wanted = filterAdvClrKeysForForm(keys, form);
+  // Unreachable while both forms own keys, and asserted so; `IN ()` is a syntax
+  // error, and a form that owns nothing has nothing to replace either way.
+  if (scope.length === 0) return;
+
   await writeBothPools(async (tx) => {
-    await tx
-      .request()
-      .input("aid", sql.Int, accessId)
-      .query(`DELETE FROM [dbo].[AccAdvClrAccessTab] WHERE AccessId = @aid`);
+    const del = tx.request().input("aid", sql.Int, accessId);
+    // Placeholders are mapped from the INDEX, so no key text reaches the
+    // statement — the same shape `loadAdvClrTabsByAccessIds` uses for its ids.
+    const placeholders = scope.map((_, i) => `@sk${i}`).join(", ");
+    scope.forEach((k, i) => del.input(`sk${i}`, sql.NVarChar(40), k));
+    await del.query(`
+      DELETE FROM [dbo].[AccAdvClrAccessTab]
+      WHERE AccessId = @aid AND TabKey IN (${placeholders})
+    `);
     for (const key of wanted) {
       await tx
         .request()

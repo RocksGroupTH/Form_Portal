@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { listClrErpBankAccountsForCompany } from "@/lib/clr/clear-advance-admin-service";
 import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
 
@@ -10,8 +10,14 @@ import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
  *    the send does not use is how a journal gets pointed at a bank its
  *    target company does not have. An absent or unrecognised company
  *    answers an empty list without ever calling the reader. */
+/* Gated on `clearErpInterface`, like the Journal Batch and G/L option lists
+   this sits beside — it is the list AP-3’s Interface ERP tab picks a bank
+   from, and a holder who may choose the batch may choose the bank. Like
+   them it is gated but NOT brand-scoped: a holder reads any company’s
+   cards. It writes nothing; the chosen value is saved by the neighbouring
+   erp-interface POST. (user, 2026-09-23) */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("clearErpInterface");
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();

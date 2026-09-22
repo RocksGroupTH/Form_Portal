@@ -36,6 +36,11 @@ import {
   type AttachmentKind,
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
+import {
+  CASCADE_CANCEL_ACTION,
+  CASCADE_DETACH_ACTION,
+  CASCADE_REDATE_ACTION,
+} from "@/lib/acc/travel-booking/room-share-actions";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAccess";
@@ -178,6 +183,48 @@ function GridField({ label, value, bold = true }: { label: string; value: React.
       </span>
     </div>
   );
+}
+
+/**
+ * A room-share cascade row's own heading, and its accent (final review I3).
+ *
+ * The cascade always writes a `Note` — a Thai sentence already naming the
+ * host's running number, and both date ranges on a re-date — so the label is
+ * what tells the three apart at a glance, and the fallback text is only ever
+ * reached if `AccActivityLog.Note` is somehow NULL, which the column permits
+ * and the writer never does.
+ *
+ * The action strings are **imported** from `room-share-actions.ts`, not
+ * retyped: that module imports nothing precisely so a `"use client"` file can
+ * hold it, and retyping them here is how a rename on the writing side
+ * silently stops matching on the reading side.
+ */
+function roomShareEventDisplay(action: string): { title: string; accent: string; fallback: string } {
+  if (action === CASCADE_CANCEL_ACTION) {
+    return {
+      title: "ยกเลิกตามคำขอที่พักห้องร่วม",
+      accent: "var(--color-danger)",
+      fallback: "คำขอนี้ถูกยกเลิกตามคำขอที่พักห้องร่วม",
+    };
+  }
+  if (action === CASCADE_DETACH_ACTION) {
+    return {
+      title: "ยกเลิกการพักห้องร่วม",
+      accent: "var(--text-info-yellow)",
+      fallback: "การพักห้องร่วมของคำขอนี้ถูกยกเลิก กรุณาเลือกที่พักค้างคืนใหม่",
+    };
+  }
+  if (action === CASCADE_REDATE_ACTION) {
+    return {
+      title: "เปลี่ยนวันเดินทางตามคำขอที่พักห้องร่วม",
+      accent: "var(--nav-active-text)",
+      fallback: "วันเดินทางของคำขอนี้เปลี่ยนตามคำขอที่พักห้องร่วม",
+    };
+  }
+  // Not reachable from ROOM_SHARE_CASCADE_ACTIONS, which is what the read
+  // filters on — but a fourth action added on the writing side and not here
+  // renders as itself rather than as nothing.
+  return { title: action, accent: "var(--text-muted)", fallback: "มีการเปลี่ยนแปลงจากคำขอที่พักห้องร่วม" };
 }
 
 function FlagChip({ label }: { label: string }) {
@@ -810,6 +857,57 @@ export function TravelBookingDetail({
               })
           )}
         </div>
+
+        {/* WHAT A ROOM-SHARE CASCADE DID TO THIS REQUEST (final review I3).
+            Rendered here, under the approvals, because it belongs to the same
+            question — "who moved this, and when" — and because until now
+            NOTHING in the application rendered these rows. AP-17's only other
+            reader of AccActivityLog filters to `perdiem_recalculated` for the
+            accounting queue, so a guest's trip could be cancelled, detached
+            or re-dated by somebody else's action with no trace on any screen,
+            while CLAUDE.md claimed the manager who approved the first range
+            could see what it became.
+
+            No actor is shown, deliberately: the cascade writes `AuthorId`
+            NULL because NOBODY did this to the guest — the host's owner acted
+            on their own request and has never seen this one. The note the
+            cascade wrote already names the host's running number and, on a
+            re-date, both ranges. */}
+        {request.roomShareEvents.length > 0 && (
+          <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--border-light)" }}>
+            <p
+              className="text-[12px] font-semibold m-0 mb-2 inline-flex items-center gap-1.5"
+              style={{ color: "var(--text-heading)" }}
+            >
+              <BedDouble size={13} style={{ color: "var(--nav-active-text)" }} />
+              การเปลี่ยนแปลงจากห้องพักร่วม
+            </p>
+            <div className="flex flex-col gap-2">
+              {request.roomShareEvents.map((ev, i) => {
+                const display = roomShareEventDisplay(ev.action);
+                return (
+                  <div
+                    key={`${ev.action}-${ev.createdAt}-${i}`}
+                    className="px-3 py-2 rounded-lg"
+                    style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-light)" }}
+                  >
+                    <p className="text-[11.5px] font-semibold m-0" style={{ color: display.accent }}>
+                      {display.title}
+                    </p>
+                    <p className="text-[12px] m-0 mt-0.5" style={{ color: "var(--text-secondary)" }}>
+                      {ev.note ?? display.fallback}
+                    </p>
+                    {ev.createdAt && (
+                      <p className="text-[10px] mt-1 m-0" style={{ color: "var(--text-faint)" }}>
+                        {fmtDateTime(ev.createdAt)}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* ── Admin fill-in (account-area viewers only, while ManagerApproved) ── */}
@@ -1194,20 +1292,49 @@ export function TravelBookingDetail({
                     )}
                   </span>
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    ต่อเนื่องจากทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (−1 วัน)
+                    ต่อเนื่องจาก {request.continuationFromRequestNo ?? "ทริปก่อนหน้า"}
+                    {request.departDate ? ` (วันที่ ${fmtYmdDisplay(request.departDate)})` : ""} จึงไม่นับซ้ำที่นี่
+                    (−1 วัน)
                   </span>
                 </span>
               }
             />
           )}
 
-          <DetailRow
-            label="ที่พักค้างคืน"
-            value={withIcon(
-              request.accommodationId != null ? icons.accommodation[request.accommodationId] : null,
-              `${request.accommodationName ?? "—"}${request.accommodationCustomText ? ` — ${request.accommodationCustomText}` : ""}`,
-            )}
-          />
+          {/* A GUEST HAS NO ACCOMMODATION OF ITS OWN, AND SAYING "—" HERE
+              MISLED EVERY APPROVER (final review I3). Since package B, "no
+              accommodation" means "no per diem" — so a manager and then
+              accounting were reading a blank accommodation beside a full
+              per-diem figure, with nothing on the page explaining why the
+              money is owed. The host's running number is the explanation,
+              and it is the one fact an approver needs in order to go and
+              look. `isRoomShareGuest` is server-derived, never posted. */}
+          {request.isRoomShareGuest ? (
+            <>
+              <DetailRow
+                label="ที่พักค้างคืน"
+                value={
+                  <span className="inline-flex items-center gap-1.5">
+                    <BedDouble size={13} style={{ color: "var(--nav-active-text)" }} />
+                    <span>
+                      พักห้องเดียวกับคำขอ {request.roomShareHostRequestNo ?? "อื่น"}
+                    </span>
+                  </span>
+                }
+              />
+              <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                ไม่ได้จองห้องพักเอง จึงไม่มีรายการให้ Admin จอง แต่ยังได้รับเบี้ยเลี้ยงตามปกติ
+              </span>
+            </>
+          ) : (
+            <DetailRow
+              label="ที่พักค้างคืน"
+              value={withIcon(
+                request.accommodationId != null ? icons.accommodation[request.accommodationId] : null,
+                `${request.accommodationName ?? "—"}${request.accommodationCustomText ? ` — ${request.accommodationCustomText}` : ""}`,
+              )}
+            />
+          )}
           {request.needsRoomBooking && <FlagChip label="ต้องจองห้องพัก" />}
         </div>
       </Section>
@@ -1270,10 +1397,10 @@ export function TravelBookingDetail({
         </div>
       </Section>
 
-      {/* ── Attachments (บัตรประชาชน) — before the summary, like the form ── */}
+      {/* ── Attachments (บัตรประชาชน หรือ Passport) — before the summary, like the form ── */}
       <Section title="เอกสารแนบ" icon={<Paperclip size={15} />}>
         <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1.5" style={{ color: "var(--text-muted)" }}>
-          บัตรประชาชน
+          บัตรประชาชน หรือ Passport
         </label>
         {request.idCardFiles.length > 0 ? (
           <div className="flex flex-wrap gap-2">

@@ -17,7 +17,8 @@
     "check:travel-province-home": "tsx scripts/checks/verify-travel-province-move.ts",
     "check:uat-tester-home": "tsx scripts/checks/verify-uat-tester-move.ts",
     "sync:erp-vendors": "tsx scripts/sync-erp-vendors.ts",
-    "check:ap4-brand-scope": "tsx scripts/checks/verify-144-approver-brand.ts"
+    "check:ap4-brand-scope": "tsx scripts/checks/verify-144-approver-brand.ts",
+    "check:ap17-continuation": "tsx --env-file=.env.local scripts/checks/verify-ap17-continuation.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
