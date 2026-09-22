@@ -232,6 +232,8 @@ const SRC = path.resolve(process.cwd(), "src");
 
 const TAB = "features/travel-booking/components/TravelBookingTab.tsx";
 const CONTROL = "features/travel-booking/components/RoomShareControl.tsx";
+/** Where the opening prompt's latch lives — see the point-4 section below. */
+const FORM = "features/travel-booking/components/TravelBookingForm.tsx";
 /** The on-behalf frame around the same shared search body — see the inline-search test. */
 const PERSON_MODAL = "components/RequesterPickerModal.tsx";
 const HOOK = "features/travel-booking/hooks/useTravelBookingForm.ts";
@@ -541,12 +543,31 @@ test("the agreement line is the shared constant, shown before the choice and aft
       "picker, because the host has no veto and the guest is the only person who can be warned " +
       "in advance (spec §2); and on the attached card, so the state stays self-describing",
   );
+  /* **Sliced to the PICKER's own dialog, not "anywhere after the first
+     `<Dialog`".** A second dialog joined this file on 2026-09-23 — the
+     opening พักห้องเดียวกับเพื่อนร่วมงานหรือไม่ prompt — and it carries an
+     agreement line of its own, quite rightly, because it is now the first
+     place the choice is offered. An index-only check would let that one
+     satisfy this assertion while the picker's had been deleted, which is
+     precisely the regression the arm exists for. The two dialogs are
+     siblings, so the first `</Dialog>` after the first `<Dialog` closes the
+     picker; that is asserted rather than assumed. */
   const dialogAt = src.indexOf("<Dialog");
   assert.notEqual(dialogAt, -1, "the host picker dialog has gone");
+  const dialogEnd = src.indexOf("</Dialog>", dialogAt);
+  assert.notEqual(dialogEnd, -1, "the picker dialog is never closed");
+  const nextDialog = src.indexOf("<Dialog", dialogAt + 1);
   assert.ok(
-    src.indexOf("<AgreementLine />", dialogAt) !== -1,
-    "no agreement line inside the picker dialog — the warning now only appears AFTER the " +
-      "requester has already attached, which is the one moment it is too late to be useful",
+    nextDialog === -1 || nextDialog > dialogEnd,
+    "a <Dialog> is nested inside the picker dialog, so the slice below no longer names the " +
+      "picker's own region and every assertion over it is about something else",
+  );
+  assert.ok(
+    src.slice(dialogAt, dialogEnd).indexOf("<AgreementLine />") !== -1,
+    "no agreement line inside the PICKER dialog — the warning would then reach the requester " +
+      "only in the opening prompt or after they had already attached, and the prompt is not a " +
+      "substitute: somebody who reaches the picker from the พักห้องเดียวกับเพื่อนร่วมงาน button " +
+      "never sees the prompt at all",
   );
 });
 
@@ -804,5 +825,297 @@ test("an unsaved choice says it is unsaved", () => {
     /savedView === null &&/,
     "the unsaved note is no longer conditional on there being no STORED binding — shown always " +
       "it is a lie after every save, and shown never it is the silent loss above",
+  );
+});
+
+/* ═════════════════ the 2026-09-23 round — points 1 to 4 ═════════════════ */
+
+/**
+ * **ระบุเลขที่คำขอ is the LEADING tab** (the user's point 1).
+ *
+ * Two things have to agree and they are deliberately one fact: the order the
+ * buttons render in, and the tab `openPicker` opens on. `PICK_MODES` is that
+ * fact. Reverting either half alone is the failure worth catching — a picker
+ * that opens on เลือกเพื่อนร่วมงาน with ระบุเลขที่คำขอ drawn first is not
+ * "mostly right", it is the old behaviour with a new label order.
+ */
+test("the picker leads with the running-number tab, and opens on it", () => {
+  const src = code(CONTROL);
+  assert.match(
+    src,
+    /const PICK_MODES: readonly PickMode\[\] = \["number", "person"\];/,
+    "PICK_MODES no longer declares ระบุเลขที่คำขอ first (user, 2026-09-23, point 1). This one " +
+      "array is both the button order and openPicker's default; changing it here is the " +
+      "supported way to change the leading tab, and changing it anywhere else makes the two " +
+      "disagree",
+  );
+  assert.ok(
+    src.indexOf("PICK_MODES.map(") !== -1,
+    "the two tab buttons are rendered from a literal array again instead of from PICK_MODES, " +
+      "so the order on screen and the tab the picker opens on are two facts that can drift",
+  );
+  const open = balancedAfter(src, "const openPicker = useCallback", "(");
+  assert.ok(
+    open.indexOf("setPickMode(PICK_MODES[0])") !== -1,
+    "the press no longer opens on the LEADING tab. Naming a mode literally here is how the " +
+      "picker ends up opening on whichever tab is drawn second",
+  );
+});
+
+/**
+ * **The number lookup waits for a COMPLETE running number** (2026-09-23), and
+ * this closes a real wrinkle as well as applying the mitigation the user
+ * approved beside the endpoint's widening.
+ *
+ * It used to fire at three characters. The lookup is an exact match on
+ * `RequestNo`, so every partial can only answer "no such number" — which is
+ * why typing `TRL26-09024` showed `ไม่พบคำขอเลขที่ TRL` first, a refusal for a
+ * number nobody had finished typing. And it made one request per keystroke to
+ * an endpoint that now carries who went where, when and why.
+ *
+ * **The condition itself is pinned, not merely the call.** A call present
+ * while the gate reads `.length >= 3` is the exact shape of mutation 37, which
+ * this project measured GREEN against a file-wide `indexOf`.
+ */
+test("the running-number search fires only on a complete running number", () => {
+  const src = code(CONTROL);
+  assert.match(
+    src,
+    /import\s*\{[^}]*\bisCompleteRequestNo\b[^}]*\}\s*from\s*["']@\/features\/travel-booking\/lib\/running-number["']/,
+    "RoomShareControl no longer imports isCompleteRequestNo. The shape of a running number is " +
+      "derived from allocateRequestNo's own mint in that module; a regex retyped here is a " +
+      "second answer that nothing keeps in step with the mint",
+  );
+  assert.match(
+    src,
+    /if\s*\(\s*byNumber\s*&&\s*!\s*isCompleteRequestNo\(/,
+    "the number tab's gate is no longer `the typed value is a complete running number`. A call " +
+      "to isCompleteRequestNo somewhere else in the file satisfies an indexOf and changes " +
+      "nothing — which is why the CONDITION is what is matched here",
+  );
+  const gate = balancedAfter(src, "if (byNumber && !isCompleteRequestNo", "{");
+  assert.ok(
+    gate.indexOf("return;") !== -1,
+    "the incomplete-number branch no longer returns, so an unfinished number falls straight " +
+      "through to the fetch — the gate is then decoration",
+  );
+  assert.ok(
+    src.indexOf("trimmedNo.length") === -1,
+    "a length test on the typed number is back. Three characters is what produced " +
+      "`ไม่พบคำขอเลขที่ TRL` mid-word, and a round trip per keystroke to an endpoint that " +
+      "answers where a colleague went and why",
+  );
+  assert.ok(
+    src.indexOf("พิมพ์อย่างน้อย 3 ตัวอักษร") === -1,
+    "the copy telling the requester three characters is enough is back beside a search that " +
+      "waits for a whole number — a note describing a rule that no longer exists",
+  );
+  assert.ok(
+    src.indexOf("exampleRequestNo(RUNNING_PREFIX") !== -1,
+    "the placeholder and hint no longer generate their example from running-number.ts, so the " +
+      "shape a requester copies and the rule that admits it are two facts — and the example " +
+      "goes stale on 1 January",
+  );
+});
+
+/**
+ * **The card names the colleague on BOTH tabs** (the user's point 2).
+ *
+ * It read the binding's denormalised `hostStaffId`, which exists only once the
+ * tab has been saved — so a host found by running number rendered
+ * "เพื่อนร่วมงาน" beside a blank avatar, with no way to tell whose booking it
+ * was. `HostCandidateRow.staffId` comes with the pick.
+ *
+ * The stored column stays as the fallback and is not asserted away: it is
+ * what a binding saved before this change resolves through.
+ */
+test("the host's identity is read off the host row, not off the saved binding alone", () => {
+  const src = code(CONTROL);
+  assert.match(
+    src,
+    /const hostStaffId\s*=[^;]*hostRow\?\.staffId/,
+    "the host's staff id is derived from the stored binding alone again. That column exists " +
+      "only after a save, so the ระบุเลขที่คำขอ tab renders `เพื่อนร่วมงาน` and a blank avatar " +
+      "for a host it has every field of (user, 2026-09-23, point 2)",
+  );
+  assert.ok(
+    src.indexOf("personLabel(hostPerson, hostStaffId)") !== -1,
+    "the card's name no longer falls back to the id the avatar was resolved from, so the two " +
+      "can name different people",
+  );
+  /* The resolved row is stored WITH the staff id it was fetched for, and the
+     render compares them. Without that, picking host B renders host A's name
+     and photograph for as long as the roster round trip takes — on a card
+     whose whole job is saying whose booking this is. */
+  assert.match(
+    src,
+    /setResolved\(\{ staffId: hostStaffId, person: p \}\)/,
+    "the resolved colleague is stored without the staff id it belongs to, so a change of host " +
+      "renders the previous colleague until the next fetch lands",
+  );
+  assert.match(
+    src,
+    /resolved\.staffId === hostStaffId/,
+    "the resolved colleague is rendered without checking it is THIS host's. A cache that " +
+      "trusts itself is the same trap `chosen` is keyed by host id to avoid",
+  );
+});
+
+/**
+ * **Picking fills the rest of the trip in** (the user's point 3), and the rule
+ * is "(ถ้ายังไม่เติม)" — never overwrite what the requester has already put in.
+ *
+ * The rule itself is asserted by value in `room-share-prefill.test.ts`, which
+ * can import the module because it is pure. What cannot be asserted there and
+ * has to be asserted here is that the tab still routes through it: an inline
+ * object literal would type-check, look right, and be a second copy with no
+ * test over it — exactly what the `roomShareChoicePatch` arm above already
+ * guards for the other half of this patch.
+ */
+test("picking a host fills the tab in through the shared prefill module", () => {
+  const src = code(TAB);
+  assert.match(
+    src,
+    /import\s*\{\s*roomSharePrefillPatch\s*\}\s*from\s*["']@\/features\/travel-booking\/lib\/room-share-prefill["']/,
+    "TravelBookingTab no longer imports roomSharePrefillPatch",
+  );
+  const patch = balancedAfter(src, "onChoose=", "{");
+  assert.match(
+    patch,
+    /roomSharePrefillPatch\(host, tab\)/,
+    "onChoose no longer fills the trip in from the host (user, 2026-09-23, point 3). It must " +
+      "be called with THIS tab: the whole rule is `only where the guest has not answered`, and " +
+      "a prefill handed anything else cannot tell what they answered",
+  );
+  /* Both patches spread into ONE object, prefill first. They touch disjoint
+     fields today, so the order is not observable — it is pinned because the
+     day they stop being disjoint, the CHOICE has to win: it carries the
+     host's dates, and those are a correctness requirement (final review I4),
+     not a convenience like the five fields beside them. */
+  assert.match(
+    patch,
+    /\{\s*\.\.\.roomSharePrefillPatch\(host, tab\),\s*\.\.\.roomShareChoicePatch\(host\)\s*\}/,
+    "the two patches are no longer spread into one object with the prefill first. Applied " +
+      "separately they are two renders and two `updateTab` calls over stale state; applied in " +
+      "the other order the convenience fields would outrank the host's dates the day the two " +
+      "sets overlap",
+  );
+});
+
+/**
+ * **The opening question** (the user's point 4): "พักห้องเดียวกับเพื่อน
+ * ร่วมงานหรือไม่", asked before the requester starts filling the form.
+ *
+ * Three properties the user named, one arm each, because each fails
+ * differently:
+ *
+ * - **not on a resumed draft.** `shouldAskRoomShare` reads the resumed group.
+ *   Replaced by `useState(true)` it asks a requester every time they reopen
+ *   their own saved draft.
+ * - **"No" is final for the session.** The latch is the FORM's and is taken
+ *   once, in a `useState` initialiser. Moved into `RoomShareControl`, or
+ *   re-derived in an effect, it comes back on the next tab switch or SWR
+ *   revalidation — a modal that will not stay shut.
+ * - **it blocks nothing.** Escape and the backdrop answer it, exactly as
+ *   ไม่ใช่ does. Without `onOpenChange` the prompt is a modal with only one
+ *   way out, in front of somebody who came to fill a form.
+ */
+test("the opening prompt is asked once per form session, and never on a resumed draft", () => {
+  const form = code(FORM);
+  assert.match(
+    form,
+    /import\s*\{\s*shouldAskRoomShare\s*\}\s*from\s*["']@\/features\/travel-booking\/lib\/room-share-prompt["']/,
+    "TravelBookingForm no longer imports shouldAskRoomShare",
+  );
+  assert.match(
+    form,
+    /useState\(\(\)\s*=>\s*shouldAskRoomShare\(initial\)\)/,
+    "the prompt is no longer decided ONCE from the resumed group. A literal here asks a " +
+      "requester who saved yesterday every time they reopen their own draft; anything " +
+      "recomputed on render can put the question back after it has been answered",
+  );
+  const sets = form.match(/setAskRoomShare\(/g) ?? [];
+  assert.equal(
+    sets.length,
+    1,
+    `setAskRoomShare is called ${sets.length} times in TravelBookingForm. Exactly one call, ` +
+      "turning it off, is what makes `ไม่ใช่` final — a second one is the question coming back",
+  );
+  assert.match(form, /setAskRoomShare\(false\)/, "the one write no longer turns the prompt OFF");
+  assert.ok(
+    form.indexOf("askRoomShare={askRoomShare}") !== -1 &&
+      form.indexOf("onAskAnswered={answerRoomSharePrompt}") !== -1,
+    "the form no longer hands the prompt and its answer to the tab, so the question is either " +
+      "never asked or can never be answered",
+  );
+});
+
+test("the prompt's latch is not re-created below the form", () => {
+  for (const [rel, file] of [
+    [CONTROL, "RoomShareControl"],
+    [TAB, "TravelBookingTab"],
+  ] as const) {
+    const src = code(rel);
+    assert.ok(
+      src.indexOf("setAskRoomShare") === -1 && src.indexOf("shouldAskRoomShare") === -1,
+      `${file} decides the opening prompt for itself. Both of these are re-rendered with ` +
+        "whichever tab is active, so a latch here is re-taken on every tab switch — the " +
+        "requester answers ไม่ใช่ and is asked again on the next trip, which is the " +
+        "four-modals-for-one-group defect the per-session rule exists to prevent",
+    );
+    assert.ok(
+      src.indexOf("askRoomShare") !== -1 && src.indexOf("onAskAnswered") !== -1,
+      `${file} no longer carries the prompt through, so it never reaches the control`,
+    );
+  }
+});
+
+test("the prompt blocks nothing, and ใช่ opens the picker", () => {
+  const src = code(CONTROL);
+
+  // Exactly two dialogs: the picker and the prompt. The count is what keeps
+  // the agreement-line slice above naming the picker's own region.
+  const dialogs = src.match(/<Dialog\b/g) ?? [];
+  assert.equal(
+    dialogs.length,
+    2,
+    `RoomShareControl renders ${dialogs.length} dialogs, not the picker plus the opening ` +
+      "prompt. A third is either a stacked person picker coming back (the arrangement " +
+      "`personOpen` existed for) or a second prompt",
+  );
+
+  const titleAt = src.indexOf('title="พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"');
+  assert.notEqual(titleAt, -1, "the opening prompt has gone");
+  const promptAt = src.lastIndexOf("<Dialog", titleAt);
+  const prompt = src.slice(promptAt, titleAt);
+  assert.match(
+    prompt,
+    /open=\{askRoomShare\}/,
+    "the prompt is no longer opened by the form's own latch, so it is shown on a resumed " +
+      "draft, or after it has been answered, or never",
+  );
+  assert.match(
+    prompt,
+    /onOpenChange=\{\(next\) => \{\s*if \(!next\) askNo\(\);\s*\}\}/,
+    "Escape and the backdrop no longer answer the prompt. A modal in front of somebody who " +
+      "came to fill a form has to be dismissable every way a modal normally is — and every " +
+      "dismissal has to LATCH, or the question returns on the next render",
+  );
+
+  const yes = balancedAfter(src, "const askYes = useCallback", "(");
+  assert.ok(
+    yes.indexOf("onAskAnswered()") !== -1,
+    "ใช่ no longer answers the prompt, so the question can come back over the open picker",
+  );
+  assert.ok(
+    yes.indexOf("openPicker()") !== -1,
+    "ใช่ no longer opens the picker, so the only answer that does anything does nothing",
+  );
+  const no = balancedAfter(src, "const askNo = useCallback", "(");
+  assert.ok(no.indexOf("onAskAnswered()") !== -1, "ไม่ใช่ no longer answers the prompt");
+  assert.ok(
+    no.indexOf("openPicker") === -1 && no.indexOf("setPickerOpen") === -1,
+    "ไม่ใช่ opens the picker. `No` must land the requester exactly where they are today — at " +
+      "the ที่พักค้างคืน grid, with the button still there if they change their mind",
   );
 });

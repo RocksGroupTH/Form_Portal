@@ -166,10 +166,33 @@ function columnsOf(src: string, constName: string): string[] {
 /* ─────────────────────────── the emitted shape ─────────────────────────── */
 
 /**
- * The whole point. Spec §6 names three facts; `requestId` is the handle the
- * picker posts back to attach, not a fourth fact.
+ * The whole point — **and the list moved on 2026-09-23, on the user's explicit
+ * decision, from five fields to nine.**
+ *
+ * Spec §6 named three facts and `requestId`, the handle the picker posts back.
+ * Every brief on this feature said "do not add a sixth without asking"; the
+ * user was asked, was told in plain terms that it lets any authenticated
+ * employee read who went where, when, why and what the work was for any AP-17
+ * request by walking sequential running numbers, and said yes. So this list
+ * grew by design, and it must still be **a list** rather than a shape that
+ * drifts:
+ *
+ * - `staffId` — the host's identity, so a request found on the ระบุเลขที่คำขอ
+ *   tab renders a name and an avatar instead of "เพื่อนร่วมงาน" beside a blank
+ *   circle (point 2). **The id alone**; the name and the photograph come from
+ *   the `requireAuth` roster search the picker already calls;
+ * - `brandCode`, `reasonId`, `reasonCustomText`, `workDetail` — the trip
+ *   fields `room-share-prefill.ts` fills the guest's own tab in from, where
+ *   the guest has not filled them in themselves (point 3).
+ *
+ * What did **not** move is the exclusions, each of which was argued on its own
+ * merits and none of which is inertia: no amount, no attachments, no ID card,
+ * no per-diem figures, and no coordinates on the work locations. The `types`
+ * half of this assertion is what enforces the last one —
+ * `workLocations: string[]` widened to `{ name; lat; lng }[]` keeps the field
+ * name while shipping the pin of somebody else's hotel.
  */
-test("HostCandidateRow returns exactly the fields spec §6 allows, and no others", () => {
+test("HostCandidateRow returns exactly the fields the user's decision allows, and no others", () => {
   assert.deepEqual(interfaceFields(code(SERVICE), "HostCandidateRow"), [
     "requestId: number",
     "requestNo: string | null",
@@ -178,6 +201,12 @@ test("HostCandidateRow returns exactly the fields spec §6 allows, and no others
     // A bare name — never the coordinates, which the picker does not draw and
     // which migration 135 attaches to the host's own work location.
     "workLocations: string[]",
+    // 2026-09-23, points 2 and 3. See this test's docblock.
+    "staffId: number | null",
+    "brandCode: string | null",
+    "reasonId: number | null",
+    "reasonCustomText: string | null",
+    "workDetail: string | null",
   ]);
 });
 
@@ -203,13 +232,28 @@ test("RoomShareView adds only the binding itself, and reuses HostCandidateRow fo
 
 /* ─────────────────────────── the columns behind it ─────────────────────────── */
 
-test("the picker's display columns are exactly the four the response needs", () => {
+/**
+ * One column per emitted field and nothing else — the other half of the test
+ * above, and the half that catches a column read for a *reason* rather than
+ * for a field. The two lists are asserted separately because they fail
+ * separately: a column here with no field there is a value fetched and
+ * dropped, which is where a later mapping picks it up for free.
+ *
+ * `HOST_LOCATION_COLUMNS` is where the work locations' coordinates would
+ * arrive — `w.Lat, w.Lng` beside `w.Name` — and it stays two columns.
+ */
+test("the picker's display columns are exactly the nine the response needs", () => {
   const src = code(SERVICE);
   assert.deepEqual(columnsOf(src, "HOST_DISPLAY_COLUMNS"), [
     "r.Id",
     "r.RequestNo",
+    "r.StaffId",
+    "r.BrandCode",
     "t.DepartDate",
     "t.ReturnDate",
+    "t.ReasonId",
+    "t.ReasonCustomText",
+    "t.WorkDetail",
   ]);
   assert.deepEqual(columnsOf(src, "HOST_LOCATION_COLUMNS"), ["t.RequestId", "w.Name"]);
 });
@@ -291,6 +335,21 @@ test("the service never names a column the picker must not carry", () => {
       "third occurrence is a new use nobody has argued for, and it must be argued for here",
   );
   const src = raw.split("clearGuestOwnAccommodation").join("");
+  /* **`BrandCode` and `WorkDetail` came OFF this list on 2026-09-23** — they
+     are two of the five trip fields the user asked the picker to fill the
+     guest's tab in from, so naming them is now the feature rather than a
+     leak. They are the only two that moved, and the rest of the list is
+     unchanged: the exclusions below were each argued on their own merits, and
+     the decision to widen was about *these five fields*, not about the
+     principle of the list.
+
+     `Lat` and `Lng` were ADDED in the same round. The work locations are
+     answered as bare names and the prefill copies names only, so a copied
+     location renders no map until the requester re-picks the place — the
+     honest outcome, and the one CLAUDE.md already records for every location
+     filed before 2026-09-01. Shipping a colleague's pin to every
+     authenticated employee is the widening nobody asked for, and it would
+     arrive as two characters appended to `HOST_LOCATION_COLUMNS`. */
   const forbidden = [
     "TotalAmount",
     "ForeignAmount",
@@ -299,9 +358,7 @@ test("the service never names a column the picker must not carry", () => {
     "AllowanceSnapshot",
     "PaymentDate",
     "Phone",
-    "WorkDetail",
     "Notes",
-    "BrandCode",
     "CompanyName",
     "ManagerStaffId",
     "ManagerEmail",
@@ -310,6 +367,8 @@ test("the service never names a column the picker must not carry", () => {
     "AccTravelBookingDetail",
     "IdCard",
     "Accommodation",
+    "Lat",
+    "Lng",
   ];
   for (const column of forbidden) {
     assert.ok(

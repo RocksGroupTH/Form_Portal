@@ -37,14 +37,38 @@ import {
  * `UPDLOCK, HOLDLOCK`. Binding two people's documents together is the act
  * that needed the gate, and it still has it.
  *
+ * ## THE RESIDUAL, IN PLAIN TERMS — read this before widening anything else
+ *
+ * **Any authenticated employee can read who went where, when, why, and what
+ * the work was, for any AP-17 request, by walking sequential running
+ * numbers.** That is the state of this endpoint as at 2026-09-23, and it is
+ * the user's decision, taken explicitly after being told it in those words.
+ * It is not an oversight — and it is not a gap to be quietly closed either: a
+ * later reader who narrows it is reversing a ruling, not fixing a bug.
+ *
+ * It arrived in two steps, both asked for:
+ *
+ * - **2026-09-22** — the object gate came off browsing (above), and the
+ *   `requestNo` mode arrived. Until then the shape was five fields: the
+ *   running number, the travel dates and the work location, plus the id.
+ * - **2026-09-23** — the shape was widened to nine, for the user's points 2
+ *   and 3. `staffId` is the host's identity, so a request found by number can
+ *   render a name and an avatar instead of "เพื่อนร่วมงาน" beside a blank
+ *   circle; `brandCode`, `reasonId`, `reasonCustomText` and `workDetail` are
+ *   the trip fields `room-share-prefill.ts` fills the guest's own tab in
+ *   from, where the guest has not filled it themselves. **"Five fields and no
+ *   more" is therefore FALSE wherever it still appears — correct it rather
+ *   than believing it.**
+ *
  * ## What still holds this in
  *
- * 1. **It answers three facts and an id, never a record.** `HostCandidateRow`
- *    is the running number, the travel dates and the work location — not the
- *    amount, not the attachments, not the ID card, not the requester's other
- *    fields. The shape is built in `room-share-service.ts` from an explicit
- *    column list and is pinned by `room-share-response-shape-guard.test.ts`.
- *    **Nothing about the shape was widened when the gate came off.**
+ * 1. **It answers a bounded, explicitly listed shape — never a record.**
+ *    `HostCandidateRow` is built in `room-share-service.ts` from an explicit
+ *    column list and pinned field by field and column by column by
+ *    `room-share-response-shape-guard.test.ts`. Still **not the amount, not
+ *    the attachments, not the ID card, not the per-diem figures**, and not
+ *    the work locations' coordinates — each excluded on its own merits rather
+ *    than by inertia, and that guard's forbidden list is what enforces it.
  * 2. **`decideRequestRead` still governs opening the record itself.** Opening
  *    one of these requests is still `GET /requests/[id]`, unchanged, which
  *    refuses anybody that policy refuses.
@@ -62,8 +86,25 @@ import {
  * person-and-date scan". The running-number tab (the user's point 2,
  * 2026-09-22) is exactly such a read, and running numbers are sequential, so
  * it is enumerable in a way the person scan was not. Recorded rather than
- * glossed: it is bounded to *hostable* AP-17 requests and to the same five
- * fields, and it is the feature that was asked for.
+ * glossed: it is bounded to *hostable* AP-17 requests and to the same shape
+ * the person scan answers, and it is the feature that was asked for.
+ *
+ * **One mitigation, and it is honest about what it is.** Since 2026-09-23 the
+ * client asks only once the typed value is a **complete** running number —
+ * `isCompleteRequestNo` (`features/travel-booking/lib/running-number.ts`),
+ * whose shape is derived from `allocateRequestNo`'s own mint rather than
+ * retyped as a regex. The user approved it because it costs them nothing, and
+ * it does two real things: it stops a round trip per keystroke, and it stops
+ * the picker answering `ไม่พบคำขอเลขที่ TRL` to somebody who has typed three
+ * characters of a number. **It is a client-side rule and this route
+ * deliberately does not repeat it.** The lookup is `RequestNo = @no`, an
+ * exact match, so an incomplete string already finds nothing; a shape check
+ * here would buy no narrowing and would add a second refusal sentence,
+ * blurring the `not_found` / `not_hostable` distinction this tab exists for.
+ * It does **not** stop a determined walk, and nothing here does — **there is
+ * still no per-user rate limit on this endpoint.** `src/lib/rate-limit.ts`
+ * exists and is not wired to it. Stated because it is the obvious next
+ * mitigation and its absence is a fact, not a claim that one is unnecessary.
  *
  * ## Which database answers
  *

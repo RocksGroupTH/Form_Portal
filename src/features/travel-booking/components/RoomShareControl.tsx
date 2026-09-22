@@ -18,8 +18,12 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { RequesterPickerBody, type RequesterOption } from "@/components/RequesterPickerBody";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { ROOM_SHARE_AGREEMENT_LINE } from "@/features/travel-booking/constants";
+import { ROOM_SHARE_AGREEMENT_LINE, RUNNING_PREFIX } from "@/features/travel-booking/constants";
 import { defaultHostFilterRange } from "@/features/travel-booking/lib/host-filter-range";
+import {
+  exampleRequestNo,
+  isCompleteRequestNo,
+} from "@/features/travel-booking/lib/running-number";
 import { DateRangeField } from "./DateRangeField";
 import { inputStyle, labelClass, labelStyle } from "./shared";
 import type {
@@ -73,10 +77,11 @@ import type {
  * authorize `authorizeAccRequest(…, "mutate", AP-17)` against it. That gate is
  * **gone**: browsing is `requireAuth` at
  * `/api/request/travel-booking/room-share/hosts`, so any authenticated
- * employee can list a colleague's hostable AP-17 requests — their running
- * numbers, travel dates and work locations — and look one up by number. The
- * user asked twice for the friction; the route's own docblock records the
- * residual in full.
+ * employee can list a colleague's hostable AP-17 requests and look one up by
+ * number. **Since 2026-09-23 that answers who went where, when, why and what
+ * the work was** — the shape was widened for the user's points 2 and 3, on
+ * their explicit decision. The route's own docblock records the residual in
+ * full, in the terms it was put to them in.
  *
  * **The write kept its gate.** The save route is `authorizeAccRequest(…,
  * "mutate", AP-17)`, the group save re-asserts creator-and-`Draft`/`Returned`
@@ -117,11 +122,31 @@ import type {
  * everybody. This one is `requireAuth` and answers a `staffId`, which is
  * exactly what the hosts endpoint takes.
  *
- * The request list returns the running number, the travel dates and the work
- * location and deliberately nothing else (spec §6 — not the amount, not the
- * attachments, not the ID card). `HostCandidateRow` is imported as a **type**
- * from the service so this component cannot invent a field the endpoint does
- * not send; `room-share-response-shape-guard.test.ts` pins the other end.
+ * The request list returned five fields until 2026-09-23 and returns nine
+ * now: the running number, the travel dates and the work locations, plus the
+ * host's **`staffId`** and the four trip fields the guest's tab is filled in
+ * from. **"Deliberately nothing else" is still true and the list it refers to
+ * has moved** — still not the amount, not the attachments, not the ID card,
+ * not the per-diem figures, not the work locations' coordinates. The
+ * residual that widening carries is stated at the endpoint, in the route's
+ * own docblock, in the terms it was put to the user in.
+ * `HostCandidateRow` is imported as a **type** from the service so this
+ * component cannot invent a field the endpoint does not send;
+ * `room-share-response-shape-guard.test.ts` pins the other end.
+ *
+ * ## What the 2026-09-23 round changed here, in four lines
+ *
+ * - **ระบุเลขที่คำขอ leads** (`PICK_MODES`), and the number lookup waits for a
+ *   **complete** running number (`running-number.ts`) instead of firing at
+ *   three characters — which used to answer `ไม่พบคำขอเลขที่ TRL` mid-word.
+ * - **The card names the colleague on both tabs**, from
+ *   `HostCandidateRow.staffId` rather than from the binding's denormalised
+ *   `hostStaffId`, which exists only after a save.
+ * - **Picking fills the rest of the trip in** — the parent applies
+ *   `roomSharePrefillPatch` beside `roomShareChoicePatch`; this component
+ *   still only hands over a host.
+ * - **The form can open by ASKING**, `askRoomShare` / `onAskAnswered`, with
+ *   the latch held by the form. See `room-share-prompt.ts`.
  */
 
 /* ─────────────────────────── display helpers ─────────────────────────── */
@@ -220,8 +245,18 @@ type ShareState =
   | { kind: "absent" }
   | { kind: "error" };
 
-/** Which half of the picker is in front. */
-type PickMode = "person" | "number";
+/**
+ * Which half of the picker is in front.
+ *
+ * **`number` leads since 2026-09-23** (the user's point 1). The array that
+ * renders the two buttons is ordered from this union's declaration order, and
+ * `openPicker` opens on `"number"`, so the two cannot disagree about which tab
+ * is the default.
+ */
+type PickMode = "number" | "person";
+
+/** The two tabs, in the order they are shown. Declared once; see `PickMode`. */
+const PICK_MODES: readonly PickMode[] = ["number", "person"];
 
 export interface RoomShareControlProps {
   /** `AccRequest.Id` for this tab — null until the draft has been saved once. */
@@ -239,6 +274,21 @@ export interface RoomShareControlProps {
   onChoose: (host: HostCandidateRow) => void;
   /** The choice is withdrawn. The parent clears the flag; the accommodation stays unchosen. */
   onClear: () => void;
+  /**
+   * Open by asking **"พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"** (the user's point
+   * 4, 2026-09-23).
+   *
+   * **The latch is the FORM's, not this component's**, and that is the whole
+   * design: `shouldAskRoomShare` (`lib/room-share-prompt.ts`) answers it once
+   * in a `useState` initialiser from the resumed group, and `onAskAnswered`
+   * turns it off for the rest of the session. Held here it would reset every
+   * time the requester switched tab — this component is re-rendered, not
+   * remounted, but a tab switch changes `hostRequestId` and a great deal
+   * besides — and "No" has to be final.
+   */
+  askRoomShare: boolean;
+  /** The prompt was answered, either way. The form latches it off for the session. */
+  onAskAnswered: () => void;
 }
 
 export function RoomShareControl({
@@ -247,9 +297,22 @@ export function RoomShareControl({
   colleagues,
   onChoose,
   onClear,
+  askRoomShare,
+  onAskAnswered,
 }: RoomShareControlProps) {
   const [share, setShare] = useState<ShareState>({ kind: "idle" });
-  const [savedPerson, setSavedPerson] = useState<RequesterOption | null>(null);
+  /**
+   * The host's HR row, **stored beside the staff id it was fetched for.**
+   *
+   * Keyed rather than bare, for the same reason `chosen` below is keyed by
+   * host id: the fetch is a round trip, so between picking host B and B's
+   * name arriving, a bare value would still hold A — and the card would name
+   * the wrong colleague on somebody else's booking. Comparing the key is what
+   * makes the stale window render nothing instead of a lie.
+   */
+  const [resolved, setResolved] = useState<{ staffId: number; person: RequesterOption } | null>(
+    null,
+  );
   /**
    * The row the picker handed over, kept so the card can render **before any
    * save**.
@@ -264,7 +327,10 @@ export function RoomShareControl({
 
   /* ── the picker ── */
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickMode, setPickMode] = useState<PickMode>("person");
+  /* `PICK_MODES[0]`, not the literal `"number"`: the leading tab is declared
+     once (the user's point 1, 2026-09-23) and this reads it, so the default
+     and the order the buttons render in cannot drift apart. */
+  const [pickMode, setPickMode] = useState<PickMode>(PICK_MODES[0]);
   /**
    * The colleague whose requests step 2 lists — and, since the two dialogs
    * merged, **the only thing that says which step of the person tab is
@@ -311,7 +377,7 @@ export function RoomShareControl({
   useEffect(() => {
     if (requestId == null || hostRequestId == null) {
       setShare({ kind: "idle" });
-      setSavedPerson(null);
+      setResolved(null);
       return;
     }
     let cancelled = false;
@@ -362,7 +428,7 @@ export function RoomShareControl({
    * The form builds it as `requesterOptsData?.colleagues ?? []`, so while that
    * SWR read is in flight it is **a new empty array on every render**. An
    * effect depending on its identity would therefore fire, `resolvePerson`
-   * would miss the empty list and fetch, `setSavedPerson` would re-render, and
+   * would miss the empty list and fetch, `setResolved` would re-render, and
    * the whole thing would go round again — a fetch loop for as long as the
    * roster takes to arrive. The list is only a cache-hit shortcut here, so
    * reading whatever the last render had is exactly as correct and cannot
@@ -371,22 +437,45 @@ export function RoomShareControl({
   const colleaguesRef = useRef(colleagues);
   colleaguesRef.current = colleagues;
 
-  const savedStaffId = savedView?.hostStaffId ?? null;
+  /**
+   * Whose booking this is — **read off the host row itself since 2026-09-23.**
+   *
+   * It used to be `savedView?.hostStaffId`, the denormalised column on the
+   * binding, which exists only once the tab has been SAVED. So a host found
+   * on the ระบุเลขที่คำขอ tab had no person at all until then and the card
+   * rendered "เพื่อนร่วมงาน" beside a blank avatar — the user's point 2.
+   * `HostCandidateRow.staffId` is the host request's own `AccRequest.StaffId`
+   * and arrives with the pick, so both tabs name the colleague immediately.
+   *
+   * `hostStaffId` on the stored view stays as the fallback rather than being
+   * deleted: it is the value a binding saved before this change resolves
+   * through, and it costs one `??`.
+   */
+  const hostStaffId = hostRow?.staffId ?? savedView?.hostStaffId ?? null;
   useEffect(() => {
-    if (savedStaffId == null) {
-      setSavedPerson(null);
+    if (hostStaffId == null) {
+      setResolved(null);
       return;
     }
     let cancelled = false;
-    resolvePerson(savedStaffId, colleaguesRef.current).then((p) => {
-      if (!cancelled) setSavedPerson(p);
+    resolvePerson(hostStaffId, colleaguesRef.current).then((p) => {
+      if (!cancelled) setResolved({ staffId: hostStaffId, person: p });
     });
     return () => {
       cancelled = true;
     };
-  }, [savedStaffId]);
+  }, [hostStaffId]);
 
-  const hostPerson = savedPerson ?? localChoice?.person ?? null;
+  /* The resolved row only while it is the row for THIS host; otherwise the
+     stand-in the person tab already had, only while that is this host too.
+     Both comparisons are the same guard as `localChoice`'s, and without them
+     a change of host renders the previous colleague's name and photograph
+     for as long as the roster fetch takes. */
+  const hostPerson =
+    (resolved && resolved.staffId === hostStaffId ? resolved.person : null) ??
+    (localChoice?.person && localChoice.person.staffId === hostStaffId
+      ? localChoice.person
+      : null);
 
   /* ── the picker's list ── */
 
@@ -397,9 +486,24 @@ export function RoomShareControl({
     if (!pickerOpen) return;
     const byNumber = pickMode === "number";
     const trimmedNo = numberQuery.trim();
-    // Three characters before the first lookup: one or two match nothing and
-    // would be a round trip per keystroke while somebody types "TRL".
-    if (byNumber && trimmedNo.length < 3) {
+    /* **A COMPLETE running number before the first lookup** (2026-09-23), not
+       three characters.
+
+       It was three, and that was wrong twice over. The lookup is an EXACT
+       match on `RequestNo`, so every partial answers "no such number" — which
+       is why typing `TRL26-09024` showed `ไม่พบคำขอเลขที่ TRL` first, a
+       refusal for a number nobody had finished typing. And it made one
+       request per keystroke to an endpoint that, since the same day, carries
+       who went where, when and why: waiting for a whole number is the
+       mitigation the user approved beside that widening, because it costs
+       them nothing.
+
+       The shape comes from `running-number.ts`, which derives it from
+       `allocateRequestNo`'s own mint rather than retyping a regex — the hint
+       copy below is generated from the same module, so the example a
+       requester copies the shape of and the rule that admits it cannot
+       disagree. */
+    if (byNumber && !isCompleteRequestNo(trimmedNo, RUNNING_PREFIX)) {
       setHosts(null);
       setNotice(null);
       setHostsError(null);
@@ -407,7 +511,8 @@ export function RoomShareControl({
       return;
     }
     /* No colleague chosen is no query, so there are no results — the same
-       thing the under-three-characters branch above says for the number tab.
+       thing the incomplete-running-number branch above says for the number
+       tab.
        **Clearing here rather than in `← เปลี่ยนคน` is deliberate**: the list
        is stale the moment its subject is gone, whatever made it gone, and a
        clear attached to one button is a clear the next way back forgets. It
@@ -500,6 +605,16 @@ export function RoomShareControl({
     return rows.filter((h) => (h.requestNo ?? "").toLowerCase().indexOf(q) !== -1);
   }, [hosts, listQuery]);
 
+  /**
+   * The shape to copy, in this year's numbering.
+   *
+   * Generated from `allocateRequestNo`'s own mint rather than typed out, so
+   * the placeholder still reads `TRL27-…` in 2027 — and so the example and
+   * the rule that decides whether the search fires cannot disagree. Memoised
+   * only because it reads the clock; the value is stable for the session.
+   */
+  const numberExample = useMemo(() => exampleRequestNo(RUNNING_PREFIX, new Date()), []);
+
   /* ── opening and closing ── */
 
   /**
@@ -512,7 +627,11 @@ export function RoomShareControl({
    */
   const openPicker = useCallback(() => {
     setPickerOpen(true);
-    setPickMode("person");
+    /* The LEADING tab, whichever `PICK_MODES` declares it to be — ระบุเลขที่คำขอ
+       since the user's point 1 (2026-09-23). Reading the array rather than
+       naming a mode is what stops a reorder of the buttons leaving the picker
+       opening on the tab that is no longer first. */
+    setPickMode(PICK_MODES[0]);
     setPerson(null);
     setHosts(null);
     setHostsError(null);
@@ -600,9 +719,36 @@ export function RoomShareControl({
   const clear = useCallback(() => {
     setChosen(null);
     setShare({ kind: "idle" });
-    setSavedPerson(null);
+    setResolved(null);
     onClear();
   }, [onClear]);
+
+  /* ── the opening question (point 4) ── */
+
+  /**
+   * ใช่ — answer the prompt and go straight into the picker.
+   *
+   * `onAskAnswered()` first, so the question is latched off even if something
+   * in `openPicker` were ever to throw: a prompt that can re-ask is the one
+   * failure the user named, and it would be reached by exactly that ordering.
+   */
+  const askYes = useCallback(() => {
+    onAskAnswered();
+    openPicker();
+  }, [onAskAnswered, openPicker]);
+
+  /**
+   * ไม่ใช่, Escape and the backdrop are **the same answer**, on purpose.
+   *
+   * A modal in front of somebody who came to fill a form has to be dismissable
+   * in every way a modal normally is, and every one of them must land them
+   * exactly where they are today — at the ที่พักค้างคืน grid, with the
+   * พักห้องเดียวกับเพื่อนร่วมงาน button still there if they change their mind.
+   * "No" being final for the session is the form's latch, not this handler.
+   */
+  const askNo = useCallback(() => {
+    onAskAnswered();
+  }, [onAskAnswered]);
 
   /* ─────────────────────────── attached ─────────────────────────── */
 
@@ -646,7 +792,7 @@ export function RoomShareControl({
               </div>
               <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                 <p className="text-[13.5px] font-bold m-0 truncate" style={{ color: "var(--text-heading)" }}>
-                  {personLabel(hostPerson, savedView?.hostStaffId ?? null)}
+                  {personLabel(hostPerson, hostStaffId)}
                 </p>
                 <p className="text-[12px] m-0 flex items-center gap-1.5 flex-wrap" style={{ color: "var(--text-secondary)" }}>
                   <Hotel size={12} className="shrink-0" />
@@ -771,10 +917,14 @@ export function RoomShareControl({
         <div className="px-5 py-4 flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto">
           <AgreementLine />
 
-          {/* The two ways in. A requester who knows the number does not have
-              to find the person first (point 2). */}
+          {/* The two ways in, **ระบุเลขที่คำขอ first** (the user's point 1,
+              2026-09-23) — a requester who knows the number does not have to
+              find the person at all, and that turned out to be the common
+              case rather than the shortcut. Rendered from `PICK_MODES` rather
+              than from a literal array so this order and `openPicker`'s
+              default are one fact. */}
           <div className="flex items-center gap-1.5">
-            {(["person", "number"] as const).map((m) => {
+            {PICK_MODES.map((m) => {
               const active = pickMode === m;
               return (
                 <button
@@ -811,13 +961,18 @@ export function RoomShareControl({
                   type="text"
                   value={numberQuery}
                   onChange={(e) => setNumberQuery(e.target.value)}
-                  placeholder="เช่น TRL26-00100"
+                  placeholder={`เช่น ${numberExample}`}
                   className="flex-1 text-[14px] outline-none bg-transparent py-2"
                   style={{ color: "var(--text-primary)" }}
                 />
               </div>
+              {/* Both the example and the rule come from `running-number.ts`,
+                  so the shape a requester copies is the shape the search
+                  admits. The old line said "พิมพ์อย่างน้อย 3 ตัวอักษร", which
+                  was true of the old gate and described a search that could
+                  only ever answer "no such number" at three characters. */}
               <p className="text-[11px] mt-1.5 m-0" style={{ color: "var(--text-faint)" }}>
-                พิมพ์อย่างน้อย 3 ตัวอักษร — ระบบจะค้นหาคำขอที่พักห้องร่วมได้ให้อัตโนมัติ
+                พิมพ์เลขที่คำขอให้ครบ (เช่น {numberExample}) — ระบบจะค้นหาให้อัตโนมัติ
               </p>
             </div>
           ) : (
@@ -1065,6 +1220,64 @@ export function RoomShareControl({
           <Button type="button" variant="secondary" size="sm" onClick={closePicker}>
             ปิด
           </Button>
+        </div>
+      </Dialog>
+
+      {/* ── The opening question (the user's point 4, 2026-09-23) ──
+          "พักห้องเดียวกับเพื่อนร่วมงานหรือไม่", asked before the requester
+          starts filling the form rather than left to be discovered at the
+          bottom of it. Attaching now fills the trip in as well as replacing
+          ที่พักค้างคืน (`room-share-prefill.ts`), so somebody who fills the
+          whole form first has done the work twice.
+
+          **Written AFTER the picker on purpose.** Two guard arms in
+          `room-share-control-guard.test.ts` reach for this file's FIRST
+          `<Dialog`, meaning the picker — the one the agreement line has to be
+          inside, because that is where the choice is made. Putting this one
+          above would hand those arms the wrong dialog, and the arm about the
+          warning would then be satisfied by this prompt's copy while the
+          picker's had gone.
+
+          **Three properties, each load-bearing**, and `room-share-prompt.ts`
+          carries the argument for all three: it is asked once per FORM
+          SESSION rather than per tab; "ไม่ใช่" is final for that session,
+          because the latch is the form's and not this component's; and it
+          blocks nothing — Escape, the backdrop, the close button and ไม่ใช่
+          are one answer, leaving the requester exactly where they were. */}
+      <Dialog
+        open={askRoomShare}
+        onOpenChange={(next) => {
+          if (!next) askNo();
+        }}
+        title="พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"
+        contentClassName="max-w-md"
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] m-0 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+            ถ้าคุณจะพักห้องเดียวกับเพื่อนร่วมงานที่จองห้องพักไว้แล้ว
+            ระบบจะดึงข้อมูลการเดินทางจากคำขอของเพื่อนมาเติมให้ (เฉพาะช่องที่คุณยังไม่ได้กรอก)
+            และคุณไม่ต้องเลือกที่พักค้างคืนเอง
+          </p>
+
+          {/* The terms before the choice — the host has no veto, so this is
+              the only warning anybody gets, and this prompt is now the first
+              place the choice is offered. */}
+          <AgreementLine />
+
+          <div className="flex items-center justify-end gap-2 flex-wrap">
+            <Button type="button" variant="secondary" size="sm" onClick={askNo}>
+              ไม่ใช่ จองห้องพักเอง
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={askYes}
+              icon={<Users size={14} />}
+            >
+              ใช่ เลือกคำขอของเพื่อน
+            </Button>
+          </div>
         </div>
       </Dialog>
     </div>

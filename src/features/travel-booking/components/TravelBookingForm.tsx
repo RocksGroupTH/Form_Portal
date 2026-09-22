@@ -13,6 +13,7 @@ import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { tabNeedsIdCard, useTravelBookingForm } from "@/features/travel-booking/hooks/useTravelBookingForm";
 import { TravelBookingTab } from "./TravelBookingTab";
 import { lockedTravelDates } from "@/features/travel-booking/lib/date-locks";
+import { shouldAskRoomShare } from "@/features/travel-booking/lib/room-share-prompt";
 import { SectionCard, fmtBaht } from "./shared";
 import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
 import type { TravelBookingGroup } from "@/features/travel-booking/types";
@@ -62,6 +63,30 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
   } = form;
+
+  /**
+   * **"พักห้องเดียวกับเพื่อนร่วมงานหรือไม่", asked once per form session**
+   * (the user's point 4, 2026-09-23).
+   *
+   * Three properties, and each of them is why this state is *here* rather
+   * than inside `RoomShareControl`:
+   *
+   * - **once per SESSION, not per tab.** A group is several trips filed in
+   *   one sitting, and the control is re-rendered for whichever tab is
+   *   active; a latch held down there would ask again for each of them, which
+   *   is its own defect. `room-share-prompt.ts` carries the full argument,
+   *   including what that costs somebody whose *second* trip is the shared
+   *   one (they press the button, which is never disabled).
+   * - **"ไม่ใช่" is final.** A `useState` initialiser runs once, so nothing —
+   *   a tab switch, an SWR revalidation, a re-render — can put the question
+   *   back.
+   * - **never on a resumed draft.** `shouldAskRoomShare` reads `initial`,
+   *   which the page has already settled before this component mounts (it
+   *   renders a loading popup until the fetch returns), so a requester who
+   *   saved yesterday is not asked again.
+   */
+  const [askRoomShare, setAskRoomShare] = useState(() => shouldAskRoomShare(initial));
+  const answerRoomSharePrompt = useCallback(() => setAskRoomShare(false), []);
 
   const [triedSubmit, setTriedSubmit] = useState(false);
   const [removeConfirmIndex, setRemoveConfirmIndex] = useState<number | null>(null);
@@ -466,6 +491,10 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           // rather than fetching a second copy of it.
           colleagues={colleagues}
           brands={brands}
+          // The opening question, and the one answer that turns it off for
+          // this whole session — see `askRoomShare`'s own docblock above.
+          askRoomShare={askRoomShare}
+          onAskAnswered={answerRoomSharePrompt}
           onChange={(patch) => updateTab(activeTabIndex, patch)}
           onSelectPendingIdCard={(file) => updateTab(activeTabIndex, { pendingIdCard: file })}
           onRemoveIdCardFile={(fileId) => removeIdCardFile(activeTabIndex, fileId)}

@@ -34,6 +34,7 @@ import {
   roomShareChoicePatch,
   roomShareClearPatch,
 } from "@/features/travel-booking/lib/room-share-choice";
+import { roomSharePrefillPatch } from "@/features/travel-booking/lib/room-share-prefill";
 import type { RequesterOption } from "@/components/RequesterPickerModal";
 import {
   OptionCardSelect,
@@ -168,6 +169,18 @@ interface TravelBookingTabProps {
    * it is identical for every tab, and a per-tab fetch would repeat it.
    */
   colleagues: RequesterOption[];
+  /**
+   * Whether the form should open by asking "พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"
+   * (the user's point 4, 2026-09-23).
+   *
+   * **Passed straight through, and the latch stays in the form.** The
+   * question is per form SESSION, not per tab — a group of four trips asking
+   * four times would be its own defect — so the state that answers it cannot
+   * live here or in `RoomShareControl`, both of which are re-rendered with
+   * whatever tab is active. See `room-share-prompt.ts`.
+   */
+  askRoomShare: boolean;
+  onAskAnswered: () => void;
   onChange: (patch: Partial<TabFormState>) => void;
   onSelectPendingIdCard: (file: File | null) => void;
   onRemoveIdCardFile: (fileId: number) => Promise<boolean>;
@@ -190,6 +203,8 @@ export function TravelBookingTab({
   requesterStaffId,
   colleagues,
   brands,
+  askRoomShare,
+  onAskAnswered,
   onChange,
   onSelectPendingIdCard,
   onRemoveIdCardFile,
@@ -680,7 +695,18 @@ export function TravelBookingTab({
           // review I4: the picker matches on overlap, so a guest and its host
           // could disagree from the start, and the first cascade would then
           // replace the guest's whole span without warning).
-          onChoose={(host) => onChange(roomShareChoicePatch(host))}
+          // **Two patches, two different rules, and the order is deliberate.**
+          // `roomSharePrefillPatch` fills แบรนด์ที่เบิก, สถานที่ไปปฏิบัติงาน,
+          // เหตุผลการเดินทาง, ระบุเหตุผลเพิ่มเติม and รายละเอียดการไปปฏิบัติงาน
+          // **only where this tab has not answered them** (the user's point 3,
+          // 2026-09-23) — it reads `tab`, which is why it cannot live inside
+          // the choice patch. `roomShareChoicePatch` is spread SECOND so the
+          // choice itself always has the last word; the two touch disjoint
+          // fields today, and that ordering is what keeps it true if they ever
+          // stop doing so.
+          onChoose={(host) =>
+            onChange({ ...roomSharePrefillPatch(host, tab), ...roomShareChoicePatch(host) })
+          }
           // The accommodation is deliberately NOT restored to whatever it was
           // before: the requester is back at an unanswered required field,
           // which is the honest state, and resurrecting a choice they replaced
@@ -688,6 +714,10 @@ export function TravelBookingTab({
           // true of the stored row too — the attach really cleared it — so
           // this is no longer a screen state a reload would contradict.
           onClear={() => onChange(roomShareClearPatch())}
+          // Straight through; the latch is the form's. See the prop's own
+          // docblock above and `room-share-prompt.ts`.
+          askRoomShare={askRoomShare}
+          onAskAnswered={onAskAnswered}
         />
       </SectionCard>
 

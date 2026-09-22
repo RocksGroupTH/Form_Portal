@@ -102,15 +102,39 @@ function toYmd(d: Date): string {
  * One row of the host picker — **and the only shape this module ever returns
  * about somebody else's request.**
  *
- * Spec §6 names exactly three things the picker needs: the running number, the
- * travel dates and the work location. `requestId` is the fourth field and is
- * not a fourth fact — it is the handle the picker records in the tab and the
- * save then posts back.
+ * ## It carries nine fields since 2026-09-23, and it used to carry five
  *
- * **Not the amount, not the attachments, not the ID card, not the requester's
- * other fields.** Listing another person's requests is new reach in this
- * application, so the shape is built from an explicit column list
- * (`HOST_DISPLAY_COLUMNS`) rather than from a `SELECT *` or a reuse of
+ * Spec §6 named three facts — the running number, the travel dates and the
+ * work location — plus `requestId`, which is not a fourth fact but the handle
+ * the picker records in the tab and the save posts back. Every brief on this
+ * feature until 2026-09-23 said "five fields and do not add a sixth without
+ * asking". **That is the asking, and the user's answer was yes.** Two of
+ * their requests need more:
+ *
+ * - **the host's identity** (`staffId`) — a host picked by running number
+ *   rendered as "เพื่อนร่วมงาน" beside a blank avatar, because the picker had
+ *   no person to name. Only the id is carried: the name and the photograph
+ *   are then read by the browser from
+ *   `/api/request/travel-booking/requesters?staffId=`, the `requireAuth`
+ *   roster search this picker already calls, so no name or photograph is new
+ *   reach — the **link** is;
+ * - **the rest of the trip** (`brandCode`, `reasonId`, `reasonCustomText`,
+ *   `workDetail`, and the work locations that were already here) — two people
+ *   sharing a room are on the same trip, and `room-share-prefill.ts` fills
+ *   the guest's tab in from these where the guest has not filled it
+ *   themselves.
+ *
+ * **What that costs, in plain terms, because the residual belongs where it is
+ * read:** any authenticated employee can now read *who went where, when, why,
+ * and what the work was* for any AP-17 request, by walking sequential running
+ * numbers. The route's own docblock states the same thing at the endpoint.
+ *
+ * **What is still excluded, on its own merits and not by inertia: not the
+ * amount, not the attachments, not the ID card, not the per-diem figures**,
+ * and not the work locations' coordinates — `workLocations` stays a list of
+ * bare names. Listing another person's requests is reach this application did
+ * not have before package E, so the shape is built from an explicit column
+ * list (`HOST_DISPLAY_COLUMNS`) rather than from a `SELECT *` or a reuse of
  * `getTravelBookingRequest`'s read shape — the latter being how a field nobody
  * intended to expose arrives by inheritance. `room-share-response-shape-guard.test.ts`
  * asserts both halves: these keys, and those columns.
@@ -122,6 +146,23 @@ export interface HostCandidateRow {
   returnDate: string | null;
   /** `AccTravelWorkLocation.Name` only — never the coordinates, which the picker does not draw. */
   workLocations: string[];
+  /**
+   * `AccRequest.StaffId` — the host's HR id, and **only** the id.
+   *
+   * It is the link the card resolves a name and a photograph from, through
+   * the roster search the picker already uses. Null for a request written
+   * with no StaffId, which `loadHostableRequests` cannot offer by person
+   * anyway and which the card then falls back to the running number for.
+   */
+  staffId: number | null;
+  /** `AccRequest.BrandCode` — แบรนด์ที่เบิก, for the prefill. */
+  brandCode: string | null;
+  /** `AccTravelBooking.ReasonId` — เหตุผลการเดินทาง, for the prefill. */
+  reasonId: number | null;
+  /** `AccTravelBooking.ReasonCustomText` — ระบุเหตุผลเพิ่มเติม, for the prefill. */
+  reasonCustomText: string | null;
+  /** `AccTravelBooking.WorkDetail` — รายละเอียดการไปปฏิบัติงาน, for the prefill. */
+  workDetail: string | null;
 }
 
 /** A guest's own binding, as the form renders it. */
@@ -139,10 +180,16 @@ export interface RoomShareView {
  * (`Status`, `NeedsRoomBooking`, the share rows) are read by a *different*
  * query — `CANDIDATE_COLUMNS` below — which is not a stylistic split: it means
  * the display columns are read only for requests that have already passed
- * `canHost`, so a request the caller may not be offered never has its dates
- * fetched at all.
+ * `canHost`, so a request the caller may not be offered never has its dates,
+ * its reason or its work detail fetched at all. That split mattered more once
+ * the list widened on 2026-09-23 than it did when it was written.
  */
-const HOST_DISPLAY_COLUMNS = "r.Id, r.RequestNo, t.DepartDate, t.ReturnDate";
+/* Deliberately ONE double-quoted string on one line, however long it grows:
+   `room-share-response-shape-guard.test.ts`'s `columnsOf` reads it with a
+   regex over exactly that shape and says so ("no longer a plain double-quoted
+   string"). A concatenation here would hand the guard the first fragment and
+   leave every column after the `+` unchecked. */
+const HOST_DISPLAY_COLUMNS = "r.Id, r.RequestNo, r.StaffId, r.BrandCode, t.DepartDate, t.ReturnDate, t.ReasonId, t.ReasonCustomText, t.WorkDetail";
 
 /** The second and last list feeding the response: a work location's name, and the request it hangs off. */
 const HOST_LOCATION_COLUMNS = "t.RequestId, w.Name";
@@ -404,8 +451,13 @@ async function loadHostDisplayRows(
   for (const row of res.recordset as {
     Id: number;
     RequestNo: string | null;
+    StaffId: number | null;
+    BrandCode: string | null;
     DepartDate: Date | null;
     ReturnDate: Date | null;
+    ReasonId: number | null;
+    ReasonCustomText: string | null;
+    WorkDetail: string | null;
   }[]) {
     out.set(row.Id, {
       requestId: row.Id,
@@ -413,6 +465,16 @@ async function loadHostDisplayRows(
       departDate: row.DepartDate ? toYmd(row.DepartDate) : null,
       returnDate: row.ReturnDate ? toYmd(row.ReturnDate) : null,
       workLocations: [],
+      // Added 2026-09-23 with the user's decision to widen — see
+      // `HostCandidateRow`'s own docblock for what each one is for and what
+      // it costs. `?? null` throughout rather than a default, because a
+      // missing value here is a fact about the host's request and the
+      // prefill treats absence as "fill nothing".
+      staffId: row.StaffId ?? null,
+      brandCode: row.BrandCode ?? null,
+      reasonId: row.ReasonId ?? null,
+      reasonCustomText: row.ReasonCustomText ?? null,
+      workDetail: row.WorkDetail ?? null,
     });
   }
 
@@ -597,10 +659,15 @@ export type HostLookupResult =
  * **This is a by-number read of a request the caller names, and that is new
  * reach on top of the person-and-date scan above.** The route's docblock
  * states the residual in full; what belongs here is that it answers the *same*
- * `HostCandidateRow` — the running number, the travel dates and the work
- * location, from `loadHostDisplayRows` and nothing else — and applies the
+ * `HostCandidateRow` — whatever that shape currently holds, from
+ * `loadHostDisplayRows` and nothing else, which is why the shape is stated in
+ * exactly one place — and applies the
  * *same* two admission rules `loadHostableRequests` applies, in the same
  * order, so a number cannot reach a request the list would have hidden.
+ *
+ * **The widening of 2026-09-23 landed here too, and it bites hardest here.**
+ * The list is reached through a person; this is reached through a sequential
+ * identifier. See `HostCandidateRow` and the route's docblock.
  *
  * `excludeRequestId` is the caller's own tab. It is refused with
  * `SELF_ATTACH_MESSAGE` **before any row is read**, deliberately: building a
