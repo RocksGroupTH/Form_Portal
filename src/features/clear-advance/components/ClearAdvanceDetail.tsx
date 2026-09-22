@@ -151,7 +151,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   const [mgComment, setMgComment] = useState("");
   // Account / Head step inputs.
   const [accChecked, setAccChecked] = useState(false);
-  const [pvDocNo, setPvDocNo] = useState(clear?.pvDocNo ?? "");
   const [paymentDate, setPaymentDate] = useState(clear?.paymentDate ?? "");
   const [accAction, setAccAction] = useState<null | "reject" | "return">(null);
   const [accComment, setAccComment] = useState("");
@@ -450,7 +449,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     }
     act("approve", {
       isChecked: accChecked,
-      pvDocNo: pvDocNo.trim() || null,
       paymentDate: paymentDate || null,
     });
   }
@@ -583,12 +581,6 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
               ขั้นตอน: {CLR_STEP_LABEL_TH.ACCOUNT}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-semibold" style={{ color: "var(--text-secondary)" }}>เลขที่ PV / PPEX</label>
-                <input className="text-[13px] px-3 py-2 rounded-lg outline-none"
-                  style={{ background: "var(--bg-input)", color: "var(--text-primary)", border: "1px solid var(--border-input)" }}
-                  value={pvDocNo} onChange={(e) => setPvDocNo(e.target.value)} placeholder="เช่น PV2601-0001" />
-              </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-semibold" style={{ color: "var(--text-secondary)" }}>
                   วันจ่าย{companyPaysExtra ? " *" : ""}

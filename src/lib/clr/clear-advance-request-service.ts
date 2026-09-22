@@ -1003,17 +1003,21 @@ export async function saveAccountEdit(
   await persistClearOnly(input);
 }
 
-/** Account step records the PV/PPEX doc no. + (optional) payment date on the header. */
+/** Account step records the (optional) payment date on the header.
+ *
+ *  It used to record a hand-typed PV/PPEX number in the same statement. The box
+ *  is gone — BC returns the number now — but `AccClearAdvance.PvDocNo` keeps its
+ *  data and every reader of it. Nothing writes it any more, so a recent
+ *  `UpdatedAt` on a row carrying one means something outside these two
+ *  applications wrote it, which is worth looking at rather than assuming. */
 export async function setAccountAction(
   requestId: number,
-  pvDocNo: string | null,
   paymentDate: string | null,
 ): Promise<void> {
   const pool = await getAccPool();
   await pool.request()
     .input("rid", sql.Int, requestId)
-    .input("pv", sql.NVarChar, pvDocNo ?? null)
     .input("pd", sql.Date, paymentDate || null)
-    .query(`UPDATE [dbo].[AccClearAdvance] SET PvDocNo=@pv, PaymentDate=@pd, UpdatedAt=SYSDATETIME()
+    .query(`UPDATE [dbo].[AccClearAdvance] SET PaymentDate=@pd, UpdatedAt=SYSDATETIME()
             WHERE RequestId=@rid`);
 }
