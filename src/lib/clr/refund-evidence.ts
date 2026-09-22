@@ -54,7 +54,7 @@ export function refundEvidenceMessage(gaps: RefundEvidenceGap[]): string {
   const name: Record<RefundEvidenceGap, string> = {
     date: "วันที่โอนเงินคืน",
     amount: "ยอดเงินที่โอนคืน",
-    proof: "หลักฐานการโอน",
+    proof: "หลักฐานการโอนเงินคืน",
   };
   const what = gaps.map((g) => name[g]).join(" · ");
   return (
