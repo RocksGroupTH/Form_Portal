@@ -13,7 +13,10 @@ function settingsHrefForError(error?: string): string {
   if (e.includes("แผนก") || e.toLowerCase().includes("department")) {
     return "/request/accounting/settings?tab=departments";
   }
-  return "/request/advance/settings?tab=erpInterface";
+  // `advanceErpInterface`, AP-2's own key since 2026-09-22 — the tab became
+  // grantable and needed one per form (see `@/lib/adv/settings-tabs`). The page
+  // still redirects a legacy `?tab=erpInterface`; this is the live spelling.
+  return "/request/advance/settings?tab=advanceErpInterface";
 }
 
 export interface PreviewLine {

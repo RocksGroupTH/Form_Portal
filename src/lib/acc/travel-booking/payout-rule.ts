@@ -14,29 +14,47 @@
  *
  * ── The rule ──
  *
- * One determining date, two country arms:
+ * One determining date, two country arms — but the two arms no longer agree
+ * about what "the determining date" is. See the next section.
  *
- *   **D = the later of (manager approval date, travel return date)**
- *
- *   domestic  D.day <= 20         -> last day of D's month
+ *   domestic  D = the later of (manager approval date, travel return date)
+ *             D.day <= 20         -> last day of D's month
  *             D.day >  20         -> last day of the NEXT month
  *
- *   foreign   D.day in 1..5       -> the 10th of D's OWN month
+ *   foreign   D = the manager approval date ALONE — the return date is not
+ *             read. See "Why foreign reads one date and domestic reads two"
+ *             below.
+ *             D.day in 1..5       -> the 10th of D's OWN month
  *             D.day in 6..20      -> last day of D's month
  *             D.day in 21..end    -> the 10th of the NEXT month
  *
- * ── Why the determining date takes two inputs ──
+ * ── Why foreign reads one date and domestic reads two ──
  *
- * It replaces `computePayoutDate`, which read the approval date alone. Neither
- * single input reproduces the cases this was specified with: approval-alone
- * (i.e. the old behaviour) pays a trip returning on the 21st at the end of the
- * approval month, and return-alone pays a trip approved on the 21st at the end
- * of the return month. Both are wrong by a month, in opposite directions.
+ * Until 2026-09-04 this rule read the approval date alone for every trip —
+ * `computePayoutDate`, now deleted. It was replaced because neither single
+ * input reproduced the cases it was specified with: approval-alone paid a trip
+ * returning on the 21st at the end of the approval month, and return-alone
+ * paid a trip approved on the 21st at the end of the return month, both wrong
+ * by a month in opposite directions. Taking the later of the two dates fixed
+ * both, and `payoutDeterminingDate` is that fix — it still applies, unchanged,
+ * to the domestic branch below.
  *
- * Taking the later date and then applying the rule is the same answer as
- * applying the rule to each date and taking the later result — both arms are
- * monotone non-decreasing in D — so there is no third reading to choose
- * between.
+ * On 2026-09-21 the user restored approval-alone, but **only for foreign
+ * trips**: "นับจากวันที่ผู้จัดการอนุมัติอย่างเดียว ไม่เอาวันกลับ". This is not a
+ * reversal of the paragraph above — the argument that a single input loses
+ * information is still correct, and is still why domestic keeps reading both
+ * dates. It is a deliberate trade specific to the foreign path, made with the
+ * cost known: approved 18 Sep, returns 25 Sep now pays 30 Sep instead of the
+ * 10 Oct it would have paid under the later-of-two rule — a month earlier,
+ * not "before the traveller": 30 Sep is after 25 Sep. The case that
+ * genuinely pays ahead of travel is the 1..5 band: approved 2 Oct, trip
+ * 20-28 Oct pays 10 Oct, ten days before the traveller leaves. That is
+ * inherent to the rule as chosen, not a bug in this file.
+ *
+ * A maintainer who notices `foreign` ignoring `travelReturnYmd` in
+ * `payoutDateFor` below will read it as the same mistake this section used to
+ * warn about and "fix" it to match domestic. It is not a mistake; see the
+ * comment at that branch before changing it.
  *
  * ── The two asymmetries a later editor will try to "fix" ──
  *
@@ -124,6 +142,12 @@ export function payoutTripKind(countryCode: string | null | undefined): PayoutTr
  * Null is a refusal, not a fallback to whichever date is present. Falling back
  * to the approval date alone would silently restore the old behaviour for
  * exactly the row whose data is broken, and the difference is a whole month.
+ *
+ * This warning is scoped to the domestic branch — the only caller of this
+ * function. `payoutDateFor` routes ต่างประเทศ around it entirely and reads the
+ * approval date alone on purpose, since 2026-09-21 (see the module header).
+ * That is a deliberate rule for foreign trips, not the silent fallback this
+ * function refuses to perform for ในประเทศ.
  */
 export function payoutDeterminingDate(
   approvalYmd: string | null | undefined,
@@ -162,7 +186,18 @@ export function payoutDateFor(
   approvalYmd: string | null | undefined,
   travelReturnYmd: string | null | undefined,
 ): string | null {
-  return payoutDateForDetermining(kind, payoutDeterminingDate(approvalYmd, travelReturnYmd));
+  // **The two kinds disagree about D, not only about how D maps to a payout
+  // day, and that asymmetry is deliberate** (user, 2026-09-21).
+  //
+  // foreign  D = the manager's approval date. The return date is not read.
+  // domestic D = the later of approval and return, unchanged.
+  //
+  // This reads exactly like a bug — a maintainer who notices `foreign`
+  // ignoring `travelReturnYmd` will "fix" it to match `domestic`. It is not.
+  // See the header for what was given up.
+  const determining =
+    kind === "foreign" ? approvalYmd : payoutDeterminingDate(approvalYmd, travelReturnYmd);
+  return payoutDateForDetermining(kind, determining);
 }
 
 /** Which round a date is, judged by its day alone. */
@@ -260,9 +295,20 @@ export const PAYOUT_RULE_LINES: Record<PayoutTripKind, string[]> = {
   ],
 };
 
-/** The sentence that says which date the bands above are measured against. */
+/**
+ * The sentence that says which date the bands above are measured against.
+ *
+ * Renders once on the queue page, above both kinds' bands, so it has to state
+ * both rules rather than one shared one — since 2026-09-21 the two kinds
+ * genuinely disagree about which date counts (see the `kind === "foreign"`
+ * branch in `payoutDateFor`, and the module header above it). This is not
+ * wording to tidy back into one sentence; a maintainer who merges these two
+ * clauses back into "the later of the two" would be restating the rule
+ * `payoutDateFor` no longer applies to ต่างประเทศ.
+ */
 export const PAYOUT_DETERMINING_NOTE =
-  "นับจากวันที่ช้ากว่า ระหว่างวันที่ผู้จัดการอนุมัติ กับวันที่เดินทางกลับ";
+  "ในประเทศ: นับจากวันที่ช้ากว่า ระหว่างวันที่ผู้จัดการอนุมัติ กับวันที่เดินทางกลับ · " +
+  "ต่างประเทศ: นับจากวันที่ผู้จัดการอนุมัติเท่านั้น";
 
 export const PAYOUT_KIND_LABEL: Record<PayoutTripKind, string> = {
   domestic: "ในประเทศ",

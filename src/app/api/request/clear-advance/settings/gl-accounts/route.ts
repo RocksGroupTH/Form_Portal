@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import {
   clearGlCompanyRule,
   listGlAccountsForCompany,
@@ -11,6 +11,13 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
 
 /**
  * AP-3.2's G/L categories, as one company sees them.
+ *
+ * **Gated on the `glAccounts` grant since 2026-09-22, not `requireRole`.** The
+ * user opened this tab to individual grant holders knowing what it reaches:
+ * these rows carry no `FormCode` and AP-4's own หมวดบัญชี G/L tab edits the
+ * same ones, so a grant here is a grant over AP-4's configuration too. The
+ * grid prints that in Thai under the checkbox. The admin arm is unchanged —
+ * `requireAdvClrSettingsTab` passes exactly the roles `requireRole` did.
  *
  * **`?company=` is required and there is no default here**, even though the
  * screen opens on PCTH. A default in the route would answer PCTH's rules to a
@@ -31,7 +38,7 @@ import { isDimensionType } from "@/lib/clr/gl-dimension";
  *        on one of the company's own chart accounts creates.
  */
 export async function GET(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("glAccounts");
   if (session instanceof Response) return session;
 
   const company = req.nextUrl.searchParams.get("company") ?? "";
@@ -50,7 +57,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAdvClrSettingsTab("glAccounts");
   if (session instanceof Response) return session;
   try {
     const body = (await req.json()) as {

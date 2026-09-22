@@ -10,9 +10,10 @@ import { UatDataBanner } from "@/components/UatDataBanner";
 import { AllowanceHistoryModal } from "./AllowanceHistoryModal";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { useTravelBookingForm } from "@/features/travel-booking/hooks/useTravelBookingForm";
+import { tabNeedsIdCard, useTravelBookingForm } from "@/features/travel-booking/hooks/useTravelBookingForm";
 import { TravelBookingTab } from "./TravelBookingTab";
 import { lockedTravelDates } from "@/features/travel-booking/lib/date-locks";
+import { shouldAskRoomShare } from "@/features/travel-booking/lib/room-share-prompt";
 import { SectionCard, fmtBaht } from "./shared";
 import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
 import type { TravelBookingGroup } from "@/features/travel-booking/types";
@@ -55,12 +56,37 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     reasons, accommodations, vehicles, rentVehicles,
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason, displayRate,
     colleagues, colleaguesLoading, requesterEnvironment,
-    existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
+    existingRanges, otherTrips, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
-    continuationFlags, perDiemEstimates, totalPerDiemEstimate,
+    continuationFlags, continuationSources, perDiemEstimates, totalPerDiemEstimate,
+    settingsMaps,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
   } = form;
+
+  /**
+   * **"พักห้องเดียวกับเพื่อนร่วมงานหรือไม่", asked once per form session**
+   * (the user's point 4, 2026-09-23).
+   *
+   * Three properties, and each of them is why this state is *here* rather
+   * than inside `RoomShareControl`:
+   *
+   * - **once per SESSION, not per tab.** A group is several trips filed in
+   *   one sitting, and the control is re-rendered for whichever tab is
+   *   active; a latch held down there would ask again for each of them, which
+   *   is its own defect. `room-share-prompt.ts` carries the full argument,
+   *   including what that costs somebody whose *second* trip is the shared
+   *   one (they press the button, which is never disabled).
+   * - **"ไม่ใช่" is final.** A `useState` initialiser runs once, so nothing —
+   *   a tab switch, an SWR revalidation, a re-render — can put the question
+   *   back.
+   * - **never on a resumed draft.** `shouldAskRoomShare` reads `initial`,
+   *   which the page has already settled before this component mounts (it
+   *   renders a loading popup until the fetch returns), so a requester who
+   *   saved yesterday is not asked again.
+   */
+  const [askRoomShare, setAskRoomShare] = useState(() => shouldAskRoomShare(initial));
+  const answerRoomSharePrompt = useCallback(() => setAskRoomShare(false), []);
 
   const [triedSubmit, setTriedSubmit] = useState(false);
   const [removeConfirmIndex, setRemoveConfirmIndex] = useState<number | null>(null);
@@ -110,20 +136,38 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
   const overallCanSubmit =
     canSubmit && (employeeLoading || colleaguesLoading || !!shownManager);
 
+  /**
+   * บันทึกร่าง — the footer button, and the one save path anything else reuses.
+   *
+   * It now **returns** what `saveDraft` returned instead of swallowing it, so a
+   * caller that needs the ids can have them without a second save trigger of
+   * its own. `onClick` accepts a handler returning a promise (a `void` return
+   * type admits any value), so the footer button is unaffected.
+   */
   const handleSaveDraft = useCallback(async () => {
     const saved = await saveDraft();
     if (saved) {
       toast.success("บันทึกร่างแล้ว");
       onSaved?.(saved.groupKey);
     }
+    return saved;
   }, [saveDraft, onSaved]);
 
   const handleSubmit = useCallback(async () => {
     setTriedSubmit(true);
     if (!overallCanSubmit) {
-      toast.error("กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ");
       // Jump to the first tab with a missing field and focus it (else the requester/manager at top).
       const badTab = tabIssues.findIndex((iss) => iss.length > 0);
+      // `FieldIssue.label` was never rendered anywhere on this page before —
+      // the red border on the field itself was the only signal, which is
+      // enough when the border sits on an empty required field but says
+      // nothing when it sits on a FILLED one, as the date-overlap check
+      // does. Showing the first blocking issue's own label here is what
+      // makes that message (and every other field's) reach the screen at
+      // all; it replaces the fully generic string only when there is a
+      // specific one to show.
+      const firstLabel = badTab >= 0 ? tabIssues[badTab][0]?.label : null;
+      toast.error(firstLabel ?? "กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ");
       if (badTab >= 0) {
         const key = tabIssues[badTab][0]?.key;
         if (badTab !== activeTabIndex) setActiveTabIndex(badTab);
@@ -419,6 +463,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         <TravelBookingTab
           tab={activeTab}
           isContinuation={continuationFlags[activeTabIndex] ?? false}
+          continuationSource={continuationSources[activeTabIndex] ?? { kind: "none" }}
           perDiemEstimate={
             perDiemEstimates[activeTabIndex] ?? {
               days: 0,
@@ -433,10 +478,23 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           vehicles={vehicles}
           rentVehicles={rentVehicles}
           disabledTravelDates={lockedDates}
+          otherTrips={otherTrips}
           issues={tabIssues[activeTabIndex] ?? []}
+          // The same call `validateTab` makes, so the block the requester sees
+          // and the complaint about its absence can never disagree.
+          needsIdCard={tabNeedsIdCard(activeTab, settingsMaps)}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}
+          // The same department list the เปลี่ยนผู้ขอเบิก picker above opens
+          // on — AP-17's พักห้องเดียวกับ picker asks the same question of the
+          // same roster and reuses the same modal, so it takes the same list
+          // rather than fetching a second copy of it.
+          colleagues={colleagues}
           brands={brands}
+          // The opening question, and the one answer that turns it off for
+          // this whole session — see `askRoomShare`'s own docblock above.
+          askRoomShare={askRoomShare}
+          onAskAnswered={answerRoomSharePrompt}
           onChange={(patch) => updateTab(activeTabIndex, patch)}
           onSelectPendingIdCard={(file) => updateTab(activeTabIndex, { pendingIdCard: file })}
           onRemoveIdCardFile={(fileId) => removeIdCardFile(activeTabIndex, fileId)}

@@ -21,38 +21,45 @@
  * is what makes `AccReimburseApprover.IsActive` true; the two tables never
  * merge, only the screen does.
  *
- * **Four of the six tabs are not grantable.** AP-1 and AP-17 each exclude
- * one for the first reason below; AP-4 excludes two more for the reason
- * CLAUDE.md gives for AP-1's own `erpInterface` grant ("Do not grant
- * `erpInterface` to a non-admin yet"):
+ * **One of the six tabs is not grantable, and it is `access`** — the
+ * สิทธิ์เข้าถึง tab itself. Whoever can open it can grant themselves
+ * everything else, which is the reason both siblings give, and sharper here
+ * since the same grid also carries the brand ticks that make somebody an
+ * approver. Its route stays `requireRole` on every method.
  *
- * - `access` — the สิทธิ์เข้าถึง tab itself. Whoever can open it can grant
- *   themselves everything else, which is the reason both siblings give — and
- *   sharper now, since the same grid also carries the brand ticks that make
- *   somebody an approver.
+ * **`erpInterface`, `glAccounts` and `buGlMap` became grantable on
+ * 2026-09-22** (user: *"ของ AP-3,4 ก็ต้อง เปิด check box ทุกอันและตัดช่อง
+ * สิทธิ์เข้าถึง ออกเหมือนกัน"*). Until that day each was excluded, and the
+ * reasons were real — they were put to the user before the change and
+ * **accepted**, so what follows is now a statement of what a tick reaches
+ * rather than a reason it cannot be given:
+ *
  * - `erpInterface` — AP-4's own Business Central posting configuration
- *   (journal batch, bank account, branch code per brand). Unlike AP-1, where
- *   this same tab **is** grantable, AP-4's version is gated but **not
- *   brand-scoped**: a brand-scoped approver holding the grant could set
- *   another brand's posting configuration, exactly the gap CLAUDE.md records
- *   for AP-1's `gl-accounts` / `bank-accounts` / `journal-batches` /
- *   `branch-codes` routes. Excluding it here is what keeps that gap from
- *   being handed to anyone at all until it is closed. Its route stays
- *   `requireRole` rather than `requireReimburseSettingsTab`.
+ *   (journal batch, bank account, branch code per brand). It is gated but
+ *   **not brand-scoped**, so a brand-scoped approver holding the grant can set
+ *   **another** brand's posting configuration — exactly the gap CLAUDE.md
+ *   records for AP-1's `gl-accounts` / `bank-accounts` / `journal-batches` /
+ *   `branch-codes` routes. AP-1's own `erpInterface` tab has been grantable
+ *   all along with that same gap; AP-4 now matches it deliberately.
  * - `glAccounts` — which of a company's accounts AP-3 may charge at all, and
  *   what dimension a line charging one must carry. **The rows are AP-3's**
- *   (`AccClearAdvanceGl` / `AccClearAdvanceGlCompany`), so a grant here would
- *   be a grant over another form's configuration — `buGlMap`'s reason exactly.
- * - `buGlMap` — which account an expense posts to, by BU and by branch. Not
- *   brand-scoped either, and sharper still: **the rows are AP-3's**
- *   (`AccClrBuGlMap` / `AccClrBranchGlMap`, no `FormCode` column), so a grant
- *   here would be a grant over another form's posting rules. Its route is
- *   `requireRole` for the same reason.
+ *   (`AccClearAdvanceGl` / `AccClearAdvanceGlCompany`), so a grant here is a
+ *   grant over another form's configuration.
+ * - `buGlMap` — which account an expense posts to, by BU and by branch. **The
+ *   rows are AP-3's** too (`AccClrBuGlMap` / `AccClrBranchGlMap`, no
+ *   `FormCode` column), so a grant here is a grant over another form's
+ *   posting rules.
  *
- * Both exclusions are enforced in `decideReimburseTabAccess`, not by a
- * database constraint. `AccReimburseAccessTab` has no CHECK on `TabKey` and is
- * writable from more than one place, so a row naming any string can appear;
- * the grantable test is what makes such a row inert.
+ * Each of the three carries a `note` below, which the grid prints under the
+ * table, so the admin ticking the box reads the reach rather than discovering
+ * it. **`note` is not `adminOnly` renamed** — one says what a tick reaches,
+ * the other says a tick is impossible, and a later edit that collapses them
+ * would either hide the warning or take the grant away.
+ *
+ * That exclusion is enforced in `decideReimburseTabAccess`, not by a database
+ * constraint. `AccReimburseAccessTab` has no CHECK on `TabKey` and is writable
+ * from more than one place, so a row naming any string can appear; the
+ * grantable test is what makes such a row inert.
  *
  * This module imports nothing, so it is unit-tested without a database:
  * anything reachable from a pool drags `@/env` in, which validates the whole
@@ -95,9 +102,24 @@ export const REIMBURSE_SETTINGS_TAB_ORDER = [
 
 export type ReimburseSettingsTabKey = (typeof REIMBURSE_SETTINGS_TAB_ORDER)[number];
 
-/** The two keys an admin can tick. `erpInterface` is deliberately not one of
- *  them — see the module docblock. */
-export type GrantableReimburseTabKey = Extract<ReimburseSettingsTabKey, "rules" | "brands">;
+/**
+ * The keys an admin can tick — **every settings tab except `access`** since
+ * 2026-09-22; see the module docblock for what the three opened that day
+ * reach.
+ *
+ * Written as `Exclude<…, "access">` rather than a list of the five, so the
+ * five follow the strip. **Be clear about which way that defaults**: a tab
+ * added to the strip becomes grantable unless it is excluded here, which is
+ * fail-OPEN for a tab nobody has thought about. Two things make that
+ * acceptable rather than a trap. The grid's columns and the type come from one
+ * constant, so a new tab cannot be tickable on screen and ungrantable in code
+ * — the mismatch this change existed to remove. And
+ * `settings-route-gates.test.ts` asserts both directions: every tab-gated
+ * route names a key an admin can tick, **and** every grantable key has a
+ * tab-gated route. A new tab whose route is left `requireRole` therefore fails
+ * the suite rather than shipping as a tick that grants nothing.
+ */
+export type GrantableReimburseTabKey = Exclude<ReimburseSettingsTabKey, "access">;
 
 /**
  * Every settings tab, in strip order, with its label and whether it can be
@@ -117,21 +139,21 @@ export type GrantableReimburseTabKey = Extract<ReimburseSettingsTabKey, "rules" 
  */
 const REIMBURSE_ALL_TAB_META: Record<
   ReimburseSettingsTabKey,
-  { label: string; adminOnly?: string }
+  { label: string; adminOnly?: string; note?: string }
 > = {
   brands: { label: "แบรนด์ที่เบิกได้" },
   rules: { label: "ระเบียบการจ่าย" },
   glAccounts: {
     label: "หมวดบัญชี G/L",
-    adminOnly: "เป็นข้อมูลของ AP-3 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+    note: "เป็นข้อมูลชุดเดียวกับ AP-3 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
   },
   buGlMap: {
     label: "Fix G/L by BU or Branch",
-    adminOnly: "เป็นกฎของ AP-3 — ให้สิทธิ์ข้ามฟอร์มไม่ได้",
+    note: "เป็นกฎชุดเดียวกับ AP-3 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
   },
   erpInterface: {
     label: "Interface ERP",
-    adminOnly: "ตัดสินว่าเงินลงบัญชีไหน และไม่ได้จำกัดตามแบรนด์",
+    note: "ตั้งค่าบัญชีธนาคาร Journal Batch และ Branch Code ได้ทุกแบรนด์ ไม่จำกัดเฉพาะแบรนด์ที่ตนอนุมัติ",
   },
   access: { label: "สิทธิ์เข้าถึง", adminOnly: "หน้านี้เอง — ให้สิทธิ์ตัวเองต่อได้" },
 };
@@ -141,6 +163,15 @@ export const ALL_REIMBURSE_TABS: readonly {
   label: string;
   /** Set when the tab can never be granted; the text says why. */
   adminOnly?: string;
+  /**
+   * Set when the tab CAN be granted but reaches further than its label says.
+   *
+   * Deliberately a different field from `adminOnly`, not a rename of it: one
+   * is a warning printed beside a live checkbox, the other is the reason there
+   * is no checkbox. Collapsing them would either hide the warning or withdraw
+   * the grant. AP-2 / AP-3's `ALL_ADV_CLR_TABS` carries the same pair.
+   */
+  note?: string;
 }[] = REIMBURSE_SETTINGS_TAB_ORDER.map((key) => ({ key, ...REIMBURSE_ALL_TAB_META[key] }));
 
 /**
@@ -153,17 +184,23 @@ export const ALL_REIMBURSE_TABS: readonly {
 const REIMBURSE_TAB_LABELS: Record<GrantableReimburseTabKey, string> = {
   brands: "แบรนด์ที่เบิกได้",
   rules: "ระเบียบการจ่าย",
+  glAccounts: "หมวดบัญชี G/L",
+  buGlMap: "Fix G/L by BU or Branch",
+  erpInterface: "Interface ERP",
 };
 
 /**
  * Display order — filtered from the page's own tab order rather than written
  * out again, so the checkbox columns cannot drift from the tab strip.
+ *
+ * The predicate is `key !== "access"`, not a list of the five: one statement
+ * of which tab cannot be handed out, in the same place the type makes it.
  */
 export const GRANTABLE_REIMBURSE_TABS: readonly {
   key: GrantableReimburseTabKey;
   label: string;
 }[] = REIMBURSE_SETTINGS_TAB_ORDER.filter(
-  (key): key is GrantableReimburseTabKey => key === "rules" || key === "brands",
+  (key): key is GrantableReimburseTabKey => key !== "access",
 ).map((key) => ({ key, label: REIMBURSE_TAB_LABELS[key] }));
 
 export function isGrantableReimburseTabKey(key: string): boolean {

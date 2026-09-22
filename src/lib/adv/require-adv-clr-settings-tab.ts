@@ -17,6 +17,14 @@ import { decideAdvClrTabAccess, decideAdvClrMenuAccess } from "@/lib/adv/setting
  * change AP-2's approval matrix or bank master, AP-3's Location / BU mapping,
  * or the brand allowlist both forms share.
  *
+ * **It widened again on 2026-09-22, on the user's instruction and with the
+ * reach put to them first.** `advanceErpInterface` / `clearErpInterface`,
+ * `glAccounts` and `buGlMap` are grantable now, so a holder can set where
+ * money posts for **any** brand — these routes are gated but not brand-scoped —
+ * and can edit the G/L rules AP-3 shares with AP-4, which carry no `FormCode`.
+ * `./settings-tabs`' module docblock states both in full; the grid prints a
+ * Thai line under each of the three so the tick is not made blind.
+ *
  * Three things keep it narrow:
  *
  * - **the admin arm is unchanged** — `isAdminRole` is exactly the pair
@@ -26,14 +34,21 @@ import { decideAdvClrTabAccess, decideAdvClrMenuAccess } from "@/lib/adv/setting
  *   joined to `AccAdvClrAccessTab`. `resolveAdvClrTabsByEmail` matches only
  *   `IsActive = 1`, so deactivating someone revokes everything without touching
  *   a grant row;
- * - **`decideAdvClrTabAccess` makes the decision.** It is where `access` and
- *   `erpInterface` are refused unconditionally for a non-admin, whatever the
- *   grant table says. Testing grant-list membership here instead would be a
- *   second copy of that rule, and only one of the two would ever be corrected.
+ * - **`decideAdvClrTabAccess` makes the decision.** It is where `access` is
+ *   refused unconditionally for a non-admin, whatever the grant table says.
+ *   Testing grant-list membership here instead would be a second copy of that
+ *   rule, and only one of the two would ever be corrected.
  *
- * The two routes that hand out power — `settings/access` on either form — stay
- * on `requireRole` for every method, and so does `settings/erp-interface`; see
- * `./settings-tabs` for why each is excluded.
+ * `settings/access` on either form stays on `requireRole` for every method —
+ * it is the route that hands out the grants, and here it also edits both
+ * approver pools. **So do the routes that write `Rocks_ERP_Data`** —
+ * `advance/settings/vendors/sync`, `clear-advance/settings/erp-sync` and
+ * `clear-advance/settings/locations/sync`. Those are not this app's private
+ * rows: Rocks Fast writes the neighbouring tables and ACC Portal reads them
+ * through `Fast_Data`'s synonyms, and CLAUDE.md's standing rule is that a tab
+ * grant must never become write access to them. A grant holder therefore works
+ * the tab and the sync button beside it answers 403 — a partial capability,
+ * deliberately, and the only one of its kind here.
  *
  * Both return the session, or the `Response` to return — the same shape
  * `requireAuth()` uses, so a handler stays two lines.

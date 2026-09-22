@@ -31,6 +31,8 @@ export const SETTINGS_KIND_ROUTES = {
     upsert: (
       // Superset of every kind's payload — reasons/accommodations/rent use requiresCustomReason;
       // vehicles use the needs* flags + places. Each concrete upsert reads only what it needs.
+      // requiresIdCard (package C, migration 154) is read by accommodations, vehicles and
+      // rent-vehicles — not reasons.
       row: {
         id?: number;
         name: string;
@@ -44,6 +46,7 @@ export const SETTINGS_KIND_ROUTES = {
         needsTicketBooking?: boolean;
         needsDepartTime?: boolean;
         needsVehicleRent?: boolean;
+        requiresIdCard?: boolean;
         places?: string[];
       },
       userId: number,

@@ -19,6 +19,15 @@ import {
  * it is a genuine privilege expansion: a non-admin holding a grant can now
  * change AP-4's payment-rule checklist or its brand allowlist.
  *
+ * **It widened again on 2026-09-22, on the user's instruction and with the
+ * reach put to them first.** `erpInterface`, `glAccounts` and `buGlMap` are
+ * grantable now, so a holder can set where AP-4's money posts for **any**
+ * brand — this tab is gated but not brand-scoped — and can edit the G/L
+ * register and the BU/branch rules AP-4 shares with AP-3, which carry no
+ * `FormCode`. `./settings-tabs`' module docblock states both in full; the
+ * สิทธิ์เข้าถึง grid prints a Thai line under each of the three so the tick is
+ * not made blind.
+ *
  * Three things keep it narrow:
  *
  * - **the admin arm is unchanged** — `isAdminRole` is exactly the pair
@@ -40,6 +49,14 @@ import {
  * the per-brand approval ticks (`AccReimburseApproverBrand`) rendered on the
  * same grid. The former `settings/approvers` route is gone; there is no
  * second route to name here any more.
+ *
+ * **`settings/erp-sync` also stays on `requireRole`, and it is the one place a
+ * grant is deliberately partial.** It is the sync button *inside* the
+ * หมวดบัญชี G/L and Fix G/L by BU or Branch tabs, but it writes
+ * `Rocks_ERP_Data` — rows Rocks Fast also writes and ACC Portal reads through
+ * `Fast_Data`'s synonyms — and CLAUDE.md's standing rule is that a tab grant
+ * must never become write access to them. So a grant holder works those two
+ * tabs and the "ดึงจาก BC" button beside them answers 403.
  *
  * Returns the session, or the `Response` to return — the same shape
  * `requireAuth()` uses, so a handler stays two lines.

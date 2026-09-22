@@ -78,6 +78,47 @@
 -- admin sees exactly what they saw before and a non-admin sees exactly what
 -- they saw before -- nothing. This is a capability an admin can now hand out,
 -- not one anybody has been handed.
+--
+-- ============================================================================
+-- AMENDED 2026-09-22 -- THE SCREEN SPLIT PER FORM. THIS TABLE DID NOT.
+-- ============================================================================
+--
+-- User instruction: "สิทธิ์เข้าถึง AP-2 จะใช้แค่ AP-2 เท่านั้น และ สิทธิ์เข้าถึง AP-3
+-- ก็ใช้แค่ AP-3 เท่านั้น ปรับให้แยกกันเหมือนของ AP-4". Each form's settings page
+-- now shows and saves only its own keys.
+--
+-- NO MIGRATION WAS NEEDED, AND THE "NO FormCode" ARGUMENT ABOVE IS WHY.
+-- That paragraph still stands and was not reversed: there is still one row per
+-- person, still no FormCode, still one answer rather than a default and an
+-- override. What split is the SCREEN and the WRITE, both in code -- the keys
+-- had named their form since the day this shipped, so the partition was
+-- already in the data and only the UI was pooling it. Adding a FormCode now
+-- would reintroduce exactly the NULL-means-what question that paragraph
+-- rejects, and buy nothing the key names do not already give.
+--
+-- THE WRITE IS THE PART THAT CHANGED, AND IT MATTERS TO THIS TABLE.
+-- src/lib/adv/access-service.ts used to clear a person's grants with
+--   DELETE FROM AccAdvClrAccessTab WHERE AccessId = @aid
+-- which was correct only while one screen posted every key somebody held. With
+-- two screens it deletes the other form's grants on every save. It is now
+-- bounded -- AND TabKey IN (...) over that form's own keys -- and the partition
+-- it binds to is asserted disjoint and covering in settings-tabs.test.ts.
+-- Anything else that ever writes this table must be bounded the same way.
+--
+-- WHAT IS STILL SHARED, because the roster did not split:
+--   * membership -- adding somebody on one form's page lists them on the
+--     other's (harmless: membership alone grants nothing, as above);
+--   * IsActive -- resolveAdvClrTabsByEmail tests it, so ปิดสิทธิ์ on either
+--     page revokes BOTH forms' grants. Both settings screens say so.
+--
+-- ONE CORRECTION TO THE VOCABULARY LIST ABOVE, which predates this amendment
+-- and is not caused by it: 'glAccounts' is listed there as a grantable settings
+-- tab and has never been one in code. It and 'buGlMap' are refused by
+-- GRANTABLE_ADV_CLR_TABS for the reason AP-4 gives for the same two keys --
+-- those rows are AP-3's own G/L rules, shared with AP-4 and carrying no
+-- FormCode, so a grant would reach another form's posting configuration. The
+-- original lines are left as written; this is the accurate list of what may be
+-- ticked: 'brands' | 'matrix' | 'banks' | 'locations', plus the four menus.
 SET XACT_ABORT ON;
 GO
 

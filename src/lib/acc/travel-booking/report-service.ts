@@ -191,32 +191,61 @@ const BASE_CTE = `
       (SELECT SUM(bd.TotalAmountBaht)
          FROM [dbo].[AccTravelBookingDetail] bd
         WHERE bd.TravelBookingId = t.Id) AS BookingTotalBaht,
-      -- Matched the same way isContinuation was decided at save time: same
-      -- group, an earlier SortOrder, a ReturnDate touching this DepartDate.
-      -- Nearest earlier sibling wins.
-      (SELECT TOP 1 pr.RequestNo
-         FROM [dbo].[AccTravelBooking] pt
-         INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-        WHERE pt.GroupKey = t.GroupKey
-          AND pt.SortOrder < t.SortOrder
-          AND pt.ReturnDate = t.DepartDate
-        ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestNo,
-      (SELECT TOP 1 pr.Id
-         FROM [dbo].[AccTravelBooking] pt
-         INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
-        WHERE pt.GroupKey = t.GroupKey
-          AND pt.SortOrder < t.SortOrder
-          AND pt.ReturnDate = t.DepartDate
-        ORDER BY pt.SortOrder DESC, pt.Id DESC) AS ContinuationFromRequestId,
+      cont.RequestNo AS ContinuationFromRequestNo,
+      cont.Id AS ContinuationFromRequestId,
       (SELECT STRING_AGG(wl.Name, N', ') WITHIN GROUP (ORDER BY wl.SortOrder, wl.Id)
        FROM [dbo].[AccTravelWorkLocation] wl
        WHERE wl.TravelBookingId = t.Id) AS WorkLocationsCsv,
+      -- The room-share host's running number, for a guest (package E; final
+      -- review I3). A guest has no accommodation of its own, so both the
+      -- report table and its Excel export printed an EMPTY accommodation cell
+      -- beside a full per-diem figure -- and since package B "no
+      -- accommodation" means "no per diem", so every reader saw a row that
+      -- appears to break that rule and pay anyway. This is what the cell says
+      -- instead. Display only: nothing here re-answers the room question,
+      -- which is the report's documented position as the fourth,
+      -- non-consuming reader of that fact.
+      --
+      -- TOP 1 rather than a JOIN, for IS_ROOM_SHARE_GUEST_COLUMN's reason:
+      -- UQ_AccTravelRoomShare_Guest already makes at most one row match, and
+      -- a JOIN a later edit points at HostRequestId would fan the outer row
+      -- out silently while this cannot.
+      (SELECT TOP 1 hrq.RequestNo
+         FROM [dbo].[AccTravelRoomShare] rs
+         INNER JOIN [dbo].[AccRequest] hrq ON hrq.Id = rs.HostRequestId
+        WHERE rs.GuestRequestId = r.Id) AS RoomShareHostRequestNo,
       (SELECT TOP 1 a.ActionedAt
        FROM [dbo].[AccApproval] a
        WHERE a.RequestId = r.Id AND a.StepCode = N'MANAGER' AND a.Status = N'Approved'
        ORDER BY a.ActionedAt DESC) AS ApprovedDate
     FROM [dbo].[AccRequest] r
     INNER JOIN [dbo].[AccTravelBooking] t ON t.RequestId = r.Id
+    -- ONE row source for both continuation columns (fix round 1, 2026-09-22) —
+    -- the identical change made to the same pair of subqueries in
+    -- getTravelBookingRequest (request-service.ts), which carries the full
+    -- reasoning (why GroupKey stopped matching once the continuation chain
+    -- widened to a requester's whole calendar, why Cancelled/Rejected are
+    -- excluded, why pt.RequestId <> r.Id is now needed, why the ORDER BY
+    -- tiebreak only ever fires on legacy rows, and why OUTER APPLY rather
+    -- than two scalar subqueries — the previous shape let an ORDER BY
+    -- regression on only one of the pair name a DIFFERENT trip's RequestNo
+    -- beside this trip's Id). Both copies must move together, or the report
+    -- and the detail page can name a different predecessor for the same
+    -- request.
+    OUTER APPLY (
+      SELECT TOP 1 pr.RequestNo, pr.Id
+        FROM [dbo].[AccTravelBooking] pt
+        INNER JOIN [dbo].[AccRequest] pr ON pr.Id = pt.RequestId
+       WHERE pr.FormCode = N'AP-17'
+         AND pr.Status NOT IN ('Draft', 'Cancelled', 'Rejected')
+         AND (
+           (r.StaffId IS NOT NULL AND pr.StaffId = r.StaffId)
+           OR (r.EmployeeId IS NOT NULL AND pr.EmployeeId = r.EmployeeId)
+         )
+         AND pt.RequestId <> r.Id
+         AND pt.ReturnDate = t.DepartDate
+       ORDER BY pt.DepartDate DESC, pt.SortOrder DESC, pt.Id DESC
+    ) cont
     WHERE r.FormCode = N'AP-17' AND r.Status <> N'Draft'
   )
 `;
@@ -352,7 +381,13 @@ export async function queryTravelBookingReport(
       departDate,
       returnDate,
       provinceName: (x.ProvinceName as string) ?? null,
-      accommodationName: combineNameCustom(x.AccommodationName as string, x.AccommodationCustomText as string),
+      // A room-share guest's cell names the host instead of being blank —
+      // see the column's own comment in BASE_CTE. The Excel export reads this
+      // same field, so both surfaces are fixed by the one expression rather
+      // than by two that could drift.
+      accommodationName: (x.RoomShareHostRequestNo as string | null)
+        ? `พักห้องร่วมกับ ${x.RoomShareHostRequestNo as string}`
+        : combineNameCustom(x.AccommodationName as string, x.AccommodationCustomText as string),
       workLocationsCsv: (x.WorkLocationsCsv as string) ?? null,
       approvedDate: x.ApprovedDate ? ymd(x.ApprovedDate as Date) : null,
       status: x.Status as TravelBookingStatus,

@@ -58,8 +58,25 @@ export function computePerDiem(
   departDate: string,
   returnDate: string,
   isContinuation: boolean,
-  log: AllowanceLogEntry[]
+  log: AllowanceLogEntry[],
+  opts?: {
+    /**
+     * Whether this trip books a room. **Absent means true** — every caller that
+     * predates the 2026-09-21 rule keeps its behaviour.
+     */
+    roomBooked?: boolean;
+  }
 ): { days: number; total: number; groups: { rate: number; days: number }[] } {
+  // **No accommodation booked, no per diem** (user, 2026-09-21): the cut is the
+  // booking, not the calendar, so a three-night trip staying with relatives
+  // pays nothing. Zero days is a real answer here — never null, never a throw —
+  // because this figure is written straight into AccRequest.TotalAmount.
+  //
+  // There is exactly ONE exception and it is package E: a requester who picks
+  // พักห้องเดียวกับ books no room of their own and DOES get per diem. That
+  // caller passes `roomBooked: true`; the exception lives there, not here.
+  if (opts?.roomBooked === false) return { days: 0, total: 0, groups: [] };
+
   const days: string[] = [];
   const cursor = parseDateKey(departDate);
   const end = parseDateKey(returnDate);

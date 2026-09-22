@@ -48,12 +48,61 @@ test("Part 2 · Case 1 — approved 06/09, returns 20/09 → end of September", 
   assert.equal(payoutDateFor("foreign", "2026-09-06", "2026-09-20"), "2026-09-30");
 });
 
-test("Part 2 · Case 2 — approved 06/09, returns 21/09 → 10 October", () => {
-  assert.equal(payoutDateFor("foreign", "2026-09-06", "2026-09-21"), "2026-10-10");
+test("Part 2 · Case 2 — approved 06/09, returns 21/09 → end of September", () => {
+  // Moved from "2026-10-10" by the 2026-09-21 rule change: foreign now pays on
+  // the approval date alone, so the later return date (21) is no longer read
+  // and only the approval date's own band (06 -> 6..20) applies.
+  assert.equal(payoutDateFor("foreign", "2026-09-06", "2026-09-21"), "2026-09-30");
 });
 
 test("Part 2 · Case 3 — approved 21/09, returns 20/09 → 10 October", () => {
   assert.equal(payoutDateFor("foreign", "2026-09-21", "2026-09-20"), "2026-10-10");
+});
+
+/* ── 2026-09-21: foreign pays on the approval date alone ────────────────── */
+
+test("foreign pays on the approval date alone — the return date is not read", () => {
+  // One approval date, three very different return dates, one answer. Before
+  // 2026-09-21 the later of the two won, so these gave three answers.
+  assert.equal(payoutDateFor("foreign", "2026-09-18", "2026-09-19"), "2026-09-30");
+  assert.equal(payoutDateFor("foreign", "2026-09-18", "2026-09-25"), "2026-09-30");
+  assert.equal(payoutDateFor("foreign", "2026-09-18", "2026-12-31"), "2026-09-30");
+});
+
+test("the worked case: foreign and domestic differ, side by side", () => {
+  // Approved 18 Sep, returns 25 Sep.
+  //   foreign  D = 18 Sep (approval)          -> 6..20 -> 30 Sep
+  //   domestic D = 25 Sep (the later of them) -> >20   -> 31 Oct
+  // Asserted together because each reads like the other's bug, and the file
+  // already pairs the 1..5 asymmetry this way for the same reason.
+  assert.equal(payoutDateFor("foreign", "2026-09-18", "2026-09-25"), "2026-09-30");
+  assert.equal(payoutDateFor("domestic", "2026-09-18", "2026-09-25"), "2026-10-31");
+});
+
+test("foreign still answers when the trip has no return date", () => {
+  // It never read the return date, so a null one cannot refuse any more.
+  assert.equal(payoutDateFor("foreign", "2026-09-18", null), "2026-09-30");
+  assert.equal(payoutDateFor("foreign", "2026-09-22", undefined), "2026-10-10");
+});
+
+test("domestic still refuses when the trip has no return date", () => {
+  // Unchanged: domestic needs both, and payoutDeterminingDate answers null.
+  assert.equal(payoutDateFor("domestic", "2026-09-18", null), null);
+});
+
+test("foreign bands are unchanged, now measured on the approval date", () => {
+  assert.equal(payoutDateFor("foreign", "2026-09-03", null), "2026-09-10"); // 1..5
+  assert.equal(payoutDateFor("foreign", "2026-09-06", null), "2026-09-30"); // 6..20
+  assert.equal(payoutDateFor("foreign", "2026-09-20", null), "2026-09-30"); // 6..20
+  assert.equal(payoutDateFor("foreign", "2026-09-21", null), "2026-10-10"); // 21..end
+  assert.equal(payoutDateFor("foreign", "2026-09-30", null), "2026-10-10"); // 21..end
+});
+
+test("payoutDeterminingDate itself is untouched — it is still the later of two", () => {
+  // It stays correct and stays exported: domestic uses it. Pinned so a future
+  // edit changes payoutDateFor's branch rather than this shared helper.
+  assert.equal(payoutDeterminingDate("2026-09-18", "2026-09-25"), "2026-09-25");
+  assert.equal(payoutDeterminingDate("2026-09-25", "2026-09-18"), "2026-09-25");
 });
 
 /* ── The determining date itself ────────────────────────────────────────── */

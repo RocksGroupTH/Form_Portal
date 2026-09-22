@@ -31,6 +31,7 @@ export interface AccommodationOption {
   id: number;
   isActive: boolean;
   needsRoomBooking: boolean;
+  requiresIdCard: boolean;
 }
 
 /** One go/return vehicle option. */
@@ -41,6 +42,7 @@ export interface VehicleFlagOption {
   needsTicketBooking: boolean;
   needsDepartTime: boolean;
   needsVehicleRent: boolean;
+  requiresIdCard: boolean;
 }
 
 /** One rent-vehicle option. */
@@ -48,6 +50,7 @@ export interface RentVehicleOption {
   id: number;
   isActive: boolean;
   needsRentBooking: boolean;
+  requiresIdCard: boolean;
 }
 
 /** Every flag `AccTravelBooking` stores, and nothing else. */
@@ -62,6 +65,7 @@ export interface DerivedBookingFlags {
   returnNeedsDepartTime: boolean;
   returnNeedsVehicleRent: boolean;
   needsRentBooking: boolean;
+  needsIdCard: boolean;
 }
 
 export const NO_BOOKING_FLAGS: DerivedBookingFlags = {
@@ -75,6 +79,7 @@ export const NO_BOOKING_FLAGS: DerivedBookingFlags = {
   returnNeedsDepartTime: false,
   returnNeedsVehicleRent: false,
   needsRentBooking: false,
+  needsIdCard: false,
 };
 
 function vehicleFlags(option: VehicleFlagOption | null) {
@@ -129,6 +134,16 @@ export function deriveBookingFlags(options: {
       options.rentVehicle !== null
         ? options.rentVehicle.needsRentBooking
         : go.vehicleRent || back.vehicleRent,
+    // **Derived, never posted** — the same rule the rest of this module states
+    // and for the same reason: a client posting `needsIdCard: false` beside a
+    // hotel that requires one must not be believed. ANY selected option that
+    // requires a card makes the request require one; a null option contributes
+    // nothing, because an unselected vehicle asks for no identification.
+    needsIdCard:
+      (options.accommodation?.requiresIdCard ?? false) ||
+      (options.goVehicle?.requiresIdCard ?? false) ||
+      (options.returnVehicle?.requiresIdCard ?? false) ||
+      (options.rentVehicle?.requiresIdCard ?? false),
   };
 }
 

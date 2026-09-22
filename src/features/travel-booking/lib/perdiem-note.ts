@@ -53,6 +53,36 @@ export const PER_DIEM_UNRATED_NOTE =
   "บางวันยังไม่มีเรทที่มีผลครอบคลุม จึงคิดเป็น ฿0 — ตรวจวันที่เริ่มมีผลของเรทที่ตั้งไว้";
 
 /**
+ * Which line, if any, explains a ฿0 per-diem figure caused by the
+ * room-booking rule (package B, 2026-09-21: no room booked, no per diem) —
+ * as opposed to an unrated day (`PER_DIEM_UNRATED_NOTE`) or an unresolved
+ * country rate (`perDiemAttributionNote`'s `"pending"` line), each of which
+ * already says why in its own way.
+ *
+ * **Two different zeros, two different lines** (Task 8 fix round 1). A
+ * CHOSEN accommodation that books no room is a settled, correct answer — the
+ * trip does not earn per diem, by design, exactly the user's rule
+ * ("ถ้าไม่พักค้างคืนจะไม่ได้เบี้ยเลี้ยง") — so it says that outright. NO
+ * accommodation chosen yet is not that: the figure is not wrong, it simply
+ * is not known yet, and before this both states rendered the identical bare
+ * ฿0 with nothing on screen saying why — "why is my per diem zero" is
+ * precisely the question this whole package exists to answer on screen.
+ */
+export function roomBookingNote(accommodationId: number | null, needsRoomBooking: boolean): string | null {
+  if (accommodationId == null) return ACCOMMODATION_PENDING_NOTE;
+  if (!needsRoomBooking) return ROOM_NOT_BOOKED_NOTE;
+  return null;
+}
+
+/** A chosen accommodation that books no room — a settled ฿0, by design. */
+export const ROOM_NOT_BOOKED_NOTE =
+  "ที่พักที่เลือกไม่ต้องจองห้อง (ไม่พักค้างคืน) จึงไม่มีเบี้ยเลี้ยงสำหรับทริปนี้";
+
+/** No accommodation chosen yet — a pending ฿0, not a settled one. */
+export const ACCOMMODATION_PENDING_NOTE =
+  "ยังไม่ได้เลือกที่พัก ยอดเบี้ยเลี้ยงจึงยังไม่แสดง — เลือกที่พักเพื่อดูยอดประมาณการ";
+
+/**
  * Which rate priced the trip, as the CARD has to say it — four states, not
  * `perDiemLogFor`'s two.
  *

@@ -1,9 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ACCOMMODATION_PENDING_NOTE,
   hasUnratedDay,
   perDiemAttributionFootnote,
   perDiemAttributionNote,
+  ROOM_NOT_BOOKED_NOTE,
+  roomBookingNote,
 } from "./perdiem-note";
 
 /**
@@ -84,6 +87,21 @@ test("the footnote follows the attribution, and only a country rate drops HR", (
   // Unconfigured really is priced from HR, so its footnote must still say HR.
   assert.ok(perDiemAttributionFootnote({ kind: "unconfigured", countryCode: "JP" }).indexOf("HR") > 0);
   assert.ok(perDiemAttributionFootnote({ kind: "pending", countryCode: "GB" }).indexOf("ส่งคำขอ") > 0);
+});
+
+/* ── roomBookingNote: two different ฿0s get two different lines (Task 8 fix round 1) ── */
+
+test("a booked room needs no note — the figure is not withheld", () => {
+  assert.equal(roomBookingNote(7, true), null);
+});
+
+test("a chosen accommodation that books no room states the settled reason", () => {
+  assert.equal(roomBookingNote(7, false), ROOM_NOT_BOOKED_NOTE);
+});
+
+test("no accommodation chosen yet states the figure is pending, not the settled reason", () => {
+  assert.equal(roomBookingNote(null, false), ACCOMMODATION_PENDING_NOTE);
+  assert.notEqual(ACCOMMODATION_PENDING_NOTE, ROOM_NOT_BOOKED_NOTE);
 });
 
 /**

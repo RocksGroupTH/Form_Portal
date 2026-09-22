@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Briefcase, Calendar, Car, FileCheck, History, Hotel, Landmark, MapPin, StickyNote } from "lucide-react";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import {
@@ -9,6 +11,7 @@ import {
   perDiemAttributionFootnote,
   perDiemAttributionNote,
   PER_DIEM_UNRATED_NOTE,
+  roomBookingNote,
   type PerDiemAttribution,
 } from "@/features/travel-booking/lib/perdiem-note";
 import { ratedSegments, tripRateLead, unratedNote } from "@/features/travel-booking/lib/trip-rate-lead";
@@ -26,6 +29,13 @@ import {
   effectiveClaimCountry,
 } from "@/features/accounting/lib/claim-currency";
 import { IdCardUpload } from "./IdCardUpload";
+import { RoomShareControl } from "./RoomShareControl";
+import {
+  roomShareChoicePatch,
+  roomShareClearPatch,
+} from "@/features/travel-booking/lib/room-share-choice";
+import { roomSharePrefillPatch } from "@/features/travel-booking/lib/room-share-prefill";
+import type { RequesterOption } from "@/components/RequesterPickerModal";
 import {
   OptionCardSelect,
   SectionCard,
@@ -51,6 +61,30 @@ import type {
   VehicleOption,
 } from "@/features/travel-booking/types";
 import { earliestTravelDate } from "@/features/travel-booking/lib/earliest-travel-date";
+import type { ContinuationSource } from "@/features/travel-booking/lib/perdiem-estimate-inputs";
+
+/**
+ * The note under the date range when this trip's first day was already counted.
+ *
+ * It used to say only "ต่อเนื่องจากคำขอก่อนหน้า", which tells a requester a day
+ * was deducted and gives them nothing to check it against. The detail page has
+ * named the predecessor since 2026-09-22; this is the form catching up.
+ *
+ * **A sibling tab gets its own wording rather than a blank number.** A tab in
+ * this same group carries an `AccRequest.Id` once saved but no `RequestNo`
+ * until submit, so there is nothing to name — and rendering an empty slot
+ * would read as a bug rather than as "the one next to this".
+ */
+function continuationHintText(source: ContinuationSource): string {
+  const tail = "วันแรกนับ Per diem ให้แล้ว (-1 วัน)";
+  if (source.kind === "request" && source.requestNo) {
+    return `ต่อเนื่องจากคำขอ ${source.requestNo} — ${tail}`;
+  }
+  if (source.kind === "sibling") {
+    return `ต่อเนื่องจากคำขอใบก่อนหน้าในชุดนี้ — ${tail}`;
+  }
+  return `ต่อเนื่องจากคำขอก่อนหน้า — ${tail}`;
+}
 
 /** Sentinel option name for AccTravelRentVehicle's default "no rental" choice — mirrors the server. */
 
@@ -66,6 +100,13 @@ interface TravelBookingTabProps {
    */
   brands: AccBrandOption[];
   isContinuation: boolean;
+  /**
+   * WHICH trip already counted this tab's first day. Separate from
+   * `isContinuation` rather than folded into it because the note needs the
+   * identity and the deduction needs only the boolean — and a sibling tab in
+   * this same group has no running number to show until submit.
+   */
+  continuationSource: ContinuationSource;
   perDiemEstimate: {
     days: number;
     total: number;
@@ -81,10 +122,65 @@ interface TravelBookingTabProps {
   rentVehicles: RentVehicle[];
   /** Days locked in the วันเดินทาง picker (already booked by other trips). */
   disabledTravelDates?: string[];
+  /**
+   * The requester's other saved AP-17 requests, shaped for `findDateOverlap`.
+   *
+   * `disabledTravelDates` (from `lockedTravelDates`) deliberately leaves a
+   * boundary day open so a MULTI-day trip may continue from it — but a
+   * SINGLE-day trip landing on that same day never gets that exemption
+   * (`findDateOverlap`'s `touchesOnlyAtBoundary` refuses a same-day
+   * candidate outright), so the picker's disabled-day set alone cannot catch
+   * it. `handleDateRangeChange` below closes that one gap at the moment a
+   * single day is committed.
+   *
+   * **It does not close every picker/`findDateOverlap` gap, and the largest
+   * one is still open.** Measured (fix round 1, 2026-09-22): against a
+   * two-day other trip, `lockedTravelDates` locks NOTHING at all — each
+   * endpoint takes only one of its two half-slots, and a two-day range has no
+   * interior day to take both — so 60 multi-day ranges the picker still
+   * allows are ones `findDateOverlap` refuses. Other-trip lengths 1, 3 and 5
+   * leave zero such ranges, so the ordinary overnight trip (two days) is the
+   * ENTIRE residual, not an edge case. That gap is caught later — by
+   * `validateTab`'s own `findDateOverlap` check at attempted submit, and by
+   * the server regardless — not by anything in this component.
+   */
+  otherTrips?: readonly OtherTrip[];
   issues: FieldIssue[];
+  /**
+   * Whether this tab's booking selection asks for an ID/Passport scan (package
+   * C, `AccTravel*.RequiresIdCard`).
+   *
+   * **Passed in rather than recomputed here.** `tabNeedsIdCard`
+   * (`useTravelBookingForm.ts`) is the one caller of `deriveBookingFlags` on
+   * this side, and the same value decides whether `validateTab` complains about
+   * a missing card. Deriving it a second time in this component is how the
+   * upload block and the complaint about its absence come to disagree — and the
+   * expensive direction of that disagreement is a hidden block whose emptiness
+   * still refuses the submit.
+   */
+  needsIdCard: boolean;
   triedSubmit: boolean;
   /** ผู้ขอเบิก (self = null) — keys the ID-card reuse/consent lookup. */
   requesterStaffId?: number | null;
+  /**
+   * The actor's own HR department, already loaded by the form — the list the
+   * พักห้องเดียวกับ person picker opens on before anybody types (AP-17 package
+   * E). Passed down rather than fetched here for the same reason `brands` is:
+   * it is identical for every tab, and a per-tab fetch would repeat it.
+   */
+  colleagues: RequesterOption[];
+  /**
+   * Whether the form should open by asking "พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"
+   * (the user's point 4, 2026-09-23).
+   *
+   * **Passed straight through, and the latch stays in the form.** The
+   * question is per form SESSION, not per tab — a group of four trips asking
+   * four times would be its own defect — so the state that answers it cannot
+   * live here or in `RoomShareControl`, both of which are re-rendered with
+   * whatever tab is active. See `room-share-prompt.ts`.
+   */
+  askRoomShare: boolean;
+  onAskAnswered: () => void;
   onChange: (patch: Partial<TabFormState>) => void;
   onSelectPendingIdCard: (file: File | null) => void;
   onRemoveIdCardFile: (fileId: number) => Promise<boolean>;
@@ -93,16 +189,22 @@ interface TravelBookingTabProps {
 export function TravelBookingTab({
   tab,
   isContinuation,
+  continuationSource,
   perDiemEstimate,
   reasons,
   accommodations,
   vehicles,
   rentVehicles,
   disabledTravelDates,
+  otherTrips,
   issues,
+  needsIdCard,
   triedSubmit,
   requesterStaffId,
+  colleagues,
   brands,
+  askRoomShare,
+  onAskAnswered,
   onChange,
   onSelectPendingIdCard,
   onRemoveIdCardFile,
@@ -141,12 +243,60 @@ export function TravelBookingTab({
      opening the history on one trip does not open it on the next. */
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  /**
+   * Wraps the date picker's own `onChange` to refuse a SINGLE-day pick that
+   * lands exactly on another request's day — the one case
+   * `disabledTravelDates` deliberately leaves open (see `otherTrips`' doc
+   * comment above).
+   *
+   * **A multi-day range is deliberately NOT checked here**, and that is a gap
+   * left open, not a case that cannot occur: against a two-day other trip the
+   * picker allows 60 multi-day ranges `findDateOverlap` would refuse (see
+   * `otherTrips`' doc comment for the measurement). Closing that at pick time
+   * would mean running `findDateOverlap` on every date click while a range is
+   * being built, not only at commit — a larger change than this fix round
+   * makes. It is still caught: `validateTab`'s own `findDateOverlap` check
+   * flags it if the requester tries to submit, and the server refuses it
+   * regardless.
+   *
+   * Reverting to `{ departDate, returnDate: null }` rather than dropping the
+   * change leaves the field exactly where a half-filled range already leaves
+   * it — "แตะเลือกวันสิ้นสุด" if reopened, and the ordinary required-field
+   * check catches it if the requester never returns to it.
+   */
+  const handleDateRangeChange = useCallback(
+    (next: { departDate: string | null; returnDate: string | null }) => {
+      if (next.departDate && next.returnDate && next.departDate === next.returnDate) {
+        const clash = findDateOverlap(
+          { departDate: next.departDate, returnDate: next.returnDate },
+          otherTrips ?? [],
+        );
+        if (clash) {
+          toast.error(`เลือกเป็นทริปวันเดียวไม่ได้ — ${clash.message}`);
+          onChange({ departDate: next.departDate, returnDate: null });
+          return;
+        }
+      }
+      onChange(next);
+    },
+    [onChange, otherTrips],
+  );
+
 
   const selectedReason = reasons.find((r) => r.id === tab.reasonId);
   const selectedAccommodation = accommodations.find((a) => a.id === tab.accommodationId);
   const selectedGoVehicle = vehicles.find((v) => v.id === tab.goVehicleId);
   const selectedReturnVehicle = vehicles.find((v) => v.id === tab.returnVehicleId);
   const selectedRentVehicle = rentVehicles.find((v) => v.id === tab.rentVehicleId);
+  // Task 8 fix round 1: which of the two different ฿0s the per-diem summary
+  // below might be showing — a settled "no room, no per diem" or a pending
+  // "no accommodation chosen yet" — or null when the figure is not withheld.
+  const roomNote = roomBookingNote(tab.accommodationId, tab.needsRoomBooking);
+
+  // A card already on this tab — uploaded on an earlier save, or picked and
+  // waiting for one. Either keeps the block on screen after the requirement has
+  // gone away; see the เอกสารแนบ section below for why.
+  const hasIdCardEvidence = tab.idCardFiles.length > 0 || !!tab.pendingIdCard;
 
   const showRentBlock = tab.goNeedsVehicleRent || tab.returnNeedsVehicleRent;
   const showRentDates = showRentBlock && !!selectedRentVehicle && selectedRentVehicle.name !== NO_RENT_VEHICLE_NAME;
@@ -454,43 +604,121 @@ export function TravelBookingTab({
             label="วันเดินทาง (ไป–กลับ)"
             departDate={tab.departDate}
             returnDate={tab.returnDate}
-            onChange={({ departDate, returnDate }) => onChange({ departDate, returnDate })}
+            onChange={handleDateRangeChange}
             hasError={hasErr("dateRange")}
             minDate={earliestTravelDate(new Date())}
             disabledDates={disabledTravelDates}
-            continuationHint={
-              isContinuation
-                ? "ต่อเนื่องจากคำขอก่อนหน้า — วันแรกนับ Per diem ให้แล้วในคำขอก่อนหน้า (-1 วัน)"
-                : null
-            }
+            continuationHint={isContinuation ? continuationHintText(continuationSource) : null}
           />
         </div>
 
-        <div data-field="accommodation">
-          <label className={labelClass} style={errLabelStyle(hasErr("accommodation"))}>
-            <Hotel size={11} className="inline mr-1 -mt-0.5" />
-            ที่พักค้างคืน{requiredStar}
-          </label>
-          <OptionCardSelect
-            options={accommodationOptions}
-            value={tab.accommodationId != null ? String(tab.accommodationId) : ""}
-            onChange={(v) => {
-              const id = Number(v);
-              const a = accommodations.find((x) => x.id === id);
-              onChange({ accommodationId: id, accommodationCustomText: null, needsRoomBooking: !!a?.needsRoomBooking });
-            }}
-            hasError={hasErr("accommodation")}
-          />
-        </div>
+        {/* ที่พักค้างคืน, or the room share that REPLACES it.
 
-        {selectedAccommodation?.needsRoomBooking && (
-          <div
-            className="flex items-center gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
-            style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
-          >
-            <Hotel size={14} /> ทีม Admin จะจองห้องพักให้สำหรับที่พักนี้
-          </div>
+            **The two are alternatives and only one is ever on screen** (AP-17
+            package E, spec §1: a guest "books nothing themselves"). Rendering
+            both would invite a tab claiming a room of its own *and* a share of
+            somebody else's — a state nothing downstream knows how to price,
+            since `roomBookedOrShared` would read true from either input while
+            the Admin desk had a booking to make for a person who is not
+            sleeping there.
+
+            Hidden rather than disabled, which is package C's own ruling one
+            card down: "a disabled control invites the question 'why can't
+            I?'". The difference here is that the requester has just *caused*
+            the disappearance, so the card that replaces the grid says in so
+            many words that no accommodation is needed — an unexplained
+            vanishing required field would be worse than either. Detaching
+            brings the grid straight back. */}
+        {!tab.isRoomShareGuest && (
+          <>
+            <div data-field="accommodation">
+              <label className={labelClass} style={errLabelStyle(hasErr("accommodation"))}>
+                <Hotel size={11} className="inline mr-1 -mt-0.5" />
+                ที่พักค้างคืน{requiredStar}
+              </label>
+              <OptionCardSelect
+                options={accommodationOptions}
+                value={tab.accommodationId != null ? String(tab.accommodationId) : ""}
+                onChange={(v) => {
+                  const id = Number(v);
+                  const a = accommodations.find((x) => x.id === id);
+                  onChange({ accommodationId: id, accommodationCustomText: null, needsRoomBooking: !!a?.needsRoomBooking });
+                }}
+                hasError={hasErr("accommodation")}
+              />
+            </div>
+
+            {selectedAccommodation?.needsRoomBooking && (
+              <div
+                className="flex items-center gap-2 text-[12px] font-medium rounded-lg px-3 py-2"
+                style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+              >
+                <Hotel size={14} /> ทีม Admin จะจองห้องพักให้สำหรับที่พักนี้
+              </div>
+            )}
+          </>
         )}
+
+        {/* The attach/detach control. It renders the host card when this tab
+            is a guest and the "หรือ พักห้องเดียวกับเพื่อนร่วมงาน" affordance
+            when it is not, so it is mounted in both states rather than being
+            the second arm of the condition above.
+
+            **Attaching clears the accommodation in the same patch that sets
+            the flag.** A stale `accommodationId` left behind is not inert: the
+            grid is gone, so the requester cannot see or change it, and
+            `buildSaveInput` posts it on the very next save, where
+            `deriveBookingFlags` reads it as a live answer and books a room.
+            Exactly the shape of bug `selectVehicleBoth` clears the rent fields
+            to avoid, one section down.
+
+            **And since final review I1 this patch is a MIRROR of the
+            database, not the only copy of the rule.** `applyRoomShareSelection`
+            clears the same four columns on the guest's own `AccTravelBooking`
+            row inside the transaction that records the binding
+            (`room-share-guest-room.ts`), which is what makes the invariant
+            survive a reload — the case this comment described and did not
+            cover. Since 2026-09-22 that transaction is the tab's own SAVE
+            rather than a separate attach endpoint, which makes the patch below
+            the more load-bearing of the two: between the pick and the save
+            there is no stored row at all, so this is the only thing keeping the
+            screen honest in the interval. */}
+        <RoomShareControl
+          requestId={tab.id ?? null}
+          hostRequestId={tab.roomShareHostRequestId}
+          colleagues={colleagues}
+          // **Both patches come from `room-share-choice.ts` and neither is
+          // typed out here.** `roomShareHostRequestId` and `isRoomShareGuest`
+          // are two fields holding one fact, and the module's own docblock is
+          // where the argument for keeping them in one place lives — along
+          // with the reason the host's DATES travel with the choice (final
+          // review I4: the picker matches on overlap, so a guest and its host
+          // could disagree from the start, and the first cascade would then
+          // replace the guest's whole span without warning).
+          // **Two patches, two different rules, and the order is deliberate.**
+          // `roomSharePrefillPatch` fills แบรนด์ที่เบิก, สถานที่ไปปฏิบัติงาน,
+          // เหตุผลการเดินทาง, ระบุเหตุผลเพิ่มเติม and รายละเอียดการไปปฏิบัติงาน
+          // **only where this tab has not answered them** (the user's point 3,
+          // 2026-09-23) — it reads `tab`, which is why it cannot live inside
+          // the choice patch. `roomShareChoicePatch` is spread SECOND so the
+          // choice itself always has the last word; the two touch disjoint
+          // fields today, and that ordering is what keeps it true if they ever
+          // stop doing so.
+          onChoose={(host) =>
+            onChange({ ...roomSharePrefillPatch(host, tab), ...roomShareChoicePatch(host) })
+          }
+          // The accommodation is deliberately NOT restored to whatever it was
+          // before: the requester is back at an unanswered required field,
+          // which is the honest state, and resurrecting a choice they replaced
+          // would re-book a room they had decided against. Since I1 that is
+          // true of the stored row too — the attach really cleared it — so
+          // this is no longer a screen state a reload would contradict.
+          onClear={() => onChange(roomShareClearPatch())}
+          // Straight through; the latch is the form's. See the prop's own
+          // docblock above and `room-share-prompt.ts`.
+          askRoomShare={askRoomShare}
+          onAskAnswered={onAskAnswered}
+        />
       </SectionCard>
 
       {/* ยานพาหนะ (ไป-กลับ ตัวเดียว) + จุดขึ้น/เวลา แยกทิศ + เช่ารถ */}
@@ -595,20 +823,48 @@ export function TravelBookingTab({
         )}
       </SectionCard>
 
-      {/* เอกสารแนบ */}
-      <SectionCard dataTour="ap17-idcard" icon={<FileCheck size={15} />} title="เอกสารแนบ">
-        <div data-field="idCard">
-          <IdCardUpload
-            files={tab.idCardFiles}
-            requestId={tab.id ?? null}
-            requesterStaffId={requesterStaffId}
-            pendingFile={tab.pendingIdCard}
-            onSelectPending={onSelectPendingIdCard}
-            onRemove={onRemoveIdCardFile}
-            hasError={hasErr("idCard")}
-          />
-        </div>
-      </SectionCard>
+      {/* เอกสารแนบ — hidden entirely unless this booking selection asks for a
+          card, or the tab already carries one.
+
+          **Hidden, not disabled** (spec §3): a disabled control invites the
+          question "why can't I?"; an absent one matches "this booking does not
+          need it".
+
+          **`hasIdCardEvidence` is the second arm and it is not decoration.** A
+          draft saved while a card was required and resumed after an admin
+          un-ticked the option still has the file attached — a scan of the
+          requester's own national ID, the most sensitive thing this app holds.
+          Hiding the block would strand it: visible to the Admin desk and to the
+          detail page, invisible to its owner, who could then neither see nor
+          remove it. Showing it instead costs nothing, because the server only
+          ever refuses a MISSING card where one is required and never an extra
+          one. Same shape AP-1's expense row uses, where จำนวนเงิน appears once
+          `amount > 0` even though the normal path reveals it another way. */}
+      {(needsIdCard || hasIdCardEvidence) && (
+        <SectionCard dataTour="ap17-idcard" icon={<FileCheck size={15} />} title="เอกสารแนบ">
+          <div data-field="idCard">
+            {!needsIdCard && (
+              <div
+                className="mb-2 text-[12px] font-medium rounded-lg px-3 py-2"
+                style={{ background: "var(--bg-card-alt)", color: "var(--text-secondary)" }}
+              >
+                การจองที่เลือกไว้ไม่ได้กำหนดให้ต้องแนบบัตรประชาชน หรือ Passport แล้ว —
+                ไฟล์ที่แนบหรือเลือกไว้ยังอยู่ ลบออกได้หากไม่ต้องการส่ง
+              </div>
+            )}
+            <IdCardUpload
+              files={tab.idCardFiles}
+              requestId={tab.id ?? null}
+              requesterStaffId={requesterStaffId}
+              pendingFile={tab.pendingIdCard}
+              onSelectPending={onSelectPendingIdCard}
+              onRemove={onRemoveIdCardFile}
+              hasError={hasErr("idCard")}
+              required={needsIdCard}
+            />
+          </div>
+        </SectionCard>
+      )}
 
       {/* หมายเหตุ + สรุป Per diem */}
       <SectionCard icon={<StickyNote size={15} />} title="หมายเหตุและสรุป">
@@ -662,6 +918,21 @@ export function TravelBookingTab({
               : countryNameBoth(perDiemEstimate.attribution.countryCode),
           )}
         </p>
+        {/* Which of two different ฿0s the summary above might be showing
+            (Task 8 fix round 1). Before this, "chosen, books no room" and
+            "no accommodation chosen yet" both rendered an identical bare ฿0
+            with nothing saying why — "why is my per diem zero" is exactly
+            the question this package exists to answer on screen. The
+            no-room case is settled (text-warning, like the unrated-day note
+            below); the not-yet-chosen case is only pending (text-muted). */}
+        {roomNote && (
+          <p
+            className="text-[11.5px] m-0"
+            style={{ color: tab.accommodationId == null ? "var(--text-muted)" : "var(--text-warning)" }}
+          >
+            {roomNote}
+          </p>
+        )}
         {/* The dated rates THIS TRIP falls under — and only once there is a trip
             to describe. Until both dates are typed `tripRateSegments` answers
             [], and the card says nothing about rates rather than describing a

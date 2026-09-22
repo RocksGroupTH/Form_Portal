@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ALL_REIMBURSE_TABS,
   GRANTABLE_REIMBURSE_TABS,
   REIMBURSE_MENU_KEYS,
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -32,37 +33,90 @@ test("the strip runs brands, rules, glAccounts, buGlMap, erpInterface, access", 
   );
 });
 
-test("erpInterface is a real tab and is NOT grantable", () => {
-  // Task 2's whole point: AP-4's own Business Central posting configuration is
-  // gated but not brand-scoped (see settings-tabs.ts's module docblock), so
-  // unlike AP-1's own grantable `erpInterface` tab, this one must stay
-  // admin-only. The existing tests above do not pin this — a mistake here
-  // would only surface as a route accepting a grant it should refuse.
+test("erpInterface is a real tab and IS grantable since 2026-09-22", () => {
+  // It was excluded until that day, and the reason was good: AP-4's own
+  // Business Central posting configuration is gated but NOT brand-scoped (see
+  // settings-tabs.ts's module docblock), so a holder sets any brand's bank
+  // account, Journal Batch and Branch Code. The user was told that and chose
+  // to open it — AP-1's identical tab has been grantable all along.
+  //
+  // Asserted positively, and kept as its own test rather than folded into the
+  // list below, because the failure to guard against is a silent REVERSAL: a
+  // future edit that "restores" the exclusion would take a capability away
+  // that somebody asked for, and a bare list assertion would read as a
+  // formatting change in the diff.
   assert.ok(
     REIMBURSE_SETTINGS_TAB_ORDER.indexOf("erpInterface") !== -1,
     "erpInterface is missing from the tab strip",
   );
-  assert.equal(isGrantableReimburseTabKey("erpInterface"), false);
-  assert.equal(
-    GRANTABLE_REIMBURSE_TABS.map((t) => t.key as string).indexOf("erpInterface"),
-    -1,
-    "erpInterface must not appear in the grantable list",
+  assert.equal(isGrantableReimburseTabKey("erpInterface"), true);
+  assert.ok(
+    GRANTABLE_REIMBURSE_TABS.map((t) => t.key as string).indexOf("erpInterface") !== -1,
+    "erpInterface must appear in the grantable list",
   );
+  // And a tick has to actually open it, not merely be storable.
+  assert.equal(decideReimburseTabAccess(false, ["erpInterface"], "erpInterface"), true);
+});
+
+test("the two G/L tabs are grantable too, and they reach AP-3's rows", () => {
+  // Same date, same instruction, sharper reason: `AccClearAdvanceGl` /
+  // `AccClearAdvanceGlCompany` and `AccClrBuGlMap` / `AccClrBranchGlMap` carry
+  // no FormCode, so a grant here is a grant over AP-3's configuration and
+  // posting rules. The grid prints that in Thai under the tick, which is what
+  // `ALL_REIMBURSE_TABS`' `note` is for.
+  for (const key of ["glAccounts", "buGlMap"]) {
+    assert.equal(isGrantableReimburseTabKey(key), true, `${key} is not grantable`);
+    assert.equal(decideReimburseTabAccess(false, [key], key), true, `${key} did not open`);
+  }
+});
+
+test("each tab opened on 2026-09-22 states its reach on the grid", () => {
+  // The user accepted a widening the codebase had argued against, so the
+  // screen must not be silent about it. `note` is printed under the table;
+  // `adminOnly` is a different field and must stay one — collapsing the two
+  // either hides the warning or withdraws the grant.
+  const byKey = (k: string) => ALL_REIMBURSE_TABS.filter((t) => t.key === k)[0];
+  for (const key of ["erpInterface", "glAccounts", "buGlMap"]) {
+    const entry = byKey(key);
+    assert.ok(entry, `${key} is not in ALL_REIMBURSE_TABS`);
+    assert.ok(entry.note && entry.note.trim().length > 0, `${key} carries no note`);
+    assert.equal(entry.adminOnly, undefined, `${key} is still marked adminOnly`);
+  }
+  assert.ok(
+    (byKey("erpInterface").note ?? "").indexOf("ทุกแบรนด์") !== -1,
+    "Interface ERP's note does not say it reaches every brand",
+  );
+  for (const key of ["glAccounts", "buGlMap"]) {
+    assert.ok((byKey(key).note ?? "").indexOf("AP-3") !== -1, `${key}'s note does not name AP-3`);
+  }
+  // `access` is the other way round: no note, and the reason it can never be
+  // ticked. The grid drops it from the columns and names it under the table.
+  assert.ok(byKey("access").adminOnly, "access lost its adminOnly reason");
+  assert.equal(byKey("access").note, undefined, "access carries a note as if it were grantable");
 });
 
 /* ── what may be ticked ── */
 
-test("exactly two tabs are grantable, in page order", () => {
-  // Page order, not declaration order: the checkbox columns are the strip's
-  // first two tabs, so reordering the strip reorders the columns with it.
-  assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.key), ["brands", "rules"]);
+test("every tab but access is grantable, in page order", () => {
+  // Page order, not declaration order: the checkbox columns follow the strip,
+  // so reordering the strip reorders the columns with it.
+  assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.key), [
+    "brands",
+    "rules",
+    "glAccounts",
+    "buGlMap",
+    "erpInterface",
+  ]);
   assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.label), [
     "แบรนด์ที่เบิกได้",
     "ระเบียบการจ่าย",
+    "หมวดบัญชี G/L",
+    "Fix G/L by BU or Branch",
+    "Interface ERP",
   ]);
   assert.deepEqual(
     GRANTABLE_REIMBURSE_TABS.map((t) => t.key),
-    REIMBURSE_SETTINGS_TAB_ORDER.filter((k) => k === "brands" || k === "rules"),
+    REIMBURSE_SETTINGS_TAB_ORDER.filter((k) => k !== "access"),
   );
 });
 

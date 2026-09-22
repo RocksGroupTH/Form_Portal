@@ -36,11 +36,13 @@ interface HubCard {
 function useAdvClrAccess() {
   const { data } = useSWR<{
     ok: boolean;
-    data?: { isAdmin: boolean; canSettings: boolean; menus: Record<string, boolean> };
+    data?: { isAdmin: boolean; canClearSettings: boolean; menus: Record<string, boolean> };
   }>("/api/request/advance/access", (url: string) => fetch(url).then((r) => r.json()));
   const d = data?.ok ? data.data : undefined;
   return {
-    canSettings: !!d?.canSettings,
+    // THIS form's flag, not a union across both. A grant of one of AP-2's tabs
+    // must not draw a ตั้งค่า card here that opens on ไม่มีสิทธิ์เข้าถึง.
+    canSettings: !!d?.canClearSettings,
     menu: (key: string) => !!d?.menus?.[key],
   };
 }

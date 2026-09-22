@@ -16,7 +16,8 @@ export const TESTABLE_CODES = ["ANTHROPIC_API_KEY", "GOOGLE_MAPS_API_KEY", "ORS_
  * resolves and serves exactly the same; this is a label, not a registry.
  */
 export const KNOWN_CODE_USAGE: Record<string, string> = {
-  ANTHROPIC_API_KEY: "AP-1 อ่านยอดใบเสร็จ · AP-17 ตรวจบัตรประชาชน · AP-3 อ่านใบเสร็จเคลียร์",
+  ANTHROPIC_API_KEY:
+    "AP-1 อ่านยอดใบเสร็จ · AP-17 ตรวจบัตรประชาชน/Passport · AP-3 อ่านใบเสร็จเคลียร์",
   GOOGLE_MAPS_API_KEY: "AP-1 แผนที่และระยะทาง",
   ORS_API_KEY: "AP-1 ค้นหาสถานที่ · AP-17 จุดขึ้นรถ",
   // Deactivating this does not break the form: FX falls back to a keyless ECB

@@ -24,14 +24,28 @@ import { esc } from "@/lib/acc/email-templates";
  * and `getAccPool()` would file every one of its UAT notifications in
  * Production, where the drain would send them with no `[UAT]` prefix and no
  * redirect.
+ *
+ * **`on` may also be an open transaction**, which is a second thing entirely
+ * and the reason the parameter is typed structurally rather than as
+ * `ConnectionPool`. A transaction runs against one database too, so the
+ * original meaning above is unchanged — but the row then **commits or rolls
+ * back with the caller's own work.** AP-17's room-share cascade
+ * (`room-share-notify.ts`) needs exactly that: spec §5 makes notification the
+ * *entire* mitigation for a host who never consented, so a cascade that
+ * commits while its mail row does not is the protection silently not
+ * happening. Nothing about the drain changes — `applyUatRedirect` and the
+ * `[UAT] ` prefix are applied at send time, to every row alike, whoever
+ * inserted it.
  */
+export type EmailQueueRunner = { request: () => ReturnType<ConnectionPool["request"]> };
+
 export async function queueEmail(p: {
   requestId: number | null;
   toEmail: string;
   subject: string;
   bodyHtml: string;
   triggerType: string;
-}, on?: ConnectionPool): Promise<void> {
+}, on?: EmailQueueRunner): Promise<void> {
   if (!p.toEmail) return;
   const pool = on ?? (await getAccPool());
   await pool
