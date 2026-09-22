@@ -881,7 +881,23 @@ export function RoomShareControl({
           className="px-5 py-3 flex items-center justify-between gap-2 shrink-0"
           style={{ borderTop: "1px solid var(--border-card)" }}
         >
-          <Button type="button" variant="ghost" size="sm" onClick={() => setPicked(null)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            /* BOTH, and clearing `picked` alone is not enough — the bug this
+               fixes. `RequesterPickerModal` calls `onClose()` immediately after
+               `onSelect()` (RequesterPickerModal.tsx:235), so `personOpen` is
+               already false by the time step 2 renders. Step 1's own
+               `open={personOpen && picked === null}` therefore stays false when
+               only `picked` is cleared, and "เปลี่ยนคน" closes the whole picker
+               instead of going back a step. Shipped with package E; found
+               2026-09-22 while wiring the auto-save. */
+            onClick={() => {
+              setPicked(null);
+              setPersonOpen(true);
+            }}
+          >
             ← เปลี่ยนคน
           </Button>
           <Button
