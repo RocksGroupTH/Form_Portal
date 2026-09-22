@@ -65,8 +65,13 @@ export type ShareRefusal = { code: ShareRefusalCode; message: string };
  * `date-overlap.ts`, `requester-trips.ts` and `perdiem-dependency.ts` already
  * use for "alive". A seventh definition that disagreed would be the bug this
  * feature's whole risk is: one person's request moving another's.
+ *
+ * **Exported so `room-share-cascade.ts` reuses this exact array** rather than
+ * writing its own — that module decides what happens to a host's guests, and
+ * it is this same feature, so a second copy here would be the disagreement
+ * this comment already warns against, not a new one.
  */
-const DEAD: readonly string[] = ["Cancelled", "Rejected"];
+export const DEAD: readonly string[] = ["Cancelled", "Rejected"];
 
 /** `requestNo`, or the same Draft fallback `date-overlap.ts` uses — never "null" at the reader. */
 function requestLabel(candidate: ShareCandidate): string {
