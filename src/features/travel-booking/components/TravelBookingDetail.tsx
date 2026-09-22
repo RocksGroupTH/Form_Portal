@@ -1272,7 +1272,7 @@ export function TravelBookingDetail({
         </div>
       </Section>
 
-      {/* ── Attachments (บัตรประชาชน) — before the summary, like the form ── */}
+      {/* ── Attachments (บัตรประชาชน หรือ Passport) — before the summary, like the form ── */}
       <Section title="เอกสารแนบ" icon={<Paperclip size={15} />}>
         <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1.5" style={{ color: "var(--text-muted)" }}>
           บัตรประชาชน หรือ Passport

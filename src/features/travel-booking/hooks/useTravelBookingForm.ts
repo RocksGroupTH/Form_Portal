@@ -1047,10 +1047,10 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
                 ),
               );
             } else {
-              toast.error(upJson.error ?? "อัปโหลดรูปบัตรไม่สำเร็จ");
+              toast.error(upJson.error ?? "อัปโหลดรูปเอกสารไม่สำเร็จ");
             }
           } catch {
-            toast.error("อัปโหลดรูปบัตรไม่สำเร็จ");
+            toast.error("อัปโหลดรูปเอกสารไม่สำเร็จ");
           }
         }),
       );
@@ -1174,17 +1174,17 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
         });
         const json = await res.json();
         if (!json.ok) {
-          toast.error(json.error ?? "ใช้บัตรเดิมไม่สำเร็จ");
+          toast.error(json.error ?? "ใช้เอกสารเดิมไม่สำเร็จ");
           return false;
         }
         const created = json.data as TravelBookingFileMeta;
         setTabs((prev) =>
           prev.map((t, i) => (i === tabIndex ? { ...t, idCardFiles: [...t.idCardFiles, created] } : t)),
         );
-        toast.success("ใช้บัตรที่เคยแนบแล้ว");
+        toast.success("ใช้เอกสารที่เคยแนบแล้ว");
         return true;
       } catch {
-        toast.error("ใช้บัตรเดิมไม่สำเร็จ");
+        toast.error("ใช้เอกสารเดิมไม่สำเร็จ");
         return false;
       }
     },

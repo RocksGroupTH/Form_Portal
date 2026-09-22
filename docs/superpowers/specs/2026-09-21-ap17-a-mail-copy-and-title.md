@@ -41,6 +41,57 @@ section for the same note in that section's own house style.
 
 ---
 
+## Amendment — 2026-09-22 (the user resolved the above: the check now accepts a passport)
+
+**The contradiction the amendment above records is closed.** The user was
+given three options — widen the check, revert the copy, or defer — and chose
+**widen**, directly, on 2026-09-22. `id-card-check` now accepts a Thai
+national ID card **or a passport**, and the four places listed above moved
+together, plus the copy that followed them across the route,
+`idcard-check.ts`, `IdCardUpload`, the AP-17 tour and the API-key settings
+rows.
+
+Two rulings came with it, and neither is inferable from "accept a passport":
+
+1. **Any country's passport, not only a Thai one.** AP-17 covers foreign
+   travel and the company employs people who may not hold a Thai passport.
+   The purpose is proof of identity for a booking, which a government-issued
+   passport serves whoever issued it.
+2. **The widening stops at two documents.** A driving licence, an employee
+   card and a student card are still refused. The reject list keeps its job;
+   only `พาสปอร์ต` moved out of it and into the accepted list. "Any identity
+   document" was neither asked for nor shipped.
+
+**The prompt was restructured, not amended**, and that is the part most
+likely to be undone by a later tidy-up. It now asks *which of these two
+documents is this* and names both as equals, instead of "answer true only for
+a national ID card" with "…or a passport" appended. On a fail-closed path an
+instruction of that second shape is followed inconsistently, and an
+inconsistent `false` is a requester who cannot file at all.
+
+**What did not change, and must not:** the check still fails closed (no
+verdict, no key, rate limited, upstream down, offline and "not one of the two"
+all refuse identically, and `null` is never a pass); `ID_CARD_VISION_MODEL` is
+still `claude-sonnet-5`; `statusForVisionError`'s 401/403/400 → 503 mapping,
+`id-card-access.ts`, the consent flow, the upload guards and the
+`id-card-check:` rate-limit bucket are untouched. **The privacy instruction was
+widened rather than relaxed** — a passport carries a number, a name, a
+nationality and a date of birth, so the prompt's closing line now forbids
+returning any of those alongside the card's own fields.
+
+**Unverified, and it is the real residual.** Nothing in this repository can
+call Anthropic, so *that the model actually answers `true` to a passport
+photo* is unconfirmed. A prompt is not a guarantee and this one fails closed,
+so a wrong `false` is a passport holder who still cannot file — reported as
+"the app says my passport is not a passport". Confirming it means a person
+attaching a real passport photo on a host with a working `ANTHROPIC_API_KEY`
+and watching the green badge appear; a non-Thai passport is the case worth
+trying, since ruling 1 is the one the prompt states most recently and least
+often. **Do not substitute a test asserting the prompt string contains a
+word** — it pins prose and proves nothing about the answer.
+
+---
+
 ## 1. The three manager mails already send. Their copy is written for the wrong reader
 
 **Measured before designing.** `approveByManager`, `rejectRequest` and

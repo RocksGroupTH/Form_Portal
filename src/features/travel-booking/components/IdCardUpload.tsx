@@ -15,7 +15,7 @@ import {
 import { errLabelStyle, labelClass, requiredStar } from "./shared";
 
 /**
- * ข้อ17 — แนบบัตรประชาชน (≥1, images or PDF). Uploads go straight to the server
+ * ข้อ17 — แนบบัตรประชาชน หรือ Passport (≥1, images or PDF). Uploads go straight to the server
  * (SharePoint-backed) once the tab has a real request id, so the tab must be
  * saved as a draft first — this component surfaces that as an explicit
  * "บันทึกร่างก่อน" action rather than silently doing nothing.
@@ -147,7 +147,7 @@ export function IdCardUpload({
       const file = new File([blob], previousCard.fileName, { type: previousCard.contentType || blob.type });
       onSelectPending(file);
     } catch {
-      toast.error("ใช้บัตรเดิมไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      toast.error("ใช้เอกสารเดิมไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setReusing(false);
     }
@@ -163,7 +163,8 @@ export function IdCardUpload({
       return;
     }
 
-    // Ask the server whether this really is a Thai national ID card.
+    // Ask the server whether this really is a Thai national ID card or a
+    // passport — the two documents accepted since 2026-09-22.
     setChecking(true);
     let result: IdCardCheck;
     try {
@@ -175,9 +176,10 @@ export function IdCardUpload({
     }
 
     // Nothing is attached without a verdict of "yes" — a failure to *reach* the
-    // check refuses the file exactly like a "this is not a card" does. Decided
-    // 2026-08-24 with the cost accepted: while the check cannot run, AP-17
-    // cannot be filed, because this attachment is required to submit.
+    // check refuses the file exactly like a "this is not one of the two accepted
+    // documents" does. Decided 2026-08-24 with the cost accepted: while the
+    // check cannot run, AP-17 cannot be filed, because this attachment is
+    // required to submit.
     // `result.reason` already says which remedy applies — wait, retry, tell IT,
     // or attach a different photo.
     if (!result.ok) {
@@ -228,7 +230,7 @@ export function IdCardUpload({
                   openFileViewer(previousCard.fileId, previousCard.fileName, previousCard.contentType)
                 }
                 title="แตะเพื่อดูไฟล์เต็ม"
-                aria-label="ดูบัตรประชาชนที่เคยแนบ"
+                aria-label="ดูบัตรประชาชน หรือ Passport ที่เคยแนบ"
                 className="relative w-12 h-12 rounded-lg overflow-hidden border shrink-0 flex items-center justify-center p-0 cursor-zoom-in"
                 style={{ borderColor: "var(--border-card)", background: "var(--bg-card)" }}
               >
@@ -245,7 +247,7 @@ export function IdCardUpload({
               </button>
               <div className="flex-1 min-w-0">
                 <div className="text-[12.5px] font-bold" style={{ color: "var(--nav-active-text)" }}>
-                  ใช้บัตรประชาชนที่เคยแนบล่าสุด
+                  ใช้บัตรประชาชน หรือ Passport ที่เคยแนบล่าสุด
                 </div>
                 <div className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
                   {previousCard.fileName} · {/* `th-TH` alone is the Buddhist calendar — this printed "04 ก.ย. 2569". */}
@@ -259,7 +261,7 @@ export function IdCardUpload({
                 className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white disabled:opacity-60"
                 style={{ background: "var(--btn-primary-bg)", color: "var(--btn-primary-text)", border: "1px solid var(--btn-primary-border)" }}
               >
-                {reusing ? <Loader2 size={13} className="animate-spin" /> : <History size={13} />} ใช้บัตรนี้
+                {reusing ? <Loader2 size={13} className="animate-spin" /> : <History size={13} />} ใช้เอกสารนี้
               </button>
             </div>
           )}
@@ -293,7 +295,7 @@ export function IdCardUpload({
                     title="กดเพื่อดูรูปเต็ม"
                     className="block w-full h-full p-0 border-none cursor-zoom-in bg-transparent"
                   >
-                    <img src={pendingUrl} alt="รูปบัตรประชาชนที่แนบ" className="block w-full h-full object-cover" draggable={false} />
+                    <img src={pendingUrl} alt="รูปบัตรประชาชน หรือ Passport ที่แนบ" className="block w-full h-full object-cover" draggable={false} />
                   </button>
                 )}
                 <button
@@ -311,7 +313,7 @@ export function IdCardUpload({
                 {/* Unconditional again, and truthful: nothing becomes a pending
                     file without a positive verdict. */}
                 <div className="inline-flex items-center gap-1.5 text-[12.5px] font-bold" style={{ color: "#4fa37a" }}>
-                  <CheckCircle2 size={14} /> ตรวจสอบแล้วเป็นบัตรประชาชน
+                  <CheckCircle2 size={14} /> ตรวจสอบแล้วเป็นบัตรประชาชน หรือ Passport
                 </div>
                 <div className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
                   {pendingFile.name} · จะอัปโหลดเมื่อกดบันทึกร่าง/ส่งคำขอ · ชี้ที่รูปเพื่อเอาออก
@@ -346,7 +348,7 @@ export function IdCardUpload({
             >
               {checking ? (
                 <span className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: "var(--nav-active-text)" }}>
-                  <ScanLine size={16} className="animate-pulse" /> กำลังตรวจสอบบัตรประชาชน...
+                  <ScanLine size={16} className="animate-pulse" /> กำลังตรวจสอบเอกสาร...
                 </span>
               ) : (
                 <>
@@ -463,7 +465,7 @@ export function IdCardUpload({
 
                     <div className="text-center">
                       <div className="inline-flex items-center gap-1.5 text-[13px] font-bold" style={{ color: "#4fa37a" }}>
-                        <CheckCircle2 size={15} /> ตรวจสอบแล้วเป็นบัตรประชาชน
+                        <CheckCircle2 size={15} /> ตรวจสอบแล้วเป็นบัตรประชาชน หรือ Passport
                       </div>
                       <div className="text-[11.5px] mt-1 leading-relaxed break-all" style={{ color: "var(--text-muted)" }}>
                         {f.fileName}{isImage ? " · แตะรูปเพื่อดูเต็ม · ชี้ที่รูปเพื่อลบ" : ""}
@@ -503,9 +505,9 @@ export function IdCardUpload({
                   }}
                 />
               </div>
-              <div className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>กำลังตรวจสอบบัตรประชาชน...</div>
+              <div className="text-[15px] font-bold" style={{ color: "var(--text-heading)" }}>กำลังตรวจสอบเอกสาร...</div>
               <div className="text-[12.5px]" style={{ color: "var(--text-muted)" }}>
-                กำลังอ่านข้อมูลบนบัตร (ครั้งแรกอาจใช้เวลาสักครู่)
+                กำลังตรวจว่าเป็นบัตรประชาชน หรือ Passport (ครั้งแรกอาจใช้เวลาสักครู่)
               </div>
               {/* indeterminate progress bar */}
               <div className="relative w-44 h-1 rounded-full overflow-hidden mt-1" style={{ background: "var(--bg-card-alt)" }}>
@@ -520,7 +522,8 @@ export function IdCardUpload({
           document.body,
         )}
 
-      {/* Refusal popup — the photo is not a card, or the check could not run */}
+      {/* Refusal popup — the photo is neither of the two accepted documents, or
+          the check could not run */}
       {refusal && typeof document !== "undefined" &&
         createPortal(
           <div
@@ -542,7 +545,7 @@ export function IdCardUpload({
                 <AlertTriangle size={28} />
               </div>
               <div className="text-[15.5px] font-bold" style={{ color: "var(--text-heading)" }}>
-                {refusal.unavailable ? "ตรวจรูปบัตรไม่สำเร็จ" : "ไม่ใช่บัตรประชาชน"}
+                {refusal.unavailable ? "ตรวจรูปเอกสารไม่สำเร็จ" : "ไม่ใช่บัตรประชาชน หรือ Passport"}
               </div>
               <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
                 {refusal.message}
@@ -561,7 +564,7 @@ export function IdCardUpload({
           document.body,
         )}
 
-      {/* Consent: remember this card for reuse (per requester) */}
+      {/* Consent: remember this document for reuse (per requester) */}
       {consentAsk && typeof document !== "undefined" &&
         createPortal(
           <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)" }}>
@@ -578,10 +581,10 @@ export function IdCardUpload({
                 <IdCard size={28} />
               </div>
               <div className="text-[15.5px] font-bold" style={{ color: "var(--text-heading)" }}>
-                เก็บรูปบัตรไว้ใช้ครั้งถัดไปไหม?
+                เก็บรูปเอกสารไว้ใช้ครั้งถัดไปไหม?
               </div>
               <div className="text-[12.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                ครั้งหน้าที่เปิดทริป/คำขอใหม่ของผู้ขอเบิกคนนี้ จะมีปุ่มให้ใช้บัตรนี้ซ้ำได้ทันที ไม่ต้องแนบใหม่ (เก็บไว้ในระบบอย่างปลอดภัย)
+                ครั้งหน้าที่เปิดทริป/คำขอใหม่ของผู้ขอเบิกคนนี้ จะมีปุ่มให้ใช้เอกสารนี้ซ้ำได้ทันที ไม่ต้องแนบใหม่ (เก็บไว้ในระบบอย่างปลอดภัย)
               </div>
               <div className="flex gap-2 w-full mt-1">
                 <button
