@@ -515,14 +515,15 @@ const NAME_TABLES = {
  */
 const NAME_TABLE_FLAGS: Record<keyof typeof NAME_TABLES, string[]> = {
   reason: [],
-  accommodation: ["NeedsRoomBooking"],
+  accommodation: ["NeedsRoomBooking", "RequiresIdCard"],
   vehicle: [
     "NeedsDepartureLocations",
     "NeedsTicketBooking",
     "NeedsDepartTime",
     "NeedsVehicleRent",
+    "RequiresIdCard",
   ],
-  rentVehicle: ["NeedsRentBooking"],
+  rentVehicle: ["NeedsRentBooking", "RequiresIdCard"],
 };
 
 /** One settings-option row: its display name, whether it is still offered, and its flags. */
@@ -536,6 +537,7 @@ export interface SettingOptionRow {
   needsDepartTime: boolean;
   needsVehicleRent: boolean;
   needsRentBooking: boolean;
+  requiresIdCard: boolean;
 }
 
 /**
@@ -572,6 +574,7 @@ async function resolveSettingOption(
     needsDepartTime: flag("NeedsDepartTime"),
     needsVehicleRent: flag("NeedsVehicleRent"),
     needsRentBooking: flag("NeedsRentBooking"),
+    requiresIdCard: flag("RequiresIdCard"),
   };
 }
 
