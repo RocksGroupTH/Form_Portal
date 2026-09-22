@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Briefcase, Calendar, Car, FileCheck, History, Hotel, Landmark, MapPin, StickyNote } from "lucide-react";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
 import type { AccBrandOption } from "@/features/accounting/types";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import {
@@ -9,6 +11,7 @@ import {
   perDiemAttributionFootnote,
   perDiemAttributionNote,
   PER_DIEM_UNRATED_NOTE,
+  roomBookingNote,
   type PerDiemAttribution,
 } from "@/features/travel-booking/lib/perdiem-note";
 import { ratedSegments, tripRateLead, unratedNote } from "@/features/travel-booking/lib/trip-rate-lead";
@@ -81,6 +84,29 @@ interface TravelBookingTabProps {
   rentVehicles: RentVehicle[];
   /** Days locked in the วันเดินทาง picker (already booked by other trips). */
   disabledTravelDates?: string[];
+  /**
+   * The requester's other saved AP-17 requests, shaped for `findDateOverlap`.
+   *
+   * `disabledTravelDates` (from `lockedTravelDates`) deliberately leaves a
+   * boundary day open so a MULTI-day trip may continue from it — but a
+   * SINGLE-day trip landing on that same day never gets that exemption
+   * (`findDateOverlap`'s `touchesOnlyAtBoundary` refuses a same-day
+   * candidate outright), so the picker's disabled-day set alone cannot catch
+   * it. `handleDateRangeChange` below closes that one gap at the moment a
+   * single day is committed.
+   *
+   * **It does not close every picker/`findDateOverlap` gap, and the largest
+   * one is still open.** Measured (fix round 1, 2026-09-22): against a
+   * two-day other trip, `lockedTravelDates` locks NOTHING at all — each
+   * endpoint takes only one of its two half-slots, and a two-day range has no
+   * interior day to take both — so 60 multi-day ranges the picker still
+   * allows are ones `findDateOverlap` refuses. Other-trip lengths 1, 3 and 5
+   * leave zero such ranges, so the ordinary overnight trip (two days) is the
+   * ENTIRE residual, not an edge case. That gap is caught later — by
+   * `validateTab`'s own `findDateOverlap` check at attempted submit, and by
+   * the server regardless — not by anything in this component.
+   */
+  otherTrips?: readonly OtherTrip[];
   issues: FieldIssue[];
   triedSubmit: boolean;
   /** ผู้ขอเบิก (self = null) — keys the ID-card reuse/consent lookup. */
@@ -99,6 +125,7 @@ export function TravelBookingTab({
   vehicles,
   rentVehicles,
   disabledTravelDates,
+  otherTrips,
   issues,
   triedSubmit,
   requesterStaffId,
@@ -141,12 +168,55 @@ export function TravelBookingTab({
      opening the history on one trip does not open it on the next. */
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  /**
+   * Wraps the date picker's own `onChange` to refuse a SINGLE-day pick that
+   * lands exactly on another request's day — the one case
+   * `disabledTravelDates` deliberately leaves open (see `otherTrips`' doc
+   * comment above).
+   *
+   * **A multi-day range is deliberately NOT checked here**, and that is a gap
+   * left open, not a case that cannot occur: against a two-day other trip the
+   * picker allows 60 multi-day ranges `findDateOverlap` would refuse (see
+   * `otherTrips`' doc comment for the measurement). Closing that at pick time
+   * would mean running `findDateOverlap` on every date click while a range is
+   * being built, not only at commit — a larger change than this fix round
+   * makes. It is still caught: `validateTab`'s own `findDateOverlap` check
+   * flags it if the requester tries to submit, and the server refuses it
+   * regardless.
+   *
+   * Reverting to `{ departDate, returnDate: null }` rather than dropping the
+   * change leaves the field exactly where a half-filled range already leaves
+   * it — "แตะเลือกวันสิ้นสุด" if reopened, and the ordinary required-field
+   * check catches it if the requester never returns to it.
+   */
+  const handleDateRangeChange = useCallback(
+    (next: { departDate: string | null; returnDate: string | null }) => {
+      if (next.departDate && next.returnDate && next.departDate === next.returnDate) {
+        const clash = findDateOverlap(
+          { departDate: next.departDate, returnDate: next.returnDate },
+          otherTrips ?? [],
+        );
+        if (clash) {
+          toast.error(`เลือกเป็นทริปวันเดียวไม่ได้ — ${clash.message}`);
+          onChange({ departDate: next.departDate, returnDate: null });
+          return;
+        }
+      }
+      onChange(next);
+    },
+    [onChange, otherTrips],
+  );
+
 
   const selectedReason = reasons.find((r) => r.id === tab.reasonId);
   const selectedAccommodation = accommodations.find((a) => a.id === tab.accommodationId);
   const selectedGoVehicle = vehicles.find((v) => v.id === tab.goVehicleId);
   const selectedReturnVehicle = vehicles.find((v) => v.id === tab.returnVehicleId);
   const selectedRentVehicle = rentVehicles.find((v) => v.id === tab.rentVehicleId);
+  // Task 8 fix round 1: which of the two different ฿0s the per-diem summary
+  // below might be showing — a settled "no room, no per diem" or a pending
+  // "no accommodation chosen yet" — or null when the figure is not withheld.
+  const roomNote = roomBookingNote(tab.accommodationId, tab.needsRoomBooking);
 
   const showRentBlock = tab.goNeedsVehicleRent || tab.returnNeedsVehicleRent;
   const showRentDates = showRentBlock && !!selectedRentVehicle && selectedRentVehicle.name !== NO_RENT_VEHICLE_NAME;
@@ -454,7 +524,7 @@ export function TravelBookingTab({
             label="วันเดินทาง (ไป–กลับ)"
             departDate={tab.departDate}
             returnDate={tab.returnDate}
-            onChange={({ departDate, returnDate }) => onChange({ departDate, returnDate })}
+            onChange={handleDateRangeChange}
             hasError={hasErr("dateRange")}
             minDate={earliestTravelDate(new Date())}
             disabledDates={disabledTravelDates}
@@ -662,6 +732,21 @@ export function TravelBookingTab({
               : countryNameBoth(perDiemEstimate.attribution.countryCode),
           )}
         </p>
+        {/* Which of two different ฿0s the summary above might be showing
+            (Task 8 fix round 1). Before this, "chosen, books no room" and
+            "no accommodation chosen yet" both rendered an identical bare ฿0
+            with nothing saying why — "why is my per diem zero" is exactly
+            the question this package exists to answer on screen. The
+            no-room case is settled (text-warning, like the unrated-day note
+            below); the not-yet-chosen case is only pending (text-muted). */}
+        {roomNote && (
+          <p
+            className="text-[11.5px] m-0"
+            style={{ color: tab.accommodationId == null ? "var(--text-muted)" : "var(--text-warning)" }}
+          >
+            {roomNote}
+          </p>
+        )}
         {/* The dated rates THIS TRIP falls under — and only once there is a trip
             to describe. Until both dates are typed `tripRateSegments` answers
             [], and the card says nothing about rates rather than describing a

@@ -368,7 +368,7 @@ export interface TravelBookingRequest {
   groupKey: string | null;
   sortOrder: number;
 
-  // ข้อ17 — แนบบัตรประชาชน (>=1)
+  // ข้อ17 — แนบบัตรประชาชน หรือ Passport (>=1)
   idCardFiles: TravelBookingFileMeta[];
   // Admin fill-in (2.x)
   bookingDetails: BookingDetail[];

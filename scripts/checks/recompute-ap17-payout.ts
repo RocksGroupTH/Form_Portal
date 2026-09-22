@@ -10,6 +10,15 @@
  * the 21st" is normal rather than an edge. Leaving them would make the change
  * look inert on exactly the rows people are looking at.
  *
+ * **The rule changed again on 2026-09-21, for foreign trips only**: the
+ * determining date reverted to the manager's approval ALONE — the trip's
+ * return date is no longer read at all. Domestic is unchanged and still reads
+ * the later of the two. This script still just calls `payoutDateFor`, so it
+ * already recomputes under whichever rule is current; what changed is the
+ * size of the move for a foreign row already sitting in the queue, since it
+ * was minted under the later-of-two rule that no longer applies to it. See
+ * `payout-rule.ts`'s header for the full history.
+ *
  * Recomputing and overwriting is the user's decision (2026-09-04), taken over
  * showing the disagreement and offering a correction.
  *

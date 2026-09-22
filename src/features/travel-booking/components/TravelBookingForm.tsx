@@ -55,7 +55,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     reasons, accommodations, vehicles, rentVehicles,
     employee, employeeHint, employeeEmail, employeeLoading, manager, managerReason, displayRate,
     colleagues, colleaguesLoading, requesterEnvironment,
-    existingRanges, requesterStaffId, setRequesterStaffId, selectedRequester,
+    existingRanges, otherTrips, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
     continuationFlags, perDiemEstimates, totalPerDiemEstimate,
     tabIssues, canSubmit,
@@ -121,9 +121,18 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
   const handleSubmit = useCallback(async () => {
     setTriedSubmit(true);
     if (!overallCanSubmit) {
-      toast.error("กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ");
       // Jump to the first tab with a missing field and focus it (else the requester/manager at top).
       const badTab = tabIssues.findIndex((iss) => iss.length > 0);
+      // `FieldIssue.label` was never rendered anywhere on this page before —
+      // the red border on the field itself was the only signal, which is
+      // enough when the border sits on an empty required field but says
+      // nothing when it sits on a FILLED one, as the date-overlap check
+      // does. Showing the first blocking issue's own label here is what
+      // makes that message (and every other field's) reach the screen at
+      // all; it replaces the fully generic string only when there is a
+      // specific one to show.
+      const firstLabel = badTab >= 0 ? tabIssues[badTab][0]?.label : null;
+      toast.error(firstLabel ?? "กรุณากรอกข้อมูลให้ครบก่อนส่งคำขอ");
       if (badTab >= 0) {
         const key = tabIssues[badTab][0]?.key;
         if (badTab !== activeTabIndex) setActiveTabIndex(badTab);
@@ -433,6 +442,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           vehicles={vehicles}
           rentVehicles={rentVehicles}
           disabledTravelDates={lockedDates}
+          otherTrips={otherTrips}
           issues={tabIssues[activeTabIndex] ?? []}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}

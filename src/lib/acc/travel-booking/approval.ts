@@ -42,13 +42,38 @@ function toYmd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** Queue an email built from the current request state to one recipient. Best-effort — never throws. */
-async function notify(requestId: number, trigger: TravelBookingTrigger, toEmail: string | null, note?: string): Promise<void> {
+/**
+ * Queue an email built from the current request state to one recipient. Best-effort — never throws.
+ *
+ * `actorName` is upgraded to the MANAGER step's HR-enriched display name
+ * (`actionedByHrName`, joined from `Rocks_Portal_HR.Employee` in
+ * `loadApprovals`) when one is on file, falling back to the caller-supplied
+ * value otherwise. This costs no extra lookup: `getTravelBookingRequest` is
+ * already awaited above for every trigger, and the MANAGER `AccApproval`
+ * row's `ActionedByStaffId` is written inside the committed transaction
+ * before any of `approveByManager` / `rejectRequest` / `returnRequest` call
+ * `notify` — the only three callers that pass an `actorName` at all. The
+ * lookup is gated on `actorName` being supplied in the first place: by the
+ * time `rejectByAdmin` / `returnByAdmin` / `rejectByAccount` /
+ * `returnByAccount` call `notify` (no `actorName`), the MANAGER row already
+ * holds *that* manager's own approval — resolving it unconditionally would
+ * misattribute an Admin's or Accounting's action to the manager who approved
+ * earlier.
+ */
+async function notify(
+  requestId: number,
+  trigger: TravelBookingTrigger,
+  toEmail: string | null,
+  note?: string,
+  actorName?: string | null,
+): Promise<void> {
   if (!toEmail) return;
   try {
     const req = await getTravelBookingRequest(requestId);
     if (!req) return;
-    const mail = buildTravelBookingEmail(trigger, req, note);
+    const mgr = actorName ? req.approvals.find((a) => a.stepCode === "MANAGER") : undefined;
+    const displayActor = mgr?.actionedByHrName?.trim() || actorName;
+    const mail = buildTravelBookingEmail(trigger, req, note, displayActor);
     await queueEmail({ requestId, toEmail, subject: mail.subject, bodyHtml: mail.html, triggerType: trigger });
   } catch {
     // Notification failures must never fail the approval action itself.
@@ -64,9 +89,10 @@ async function requireTravelBookingRequest(id: number): Promise<TravelBookingReq
 /**
  * Manager approves — Submitted → ManagerApproved, handing off to Admin for booking fill-in
  * (spec: ผู้จัดการ → Admin จอง → บัญชี → เสร็จสิ้น).
- * Sets `PaymentDate` from `payout-rule.ts`: the determining date is the LATER of this
- * approval and the trip's return date, and the bands differ for a domestic and a
- * foreign trip. The old rule read the approval date alone and had no foreign arm.
+ * Sets `PaymentDate` from `payout-rule.ts`. For ในประเทศ the determining date is
+ * the LATER of this approval and the trip's return date; for ต่างประเทศ, since
+ * 2026-09-21, it is this approval ALONE — the return date is not read at all.
+ * See `payout-rule.ts`'s own header for why the two branches disagree.
  *
  * When the request needs nothing booked (ข้อ10.1 / ข้อ12.2 / ข้อ15.1 all false) there is no
  * Admin work to queue, so it skips that step and lands on `'ACCOUNT'` — **not** on
@@ -156,12 +182,16 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
 
   const kind = payoutTripKind(detail?.CountryCode ?? null);
   const returnYmd = detail?.ReturnDate ? toYmd(detail.ReturnDate) : null;
-  // A row with no return date cannot have a determining date, and the rule
-  // refuses rather than guessing. Refusing the APPROVAL over it would strand the
-  // request with no in-app remedy, so the mint degrades to the approval date
-  // alone — which is exactly what this did before today — and says so in the
-  // timeline, where accounting will see it and can correct the month. Unreachable
-  // in practice: `validateTravelBookingTab` refuses a submit without a return date.
+  // A row with no return date cannot have a determining date (ในประเทศ only —
+  // a foreign trip's determining date is the approval date alone, so
+  // `payoutDateFor` never returns null on that branch once `approvalYmd` is
+  // valid, and this fallback is unreachable for it; see payout-rule.ts). The
+  // rule refuses rather than guessing. Refusing the APPROVAL over it would
+  // strand the request with no in-app remedy, so the mint degrades to the
+  // approval date alone — which is exactly what this did before today — and
+  // says so in the timeline, where accounting will see it and can correct the
+  // month. Unreachable in practice for ในประเทศ too: `validateTravelBookingTab`
+  // refuses a submit without a return date.
   const ruleDate = payoutDateFor(kind, approvalYmd, returnYmd);
   const payDate = ruleDate ?? (payoutDateFor(kind, approvalYmd, approvalYmd) as string);
   const needsBooking =
@@ -240,7 +270,7 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
   // never mailed anybody, and the hand-off from Admin (`completeRequest`) never
   // did either.
   const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Approved", requesterEmail);
+  await notify(requestId, "Approved", requesterEmail, undefined, actor.email);
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
@@ -282,7 +312,7 @@ export async function rejectRequest(requestId: number, actor: Actor, comment: st
   }
 
   const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Rejected", requesterEmail, comment);
+  await notify(requestId, "Rejected", requesterEmail, comment, actor.email);
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
@@ -323,7 +353,7 @@ export async function returnRequest(requestId: number, actor: Actor, comment: st
   }
 
   const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Returned", requesterEmail, comment);
+  await notify(requestId, "Returned", requesterEmail, comment, actor.email);
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);
@@ -504,11 +534,13 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
 
     // The rule, not the button. The queue disables this row's controls, but a
     // control removed from a page is not a control the server has: this reads
-    // the group from the database at the moment of the call, inside the
-    // transaction that has just claimed the row, so a predecessor decided a
-    // moment ago is seen and one still undecided cannot be signed off by a
-    // stale page, a replayed request or the multi-select loop. Throwing rolls
-    // the claim back, leaving the request exactly where it was.
+    // the requester's whole calendar from the database at the moment of the
+    // call — not only this request's own `GroupKey` group, since a
+    // predecessor may sit in a different one — inside the transaction that
+    // has just claimed the row, so a predecessor decided a moment ago is seen
+    // and one still undecided cannot be signed off by a stale page, a
+    // replayed request or the multi-select loop. Throwing rolls the claim
+    // back, leaving the request exactly where it was.
     const dependency = await loadPerDiemDependency(tx, requestId);
     if (dependency && !dependency.settled) {
       throw new Error(dependencyRefusalText(dependency));

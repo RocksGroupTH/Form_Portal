@@ -4,9 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { computePerDiem, rateForDay, type AllowanceLogEntry } from "@/lib/acc/travel-booking/perdiem";
+import { findDateOverlap, type OtherTrip } from "@/lib/acc/travel-booking/date-overlap";
+import { continuationFlags as deriveContinuationFlags } from "@/lib/acc/travel-booking/continuation-chain";
 import { effectiveClaimCountry } from "@/features/accounting/lib/claim-currency";
 import type { PerDiemAttribution } from "@/features/travel-booking/lib/perdiem-note";
 import { destinationKeyFor } from "@/features/travel-booking/lib/destination-key";
+import { buildEstimateChainTrips, moneyWithheldForRoom } from "@/features/travel-booking/lib/perdiem-estimate-inputs";
 import { NO_RENT_VEHICLE_NAME } from "@/features/travel-booking/constants";
 import { workLocationIssue } from "@/lib/acc/travel-booking/work-location-pin";
 import {
@@ -263,7 +266,11 @@ export interface FieldIssue {
   label: string;
 }
 
-export function validateTab(tab: TabFormState, settings: TabSettingsMaps): FieldIssue[] {
+export function validateTab(
+  tab: TabFormState,
+  settings: TabSettingsMaps,
+  otherTrips: readonly OtherTrip[] = [],
+): FieldIssue[] {
   const issues: FieldIssue[] = [];
 
   // A plain per-tab issue, which is what it should have been: the brand belongs
@@ -303,6 +310,28 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
     // The picker will not offer a past day, but a resumed draft still holds
     // whatever it was saved with — including a date that has since gone by.
     issues.push({ key: "dateRange", label: "วันเดินทางต้องเป็นวันพรุ่งนี้เป็นต้นไป" });
+  } else {
+    // The same pure rule the submit enforces — one module, two callers, so the
+    // client cannot refuse something the server allows or vice versa.
+    //
+    // **The server check stays** and is the real one: a client-enforced
+    // invariant is not one, and a resumed draft can hold dates that were free
+    // when it was saved and are not now. This only checks against the
+    // requester's OTHER already-saved requests (`otherTrips`, from
+    // `/api/request/travel-booking/date-ranges`) — not against this group's
+    // own sibling tabs. That is a real, PARKED gap, not a guaranteed-safe one:
+    // the date picker's `disabledDates` (`lockedTravelDates`) does NOT keep a
+    // requester from picking every sibling overlap in the first place —
+    // measured 2026-09-22 against a two-day other trip, it locks nothing at
+    // all (see `TravelBookingTab.tsx`'s own comment for the count), so the
+    // ordinary overnight trip is exactly the shape this earliness check still
+    // misses for a sibling tab. `validateTravelBookingTab` and the server
+    // catch it regardless; this file's own ledger records the parking.
+    const clash = findDateOverlap(
+      { departDate: tab.departDate, returnDate: tab.returnDate },
+      otherTrips,
+    );
+    if (clash) issues.push({ key: "dateRange", label: clash.message });
   }
 
   if (tab.goNeedsDepartTime && !tab.departTime) issues.push({ key: "departTime", label: "เวลาออกเดินทางขาไป" });
@@ -353,7 +382,7 @@ export function validateTab(tab: TabFormState, settings: TabSettingsMaps): Field
   }
 
   if ((!tab.idCardFiles || tab.idCardFiles.length === 0) && !tab.pendingIdCard) {
-    issues.push({ key: "idCard", label: "รูปบัตรประชาชน (อย่างน้อย 1 ไฟล์)" });
+    issues.push({ key: "idCard", label: "รูปบัตรประชาชน หรือ Passport (อย่างน้อย 1 ไฟล์)" });
   }
 
   return issues;
@@ -552,14 +581,102 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     ? (colleagues.find((c) => c.staffId === requesterStaffId) ?? fetchedRequester)
     : null;
 
-  // The requester's other (non-rejected) travel-date ranges — used to lock overlapping days.
-  const { data: dateRangesData } = useSWR<{ departDate: string; returnDate: string }[]>(
+  // The requester's other (non-rejected) travel-date ranges — used to lock overlapping days,
+  // Drafts included (see the endpoint's own doc comment for why).
+  // `requestId`/`requestNo`/`status` ride along so `otherTrips` below can name
+  // which request a clash belongs to and can tell a Draft apart from a
+  // submitted one — not only that a row exists. `sortOrder` (Task 8 fix round
+  // 1) is `AccTravelBooking.SortOrder`, the real depart-date tiebreak
+  // `otherTripsForChain` below feeds the shared `continuationFlags`.
+  const { data: dateRangesData } = useSWR<
+    {
+      departDate: string;
+      returnDate: string;
+      requestId: number;
+      requestNo: string | null;
+      status: string;
+      sortOrder: number;
+    }[]
+  >(
     ["/api/request/travel-booking/date-ranges", requesterStaffId ?? 0, groupKey ?? ""],
     ([url, sid, gk]: [string, number, string]) =>
       jsonFetcher(`${url}?requesterStaffId=${sid || ""}&excludeGroupKey=${gk || ""}`),
     { revalidateOnFocus: false },
   );
   const existingRanges = dateRangesData ?? [];
+
+  /**
+   * `existingRanges`, narrowed to what counts as a LIVE other trip — the one
+   * rule `otherTrips` and `otherTripsForChain` below both need and, until
+   * 2026-09-22 (M3), each re-expressed as its own `.filter()` rather than
+   * sharing it. **Drafts are excluded here**, even though `existingRanges`
+   * itself (the picker's day-lock) keeps them: the submit's own refusal set
+   * is `loadRequesterTrips` (`requester-trips.ts`), which pins `r.Status <>
+   * 'Draft'`, so a Draft the server would let a submit proceed past must not
+   * block one here either — an abandoned two-day draft in another group must
+   * not hard-refuse an unrelated submission with a message that then can't
+   * even be read. Cancelled/Rejected never reach `existingRanges` at all —
+   * the endpoint's own query excludes them — so every row that survives this
+   * filter is `alive` by construction.
+   *
+   * This is the RULE that was duplicated, not the type each caller maps it
+   * into: `otherTrips` is `OtherTrip[]` (`date-overlap.ts`) and
+   * `otherTripsForChain` is `EstimateOtherTrip[]` (`perdiem-estimate-inputs.ts`),
+   * and `date-overlap.ts`'s own docblock is explicit that the overlap rule and
+   * the continuation rule must not share one type — `sortOrder` (meaningless
+   * to `findDateOverlap`) has no business on `OtherTrip`. So this stays one
+   * filtered list, mapped twice, rather than one widened type.
+   */
+  const liveOtherRanges = useMemo(
+    () => existingRanges.filter((r) => r.status !== "Draft"),
+    [existingRanges],
+  );
+
+  /**
+   * `liveOtherRanges`, shaped for `findDateOverlap` — the one rule the
+   * server's submit refuses on (`date-overlap.ts`).
+   *
+   * This is an EARLINESS nicety only, exactly like `existingRanges`'
+   * day-locking — the server re-checks at submit against a fresh read and is
+   * what actually enforces the rule. It does not include this group's own
+   * sibling tabs (the date picker's `disabledDates` already keeps those from
+   * being picked in the first place; see `TravelBookingForm.tsx`).
+   */
+  const otherTrips: OtherTrip[] = useMemo(
+    () =>
+      liveOtherRanges.map((r) => ({
+        requestId: r.requestId,
+        requestNo: r.requestNo,
+        departDate: r.departDate,
+        returnDate: r.returnDate,
+        alive: true,
+      })),
+    [liveOtherRanges],
+  );
+
+  /**
+   * `liveOtherRanges` again, shaped for the continuation chain instead of the
+   * overlap refusal — see `liveOtherRanges`' own comment for why this is a
+   * second mapping rather than a widened `OtherTrip`.
+   *
+   * `sortOrder` is `AccTravelBooking.SortOrder` (Task 8 fix round 1) — the
+   * same column `submitTravelBookingGroup`'s own `chainTrips` reads via
+   * `loadRequesterTrips` for the requester's OTHER trips
+   * (request-service.ts). Feeding the shared `continuationFlags`
+   * (continuation-chain.ts) this value, rather than a stand-in, is what makes
+   * its depart-date tiebreak match the server's exactly instead of merely
+   * being inert for it.
+   */
+  const otherTripsForChain = useMemo(
+    () =>
+      liveOtherRanges.map((r) => ({
+        requestId: r.requestId,
+        departDate: r.departDate,
+        returnDate: r.returnDate,
+        sortOrder: r.sortOrder,
+      })),
+    [liveOtherRanges],
+  );
 
   const settingsMaps = useMemo<TabSettingsMaps>(
     () => ({
@@ -571,10 +688,43 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     [reasons, accommodations, vehicles, rentVehicles],
   );
 
-  /* ── Continuation + live per-diem estimate (spec §5), mirroring the server's
-     computePerDiem exactly for day-count/continuation, but using the requester's
-     CURRENT allowance rate as a flat estimate (the authoritative amount uses the
-     effective-dated EmployeeAllowanceLog and is computed at submit). ── */
+  /* ── Continuation + live per-diem estimate (spec §5, extended by package B's
+     two new rules — Task 8).
+     Continuation is no longer mirrored, it is SHARED: `continuationFlags`
+     below is the one function `submitTravelBookingGroup` (request-service.ts)
+     also calls, fed this group's own tabs concatenated with the requester's
+     OTHER already-saved trips (`otherTripsForChain`) exactly as the submit
+     concatenates its own `chainTrips` — so a trip filed last week whose
+     return date meets this tab's depart date is picked up here too, not only
+     at submit. See `perdiem-estimate-inputs.ts` for how the two lists become
+     the `ChainTrip[]` the shared function reads. **No approximation left in
+     that mapping (Task 8 fix round 1)**: the requester's OTHER trips now
+     carry their real `AccTravelBooking.SortOrder`
+     (`/api/request/travel-booking/date-ranges`, widened for exactly this),
+     so the shared function's depart-date tiebreak matches the server's own
+     rather than standing in for it.
+     Room booking is honoured too (package B, then corrected for the day count
+     specifically by I3, 2026-09-22): once an accommodation is CHOSEN,
+     `roomBooked` is passed to `computePerDiem`, so a no-room choice now zeroes
+     BOTH the day count and the money — the day count does NOT "stay honest
+     regardless" of the room rule, only regardless of an UNRESOLVED rate.
+     While no accommodation is chosen yet, the room state is genuinely
+     unknown, and only THEN does the day count stay honest (the real span)
+     while the money is withheld — see the estimate block itself, a few
+     hundred lines below, for the exact split and why.
+     What still legitimately differs from the submit is staleness, and —
+     separately — scope, not only logic. Staleness: this prices from whatever
+     allowance log and country rates have already landed on the form
+     (`estimateLog`/`countryRates` below) — the same effective-dated log the
+     submit reads — while the authoritative amount is priced from the
+     server's own FRESH read at the moment of submit, which can differ if a
+     rate changed in between (see `refreshRates` below). Scope: `otherTrips`/
+     `otherTripsForChain` come from `/api/request/travel-booking/date-ranges`,
+     which matches `r.StaffId = @staff` ALONE and returns `[]` outright for a
+     falsy `staffId` — the submit's own `loadRequesterTrips` matches `StaffId
+     OR EmployeeId`. A requester with no active HR row therefore gets an
+     estimate whose chain is genuinely narrower than the submit's, not merely
+     staler (recorded, not fixed here). ── */
   /**
    * The stand-in used only while `/api/request/travel-booking/allowance-log`
    * has not yet answered — including a fetch that FAILS and never answers at
@@ -657,13 +807,26 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     return requesterEnvironment === "UAT" ? null : (employee?.allowance ?? null);
   }, [estimateLog, employee?.allowance, requesterEnvironment]);
 
+  /* The requester's WHOLE calendar, not just this group's own tabs — the same
+     two halves `submitTravelBookingGroup` concatenates into its own
+     `chainTrips` (request-service.ts): this group's tabs plus
+     `otherTripsForChain` (the requester's other, already-saved requests,
+     Drafts already excluded, with their real `SortOrder`). Fed through the
+     SAME `continuationFlags` the submit and the cancellation recompute call,
+     so this estimate cannot disagree with what actually gets stored. See
+     `perdiem-estimate-inputs.ts` for how the two lists are turned into the
+     shared function's `ChainTrip[]`. */
+  const chainTripsForEstimate = useMemo(
+    () => buildEstimateChainTrips(tabs, otherTripsForChain),
+    [tabs, otherTripsForChain],
+  );
+  const chainFlagsByRequestId = useMemo(
+    () => deriveContinuationFlags(chainTripsForEstimate),
+    [chainTripsForEstimate],
+  );
   const continuationFlags = useMemo(
-    () =>
-      tabs.map((t, i) => {
-        const prev = i > 0 ? tabs[i - 1] : null;
-        return !!(prev && t.departDate && prev.returnDate && t.departDate === prev.returnDate);
-      }),
-    [tabs],
+    () => tabs.map((t, i) => chainFlagsByRequestId.get(t.id ?? -(i + 1)) ?? false),
+    [tabs, chainFlagsByRequestId],
   );
 
   /* The attribution and the country's own log travel with the figure rather
@@ -712,12 +875,39 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
              came from HR while the chosen country's rate sat unread. */
           return { days: 0, total: 0, groups: [], attribution, countryLog };
         }
-        // Days are always honest — they come from the dates alone. The money is
-        // withheld for a foreign trip until the rates have arrived, because
-        // pricing it from the domestic stand-in would show a figure that is
-        // wrong and then silently changes.
-        const computed = computePerDiem(t.departDate, t.returnDate, continuationFlags[i], resolved.log);
-        const shaped = attribution.kind === "pending" ? { ...computed, total: 0, groups: [] } : computed;
+        // Days are honest EXCEPT in the one case the submit has already
+        // settled: an accommodation that books no room stores 0 days, not
+        // only ฿0, so `roomBooked` is passed once an accommodation is
+        // actually CHOSEN — `computePerDiem` then returns { days: 0, total: 0
+        // } itself for a no-room choice, matching the submit exactly, with no
+        // post-shaping needed for that case (fixed 2026-09-22, I3 — this
+        // comment used to say "always honest", which stopped being true the
+        // moment package B's room rule shipped and nobody updated it).
+        //
+        // While NO accommodation is chosen yet, the room state is genuinely
+        // unknown, not settled-to-zero — `roomBooked` is withheld from
+        // `computePerDiem` so the day count stays honest (the real span;
+        // nobody has said whether it needs a room), and only the MONEY is
+        // withheld by the post-shaping below, via the same `moneyWithheldForRoom`
+        // predicate this shaping has used since package B — it already answers
+        // both "unknown" and "settled, no room" correctly for money; only the
+        // day count needed `roomBooked` added here to also answer "settled, no
+        // room" correctly. A foreign trip with an unresolved rate
+        // (`attribution.kind === "pending"`) withholds money the same way, for
+        // the unrelated reason that a figure that would silently change to a
+        // different non-zero number is its own "lying screen".
+        const roomKnown = t.accommodationId != null;
+        const computed = computePerDiem(
+          t.departDate,
+          t.returnDate,
+          continuationFlags[i],
+          resolved.log,
+          roomKnown ? { roomBooked: t.needsRoomBooking } : undefined,
+        );
+        const shaped =
+          attribution.kind === "pending" || moneyWithheldForRoom(t.accommodationId, t.needsRoomBooking)
+            ? { ...computed, total: 0, groups: [] }
+            : computed;
         return { ...shaped, attribution, countryLog };
       }),
     [tabs, brands, continuationFlags, estimateLog, countryRates, ratesKnown],
@@ -775,7 +965,10 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
   );
 
   /* ── Validation across all tabs ── */
-  const tabIssues = useMemo(() => tabs.map((t) => validateTab(t, settingsMaps)), [tabs, settingsMaps]);
+  const tabIssues = useMemo(
+    () => tabs.map((t) => validateTab(t, settingsMaps, otherTrips)),
+    [tabs, settingsMaps, otherTrips],
+  );
   const canSubmit = tabs.length > 0 && tabIssues.every((issues) => issues.length === 0);
 
   /* ── Tab CRUD ── */
@@ -854,10 +1047,10 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
                 ),
               );
             } else {
-              toast.error(upJson.error ?? "อัปโหลดรูปบัตรไม่สำเร็จ");
+              toast.error(upJson.error ?? "อัปโหลดรูปเอกสารไม่สำเร็จ");
             }
           } catch {
-            toast.error("อัปโหลดรูปบัตรไม่สำเร็จ");
+            toast.error("อัปโหลดรูปเอกสารไม่สำเร็จ");
           }
         }),
       );
@@ -981,17 +1174,17 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
         });
         const json = await res.json();
         if (!json.ok) {
-          toast.error(json.error ?? "ใช้บัตรเดิมไม่สำเร็จ");
+          toast.error(json.error ?? "ใช้เอกสารเดิมไม่สำเร็จ");
           return false;
         }
         const created = json.data as TravelBookingFileMeta;
         setTabs((prev) =>
           prev.map((t, i) => (i === tabIndex ? { ...t, idCardFiles: [...t.idCardFiles, created] } : t)),
         );
-        toast.success("ใช้บัตรที่เคยแนบแล้ว");
+        toast.success("ใช้เอกสารที่เคยแนบแล้ว");
         return true;
       } catch {
-        toast.error("ใช้บัตรเดิมไม่สำเร็จ");
+        toast.error("ใช้เอกสารเดิมไม่สำเร็จ");
         return false;
       }
     },
@@ -1021,6 +1214,7 @@ export function useTravelBookingForm(initial?: TravelBookingGroup | null) {
     colleaguesLoading,
     requesterEnvironment,
     existingRanges,
+    otherTrips,
     requesterStaffId,
     setRequesterStaffId,
     brands,

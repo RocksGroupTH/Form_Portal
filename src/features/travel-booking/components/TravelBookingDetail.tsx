@@ -1194,7 +1194,9 @@ export function TravelBookingDetail({
                     )}
                   </span>
                   <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                    ต่อเนื่องจากทริปก่อนหน้า จึงไม่นับซ้ำที่นี่ (−1 วัน)
+                    ต่อเนื่องจาก {request.continuationFromRequestNo ?? "ทริปก่อนหน้า"}
+                    {request.departDate ? ` (วันที่ ${fmtYmdDisplay(request.departDate)})` : ""} จึงไม่นับซ้ำที่นี่
+                    (−1 วัน)
                   </span>
                 </span>
               }
@@ -1270,10 +1272,10 @@ export function TravelBookingDetail({
         </div>
       </Section>
 
-      {/* ── Attachments (บัตรประชาชน) — before the summary, like the form ── */}
+      {/* ── Attachments (บัตรประชาชน หรือ Passport) — before the summary, like the form ── */}
       <Section title="เอกสารแนบ" icon={<Paperclip size={15} />}>
         <label className="text-[11px] font-semibold uppercase tracking-wide block mb-1.5" style={{ color: "var(--text-muted)" }}>
-          บัตรประชาชน
+          บัตรประชาชน หรือ Passport
         </label>
         {request.idCardFiles.length > 0 ? (
           <div className="flex flex-wrap gap-2">

@@ -176,35 +176,103 @@ test("the form hook reaches no server-side per-diem reader", () => {
 });
 
 /**
- * The recompute's SELECT is the one that costs money. `r.CountryCode` can be
- * deleted from it while tidying and nothing fails to compile: the value simply
- * arrives `undefined`, `perDiemLogFor` answers "employee", and a foreign trip is
- * silently re-priced at the domestic rate — inside the transaction that cancels
- * a sibling, writing both PerDiemTotal and AccRequest.TotalAmount.
+ * The recompute's shared row-column list (`PERDIEM_ROW_COLUMNS`, used by both
+ * its readers — the group's own SELECT and `loadOutsideDetailRows`'s outside
+ * SELECT) is the one that costs money. `r.CountryCode` can be deleted from it
+ * while tidying and nothing fails to compile: the value simply arrives
+ * `undefined`, `perDiemLogFor` answers "employee", and a foreign trip is
+ * silently re-priced at the domestic rate — inside the transaction that
+ * cancels a sibling, writing both PerDiemTotal and AccRequest.TotalAmount.
  */
 test("the recompute reads the request's country", () => {
   const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
   assert.ok(
     /r\.CountryCode/.test(src),
-    "perdiem-recompute.ts's group SELECT no longer names r.CountryCode — a cancellation will " +
-      "re-price every surviving foreign trip in the group at the employee's Thai allowance",
+    "perdiem-recompute.ts no longer names r.CountryCode in its shared row-column list — a " +
+      "cancellation will re-price every surviving foreign trip it touches at the employee's " +
+      "Thai allowance",
   );
 });
 
 /**
- * The other column in the recompute's SELECT that costs money if it is tidied
- * away. Without `r.StaffId` the UAT override lookup is handed `undefined`, finds
- * nothing, and every UAT trip in the group is re-priced at the tester's real HR
- * allowance — inside the transaction that cancels a sibling, writing both
- * PerDiemTotal and AccRequest.TotalAmount. It fails no typecheck.
+ * The other column in the recompute's shared row-column list that costs money
+ * if it is tidied away. Without `r.StaffId` the UAT override lookup is handed
+ * `undefined`, finds nothing, and every UAT trip is re-priced at the tester's
+ * real HR allowance — inside the transaction that cancels a sibling, writing
+ * both PerDiemTotal and AccRequest.TotalAmount. It fails no typecheck.
  */
 test("the recompute reads the request's StaffId", () => {
   const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
   assert.ok(
     /r\.StaffId/.test(src),
-    "perdiem-recompute.ts's group SELECT no longer names r.StaffId — a cancellation will " +
-      "re-price every surviving UAT trip in the group at the tester's real HR allowance",
+    "perdiem-recompute.ts no longer names r.StaffId in its shared row-column list — a " +
+      "cancellation will re-price every surviving UAT trip it touches at the tester's real HR " +
+      "allowance",
   );
+});
+
+/**
+ * The third column in the recompute's shared row-column list, and the worst of
+ * the three to lose: without `t.NeedsRoomBooking` every row arrives with that
+ * field `undefined`, `!!x.NeedsRoomBooking` reads `false` for every one of
+ * them, and `computePerDiem` answers `{ days: 0, total: 0 }` across the board
+ * — not one class of trip mispriced, EVERY recomputed trip this transaction
+ * writes, at ฿0, PerDiemTotal and AccRequest.TotalAmount both. It fails no
+ * typecheck and, until this guard, was covered by no test — see
+ * `PERDIEM_ROW_COLUMNS`'s own doc comment.
+ */
+test("the recompute reads whether a room is booked", () => {
+  const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
+  assert.ok(
+    /t\.NeedsRoomBooking/.test(src),
+    "perdiem-recompute.ts no longer names t.NeedsRoomBooking in its shared row-column list — " +
+      "every trip this recompute writes will be priced at zero days regardless of what it " +
+      "actually booked",
+  );
+});
+
+/**
+ * The three tests above only prove the three column NAMES appear somewhere in
+ * the file — `PERDIEM_ROW_COLUMNS`'s own definition line satisfies all three
+ * by itself. Mutation-verified (whole-branch review, 2026-09-22): a THIRD
+ * reader added with its own hand-spelled column list, naming none of the
+ * three, left the three tests above green — 11 pass / 0 fail. This is the
+ * tighter check `PERDIEM_ROW_COLUMNS`'s own doc comment now names as written
+ * here.
+ *
+ * **Fix round 2 (2026-09-22, N6): the first version of this test was itself
+ * measured to have two bypasses, both ordinary code a hand-written reader
+ * could use without trying to evade anything** — matched against
+ * `\.query\(\`[\s\S]*?\`\)`, so it missed (a) the same SQL with its
+ * `[dbo].[AccTravelBooking]` brackets dropped to `dbo.AccTravelBooking`
+ * (valid SQL Server either way), and (b) the SQL hoisted to a `const q =
+ * \`...\`` and called as `.query(q)` instead of inline. Both left this file
+ * at 12 pass / 0 fail with the rogue reader still in place. Fixed by no
+ * longer anchoring on `.query(` at all: every backtick-delimited string
+ * literal in the file is a candidate, found first and filtered to the ones
+ * that look like a SELECT from the table, in either bracketed or unbracketed
+ * form — so a hoisted `const` is just as visible as an inline call, because
+ * the literal itself is what is being read, not its call site.
+ */
+test("every SELECT reading AccTravelBooking in perdiem-recompute.ts interpolates PERDIEM_ROW_COLUMNS", () => {
+  const src = code("lib/acc/travel-booking/perdiem-recompute.ts");
+  const stringLiterals = src.match(/`[^`]*`/g) ?? [];
+  const pricingSelects = stringLiterals.filter(
+    (b) => /SELECT/.test(b) && /\[dbo\]\.\[AccTravelBooking\]|dbo\.AccTravelBooking\b/.test(b),
+  );
+  assert.ok(
+    pricingSelects.length >= 2,
+    `expected at least the group SELECT and loadOutsideDetailRows' SELECT (found ${pricingSelects.length}) ` +
+      "— has a reader been removed, or restructured so this pattern no longer finds it?",
+  );
+  for (const block of pricingSelects) {
+    assert.ok(
+      /PERDIEM_ROW_COLUMNS/.test(block),
+      "a SELECT reads AccTravelBooking for pricing without interpolating PERDIEM_ROW_COLUMNS, so " +
+        "the three guards above cannot see anything this one query alone drops: " +
+        block.slice(0, 160).replace(/\s+/g, " "),
+    );
+  }
 });
 
 test("the report's CTE reads the request's country", () => {
