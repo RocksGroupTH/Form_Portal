@@ -144,8 +144,26 @@ export interface HostCandidateRow {
   requestNo: string | null;
   departDate: string | null;
   returnDate: string | null;
-  /** `AccTravelWorkLocation.Name` only — never the coordinates, which the picker does not draw. */
-  workLocations: string[];
+  /**
+   * `AccTravelWorkLocation` — the name **and its pin**, for each place.
+   *
+   * **It was `string[]` until 2026-09-23, and the coordinates were argued
+   * *out* twice before being argued back in by a measurement.** The picker
+   * does not draw a map, so the pin looked like reach nobody needed. It is
+   * not: since 2026-09-01 `validateTravelBookingTab` refuses a submit whose
+   * work location is not pinned — `workLocationIssue(…) === "unpinned"`,
+   * "สถานที่ไปปฏิบัติงานต้องเลือกจากผลค้นหา Google Maps" — so a name copied
+   * into the guest's tab without its pin produces a field that **looks filled
+   * in and cannot be submitted**, refused over a value the system put there
+   * itself. The requester's remedy would be to delete it and re-pick the same
+   * place, which is the work the prefill exists to save. Names alone would
+   * have been the worse answer, not the safer one.
+   *
+   * `room-share-prefill.ts` copies a row only when it is named **and**
+   * pinned, asking `hasUsablePin` — the same predicate the two validators
+   * ask, rather than a third spelling of it.
+   */
+  workLocations: { name: string; lat: number | null; lng: number | null }[];
   /**
    * `AccRequest.StaffId` — the host's HR id, and **only** the id.
    *
@@ -191,8 +209,16 @@ export interface RoomShareView {
    leave every column after the `+` unchecked. */
 const HOST_DISPLAY_COLUMNS = "r.Id, r.RequestNo, r.StaffId, r.BrandCode, t.DepartDate, t.ReturnDate, t.ReasonId, t.ReasonCustomText, t.WorkDetail";
 
-/** The second and last list feeding the response: a work location's name, and the request it hangs off. */
-const HOST_LOCATION_COLUMNS = "t.RequestId, w.Name";
+/**
+ * The second and last list feeding the response: a work location's name **and
+ * its pin**, plus the request it hangs off.
+ *
+ * `w.Lat, w.Lng` (migration 135) joined it on 2026-09-23, and the reason is
+ * `HostCandidateRow.workLocations`' own docblock: a copied place that is not
+ * pinned cannot be submitted, so a name without its coordinates is not a
+ * narrower answer to the user's point 3, it is an unusable one.
+ */
+const HOST_LOCATION_COLUMNS = "t.RequestId, w.Name, w.Lat, w.Lng";
 
 /**
  * What `canHost` needs to judge a candidate, and nothing that is emitted for
@@ -490,10 +516,27 @@ async function loadHostDisplayRows(
      WHERE t.RequestId IN (${locIds.join(", ")})
      ORDER BY w.SortOrder, w.Id
   `);
-  for (const row of locs.recordset as { RequestId: number; Name: string | null }[]) {
+  for (const row of locs.recordset as {
+    RequestId: number;
+    Name: string | null;
+    Lat: number | null;
+    Lng: number | null;
+  }[]) {
     const target = out.get(row.RequestId);
     if (!target) continue;
-    if (row.Name) target.workLocations.push(row.Name);
+    // Still keyed on the NAME being present: an unnamed row names nothing on
+    // screen and fills nothing. The pin rides along and may legitimately be
+    // null — every location filed before 2026-09-01 has none (migration 135
+    // added the columns with no backfill, and nothing can backfill them
+    // because the Google key is HTTP-referrer restricted). The prefill drops
+    // those rather than copying a place that cannot be submitted.
+    if (row.Name) {
+      target.workLocations.push({
+        name: row.Name,
+        lat: row.Lat ?? null,
+        lng: row.Lng ?? null,
+      });
+    }
   }
 
   return out;

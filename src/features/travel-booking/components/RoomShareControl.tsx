@@ -127,9 +127,11 @@ import type {
  * host's **`staffId`** and the four trip fields the guest's tab is filled in
  * from. **"Deliberately nothing else" is still true and the list it refers to
  * has moved** — still not the amount, not the attachments, not the ID card,
- * not the per-diem figures, not the work locations' coordinates. The
- * residual that widening carries is stated at the endpoint, in the route's
- * own docblock, in the terms it was put to the user in.
+ * not the per-diem figures. The work locations now carry their `Lat`/`Lng`
+ * as well as their names, because an unpinned place cannot be submitted and a
+ * name copied without its pin is a field the guest cannot file. The residual
+ * that widening carries is stated at the endpoint, in the route's own
+ * docblock, in the terms it was put to the user in.
  * `HostCandidateRow` is imported as a **type** from the service so this
  * component cannot invent a field the endpoint does not send;
  * `room-share-response-shape-guard.test.ts` pins the other end.
@@ -804,7 +806,7 @@ export function RoomShareControl({
                 {hostRow.workLocations.length > 0 && (
                   <p className="text-[11.5px] m-0 flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
                     <MapPin size={11} className="shrink-0 mt-[2px]" />
-                    <span className="min-w-0">{hostRow.workLocations.join(" · ")}</span>
+                    <span className="min-w-0">{hostRow.workLocations.map((w) => w.name).join(" · ")}</span>
                   </p>
                 )}
               </div>
@@ -1165,7 +1167,7 @@ export function RoomShareControl({
                     {h.workLocations.length > 0 && (
                       <span className="text-[11.5px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
                         <MapPin size={11} className="shrink-0 mt-[2px]" />
-                        <span className="min-w-0">{h.workLocations.join(" · ")}</span>
+                        <span className="min-w-0">{h.workLocations.map((w) => w.name).join(" · ")}</span>
                       </span>
                     )}
                   </span>

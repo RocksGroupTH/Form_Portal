@@ -45,27 +45,53 @@
  *   B — a field whose two halves describe different trips, which is worse
  *   than leaving it blank.
  *
+ * ## A work location is copied WITH its pin, or not at all
+ *
+ * This was argued the other way first, and the measurement reversed it.
+ * Copying bare names looked like the narrower, safer answer — the picker
+ * draws no map, so a colleague's coordinates seemed like reach nobody needed.
+ * It is not safer, it is broken: since 2026-09-01 `validateTravelBookingTab`
+ * refuses a submit whose work location is **unpinned**
+ * (`workLocationIssue(…) === "unpinned"` →
+ * "สถานที่ไปปฏิบัติงานต้องเลือกจากผลค้นหา Google Maps"), and the form's own
+ * `validateTab` asks the same question from the same module. A name copied
+ * without its pin therefore produces a field that **looks filled in and
+ * cannot be submitted**, refused over a value the requester never typed,
+ * whose only remedy is to delete it and re-pick the same place — exactly the
+ * work this exists to save.
+ *
+ * So `HostCandidateRow.workLocations` carries `{ name, lat, lng }`, and a row
+ * is copied only when it is **named and pinned**. `hasUsablePin` is imported
+ * rather than re-expressed: it is the predicate both validators already ask,
+ * it imports nothing, and a third spelling of "is this pin usable" is the
+ * thing its own docblock exists to prevent. A host whose locations predate
+ * migration 135 has none — nothing can backfill them, the Google key being
+ * HTTP-referrer restricted — so that host fills no locations at all and the
+ * requester picks their own, which is what they would have done anyway.
+ *
  * ## What is NOT copied, and why each one
  *
- * - **The work location's coordinates.** Migration 135 gave
- *   `AccTravelWorkLocation` `Lat`/`Lng`, and the host's row has them — but
- *   the hosts endpoint answers work locations as **names alone**
- *   (`HostCandidateRow.workLocations: string[]`) and was deliberately not
- *   widened to carry a colleague's pin to every authenticated employee. So a
- *   copied location renders no map until the requester re-picks the place
- *   from Google, which is the same honest outcome CLAUDE.md already records
- *   for every location filed before 2026-09-01 — no map rather than a wrong
- *   pin.
  * - **The trip's dates, the per-diem figures, the amount, the attachments,
  *   the ID card, the vehicles.** The first belongs to `room-share-choice.ts`
  *   under a different rule; the rest are either derived, personal, or
  *   genuinely the guest's own decision.
  *
- * Pure and import-free, so it is unit-tested without a database — the form's
- * components and hook all reach `@/env` transitively. The host and tab types
- * are structural subsets rather than imports of `HostCandidateRow` and
+ * Pure, so it is unit-tested without a database — the form's components and
+ * hook all reach `@/env` transitively. Its **one** import,
+ * `work-location-pin.ts`, imports nothing itself and exists precisely to be
+ * shared by everything that asks this question. The host and tab types are
+ * structural subsets rather than imports of `HostCandidateRow` and
  * `TabFormState`, for the same reason `RoomShareHostChoice` is.
  */
+
+import { hasUsablePin } from "@/lib/acc/travel-booking/work-location-pin";
+
+/** One work location as the host's row carries it. A structural subset of `HostCandidateRow`'s. */
+export interface RoomSharePrefillHostLocation {
+  name: string;
+  lat: number | null;
+  lng: number | null;
+}
 
 /** The host fields a prefill reads. A structural subset of `HostCandidateRow`. */
 export interface RoomSharePrefillHost {
@@ -73,14 +99,16 @@ export interface RoomSharePrefillHost {
   reasonId: number | null;
   reasonCustomText: string | null;
   workDetail: string | null;
-  /** Names only — the endpoint carries no coordinates. See the header. */
-  workLocations: string[];
+  /** Name **and pin** — an unpinned place cannot be submitted. See the header. */
+  workLocations: RoomSharePrefillHostLocation[];
 }
 
 /** One work location as the tab holds it. A structural subset of `WorkLocationInput`. */
 export interface RoomSharePrefillLocation {
   name: string;
   sortOrder: number;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 /** The tab fields a prefill has to look at before it writes anything. */
@@ -160,16 +188,25 @@ export function roomSharePrefillPatch(
   }
 
   if (hasNoNamedLocation(tab.workLocations)) {
-    /* The host's own blank entries are dropped rather than copied: they would
-       arrive as rows the requester has to delete before the form will accept
-       the tab, which is worse than the blank row that was already there. A
-       host with nothing named therefore fills nothing, and the key stays
-       absent. */
-    const named: RoomSharePrefillLocation[] = [];
-    for (const name of host.workLocations) {
-      if (!isBlank(name)) named.push({ name: name.trim(), sortOrder: named.length });
+    /* **Named AND pinned, or not copied.** A blank entry would arrive as a
+       row the requester has to delete before the form accepts the tab, which
+       is worse than the blank row already there; and an UNPINNED one is
+       worse still — it looks answered and `validateTravelBookingTab` refuses
+       the submit over it, naming Google Maps for a value the requester never
+       typed. `hasUsablePin` is the validators' own predicate, imported
+       rather than re-expressed. A host with nothing usable fills nothing and
+       the key stays absent. */
+    const usable: RoomSharePrefillLocation[] = [];
+    for (const place of host.workLocations) {
+      if (isBlank(place.name) || !hasUsablePin(place)) continue;
+      usable.push({
+        name: place.name.trim(),
+        sortOrder: usable.length,
+        lat: place.lat,
+        lng: place.lng,
+      });
     }
-    if (named.length > 0) patch.workLocations = named;
+    if (usable.length > 0) patch.workLocations = usable;
   }
 
   return patch;

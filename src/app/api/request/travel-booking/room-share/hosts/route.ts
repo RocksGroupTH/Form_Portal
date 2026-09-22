@@ -66,9 +66,13 @@ import {
  *    `HostCandidateRow` is built in `room-share-service.ts` from an explicit
  *    column list and pinned field by field and column by column by
  *    `room-share-response-shape-guard.test.ts`. Still **not the amount, not
- *    the attachments, not the ID card, not the per-diem figures**, and not
- *    the work locations' coordinates — each excluded on its own merits rather
- *    than by inertia, and that guard's forbidden list is what enforces it.
+ *    the attachments, not the ID card, not the per-diem figures** — each
+ *    excluded on its own merits rather than by inertia, and that guard's
+ *    forbidden list is what enforces it. The work locations **do** carry
+ *    their `Lat`/`Lng`, and that was reversed into the design rather than
+ *    assumed: `validateTravelBookingTab` refuses an unpinned place, so a name
+ *    copied into a guest's tab without its pin is a field that looks filled
+ *    in and cannot be submitted.
  * 2. **`decideRequestRead` still governs opening the record itself.** Opening
  *    one of these requests is still `GET /requests/[id]`, unchanged, which
  *    refuses anybody that policy refuses.

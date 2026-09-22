@@ -84,19 +84,30 @@ import path from "node:path";
  * ## Re-verified after the 2026-09-23 widening — seven more trials, none green
  *
  * The shape went from five fields to nine on the user's explicit decision, so
- * the two allow-lists changed and the forbidden list lost two entries and
- * gained two. **An allow-list that has just been edited is exactly the one
- * nobody has tried to defeat since**, which is why these were run rather than
- * assumed. Same harness as above: `cp` backup, literal replacement, re-run,
- * restore, hash compared.
+ * the two allow-lists changed and the forbidden list lost two entries.
+ * **An allow-list that has just been edited is exactly the one nobody has
+ * tried to defeat since**, which is why these were run rather than assumed.
+ * Same harness as above: `cp` backup, literal replacement, re-run, restore,
+ * hash compared.
  *
- * 24. `w.Lat, w.Lng` appended to `HOST_LOCATION_COLUMNS` → **red**, twice
- *     over (the column list, and the forbidden list those two joined in this
- *     round). This is the widening the prefill module explicitly declined,
- *     and it is two characters of SQL away.
- * 25. `HostCandidateRow.workLocations` widened from `string[]` to objects
- *     carrying `lat`/`lng` → **red**. The types half of the field allow-list
- *     is what catches it; a name-only list would have called it unchanged.
+ * Trials 24 and 25 were run **twice**, because the work locations' pin was
+ * argued out of the shape and then back into it inside this same round —
+ * `validateTravelBookingTab` refuses an unpinned place, so bare names were
+ * the broken answer rather than the narrow one. Both spellings are recorded,
+ * because the pair is the useful part: the allow-lists bit in **both**
+ * directions.
+ *
+ * 24. **First pass**, while the shape was `string[]`: `w.Lat, w.Lng` appended
+ *     to `HOST_LOCATION_COLUMNS` → **red**, twice over (the column list, and
+ *     the forbidden list those two then sat on). **Second pass**, after the
+ *     reversal: `w.Lat, w.Lng` *removed* → **red** on the column list. A
+ *     narrowing here is silent in every other way — the guest's submit is
+ *     what fails, one screen and one save later.
+ * 25. **First pass**: `workLocations` widened from `string[]` to objects
+ *     carrying `lat`/`lng` → **red**. **Second pass**, after the reversal:
+ *     narrowed back to `string[]` → **red**. The types half of the field
+ *     allow-list is what catches both; a name-only list would have called
+ *     either unchanged.
  * 26. `t.AccommodationName` appended to `HOST_DISPLAY_COLUMNS` → **red**,
  *     twice over. Worth running because the `clearGuestOwnAccommodation`
  *     carve-out strips an identifier containing "Accommodation", and this
@@ -115,6 +126,12 @@ import path from "node:path";
  *     readers → **red** (the export list) — re-run because that arm's list
  *     was not touched this round and a stale allow-list is the one that
  *     quietly stops meaning anything.
+ * 31. `hasUsablePin` dropped from `room-share-prefill.ts`, so an unpinned
+ *     place is copied into the guest's tab → **red** in
+ *     `room-share-prefill.test.ts`. Recorded here rather than there because
+ *     it is the behavioural half of this file's decision about the shape: the
+ *     columns are carried so that the prefill can be selective, and a prefill
+ *     that is not selective makes carrying them pointless.
  */
 
 const ROOT = process.cwd();
@@ -170,10 +187,13 @@ function bodyOf(src: string, decl: string): string {
 /**
  * A top-level interface's fields as `name: type`, in order.
  *
- * **Types, not names alone**, and that is not tidiness: `workLocations:
- * string[]` widened to `{ name: string; lat: number; lng: number }[]` keeps the
- * field name and starts shipping the coordinates of somebody else's hotel. A
- * name-only allow-list would have called that unchanged.
+ * **Types, not names alone**, and that is not tidiness. `workLocations`
+ * carries `{ name; lat; lng }`, a shape this feature arrived at by measuring
+ * (see the field list below); widened to carry the phone number of the hotel,
+ * or narrowed back to `string[]`, it keeps its field name either way and a
+ * name-only allow-list would call both unchanged. One of those two directions
+ * ships something nobody asked for and the other silently breaks the guest's
+ * submit; the types are what tell either of them from the shape that is here.
  */
 function interfaceFields(src: string, name: string): string[] {
   const m = new RegExp(`export interface ${name}\\s*\\{([\\s\\S]*?)\\n\\}`).exec(src);
@@ -222,10 +242,18 @@ function columnsOf(src: string, constName: string): string[] {
  *
  * What did **not** move is the exclusions, each of which was argued on its own
  * merits and none of which is inertia: no amount, no attachments, no ID card,
- * no per-diem figures, and no coordinates on the work locations. The `types`
- * half of this assertion is what enforces the last one —
- * `workLocations: string[]` widened to `{ name; lat; lng }[]` keeps the field
- * name while shipping the pin of somebody else's hotel.
+ * no per-diem figures.
+ *
+ * **`workLocations` gained its pin in the same round, and that one was argued
+ * out before it was argued in.** Bare names are the narrower answer and the
+ * broken one: since 2026-09-01 `validateTravelBookingTab` refuses a submit
+ * whose work location is unpinned, so a name copied into the guest's tab
+ * without its coordinates produces a field that looks filled in, cannot be
+ * submitted, and names Google Maps at a requester who never typed it. The pin
+ * is part of สถานที่ไปปฏิบัติงาน rather than a fact beside it. The `types`
+ * half of this assertion is what bounds it to exactly `{ name; lat; lng }` —
+ * widened to carry, say, the place's phone number, the field name would be
+ * unchanged and a name-only allow-list would say nothing.
  */
 test("HostCandidateRow returns exactly the fields the user's decision allows, and no others", () => {
   assert.deepEqual(interfaceFields(code(SERVICE), "HostCandidateRow"), [
@@ -233,9 +261,10 @@ test("HostCandidateRow returns exactly the fields the user's decision allows, an
     "requestNo: string | null",
     "departDate: string | null",
     "returnDate: string | null",
-    // A bare name — never the coordinates, which the picker does not draw and
-    // which migration 135 attaches to the host's own work location.
-    "workLocations: string[]",
+    // The name AND the pin (migration 135). The picker does not draw a map;
+    // the guest's SUBMIT is what needs the coordinates — see this test's
+    // docblock for the measurement that reversed the original decision.
+    "workLocations: { name: string; lat: number | null; lng: number | null }[]",
     // 2026-09-23, points 2 and 3. See this test's docblock.
     "staffId: number | null",
     "brandCode: string | null",
@@ -274,8 +303,11 @@ test("RoomShareView adds only the binding itself, and reuses HostCandidateRow fo
  * separately: a column here with no field there is a value fetched and
  * dropped, which is where a later mapping picks it up for free.
  *
- * `HOST_LOCATION_COLUMNS` is where the work locations' coordinates would
- * arrive — `w.Lat, w.Lng` beside `w.Name` — and it stays two columns.
+ * `HOST_LOCATION_COLUMNS` carries `w.Lat, w.Lng` beside `w.Name` since
+ * 2026-09-23, and must keep carrying them: `room-share-prefill.ts` copies a
+ * place into the guest's tab only when `hasUsablePin` admits it, so a name
+ * arriving without its pin is a place the prefill silently drops and the
+ * requester re-types — the work the prefill exists to save.
  */
 test("the picker's display columns are exactly the nine the response needs", () => {
   const src = code(SERVICE);
@@ -290,7 +322,12 @@ test("the picker's display columns are exactly the nine the response needs", () 
     "t.ReasonCustomText",
     "t.WorkDetail",
   ]);
-  assert.deepEqual(columnsOf(src, "HOST_LOCATION_COLUMNS"), ["t.RequestId", "w.Name"]);
+  assert.deepEqual(columnsOf(src, "HOST_LOCATION_COLUMNS"), [
+    "t.RequestId",
+    "w.Name",
+    "w.Lat",
+    "w.Lng",
+  ]);
 });
 
 /**
@@ -378,13 +415,17 @@ test("the service never names a column the picker must not carry", () => {
      the decision to widen was about *these five fields*, not about the
      principle of the list.
 
-     `Lat` and `Lng` were ADDED in the same round. The work locations are
-     answered as bare names and the prefill copies names only, so a copied
-     location renders no map until the requester re-picks the place — the
-     honest outcome, and the one CLAUDE.md already records for every location
-     filed before 2026-09-01. Shipping a colleague's pin to every
-     authenticated employee is the widening nobody asked for, and it would
-     arrive as two characters appended to `HOST_LOCATION_COLUMNS`. */
+     **`Lat` and `Lng` were added to this list in the same round and taken
+     straight back off, and that reversal is the useful part of the record.**
+     Bare names look like the narrower answer. They are the broken one: since
+     2026-09-01 `validateTravelBookingTab` refuses a submit whose work
+     location is unpinned, so a name copied into the guest's tab without its
+     coordinates produces a field that looks filled in, cannot be submitted,
+     and names Google Maps at a requester who never typed it. The pin is part
+     of สถานที่ไปปฏิบัติงาน rather than a sixth fact beside it. What bounds it
+     instead is the *shape* assertion above — `{ name; lat; lng }` and nothing
+     more — and `room-share-prefill.ts` copying a row only when
+     `hasUsablePin` admits it. */
   const forbidden = [
     "TotalAmount",
     "ForeignAmount",
@@ -402,15 +443,14 @@ test("the service never names a column the picker must not carry", () => {
     "AccTravelBookingDetail",
     "IdCard",
     "Accommodation",
-    "Lat",
-    "Lng",
   ];
   for (const column of forbidden) {
     assert.ok(
       src.indexOf(column) === -1,
-      `room-share-service.ts names "${column}". The picker answers a colleague's running ` +
-        "number, dates and work location and nothing else (spec §6) — if this column is " +
-        "genuinely needed, that is a change to the spec, not to this list",
+      `room-share-service.ts names "${column}". The picker answers the nine fields listed at ` +
+        "the top of this file and nothing else — if this column is genuinely needed, that is a " +
+        "decision for the user, whose 2026-09-23 widening is the only reason the list is nine " +
+        "rather than five, not a change to this list",
     );
   }
 });

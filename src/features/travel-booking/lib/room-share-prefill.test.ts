@@ -6,6 +6,11 @@ import {
   type RoomSharePrefillTab,
 } from "./room-share-prefill";
 
+/** A named, pinned place, as the hosts endpoint answers one. */
+function place(name: string, lat: number | null = 18.79, lng: number | null = 98.98) {
+  return { name, lat, lng };
+}
+
 /** A host with every copyable field answered. */
 function host(over: Partial<RoomSharePrefillHost> = {}): RoomSharePrefillHost {
   return {
@@ -13,7 +18,7 @@ function host(over: Partial<RoomSharePrefillHost> = {}): RoomSharePrefillHost {
     reasonId: 7,
     reasonCustomText: "ประชุมกับลูกค้า",
     workDetail: "ตรวจหน้างานสาขาใหม่",
-    workLocations: ["โรงแรมเชียงใหม่", "สาขาเชียงใหม่"],
+    workLocations: [place("โรงแรมเชียงใหม่", 18.79, 98.98), place("สาขาเชียงใหม่", 18.8, 98.99)],
     ...over,
   };
 }
@@ -39,8 +44,8 @@ test("an empty tab is filled from the host — all five fields", () => {
   assert.equal(p.reasonCustomText, "ประชุมกับลูกค้า");
   assert.equal(p.workDetail, "ตรวจหน้างานสาขาใหม่");
   assert.deepEqual(p.workLocations, [
-    { name: "โรงแรมเชียงใหม่", sortOrder: 0 },
-    { name: "สาขาเชียงใหม่", sortOrder: 1 },
+    { name: "โรงแรมเชียงใหม่", sortOrder: 0, lat: 18.79, lng: 98.98 },
+    { name: "สาขาเชียงใหม่", sortOrder: 1, lat: 18.8, lng: 98.99 },
   ]);
 });
 
@@ -176,8 +181,8 @@ test("a list of blank rows counts as empty, which is what makes this field filla
     assert.deepEqual(
       p.workLocations,
       [
-        { name: "โรงแรมเชียงใหม่", sortOrder: 0 },
-        { name: "สาขาเชียงใหม่", sortOrder: 1 },
+        { name: "โรงแรมเชียงใหม่", sortOrder: 0, lat: 18.79, lng: 98.98 },
+        { name: "สาขาเชียงใหม่", sortOrder: 1, lat: 18.8, lng: 98.99 },
       ],
       `a tab holding ${JSON.stringify(workLocations)} has answered nothing and must be filled`,
     );
@@ -202,21 +207,21 @@ test("one named row anywhere in the list means the requester has answered", () =
 
 test("the host's own blank locations are dropped and the order is re-numbered", () => {
   const p = roomSharePrefillPatch(
-    host({ workLocations: ["", "  ", "สาขาขอนแก่น"] }),
+    host({ workLocations: [place(""), place("  "), place("สาขาขอนแก่น", 16.4, 102.8)] }),
     emptyTab(),
   );
   assert.deepEqual(
     p.workLocations,
-    [{ name: "สาขาขอนแก่น", sortOrder: 0 }],
+    [{ name: "สาขาขอนแก่น", sortOrder: 0, lat: 16.4, lng: 102.8 }],
     "a blank copied across is a row the requester has to delete before the form accepts the tab",
   );
 });
 
 test("a host with nothing named leaves the key absent rather than emptying the list", () => {
-  const p = roomSharePrefillPatch(host({ workLocations: ["", " "] }), emptyTab()) as Record<
-    string,
-    unknown
-  >;
+  const p = roomSharePrefillPatch(
+    host({ workLocations: [place(""), place(" ")] }),
+    emptyTab(),
+  ) as Record<string, unknown>;
   assert.ok(
     !("workLocations" in p),
     "an empty array here would spread over the tab and remove the blank row the form renders",
@@ -228,14 +233,64 @@ test("a host with nothing named leaves the key absent rather than emptying the l
   assert.ok(!("workLocations" in none));
 });
 
+/* ─────────────────────────── the pin travels, or the row does not ─────────────────────────── */
+
 /**
- * The names are the only thing the endpoint carries. Asserted so a later
- * widening of `HostCandidateRow.workLocations` does not arrive here silently
- * as a pin copied off a colleague's trip.
+ * **The measurement that reversed this design.** Copying bare names looked
+ * like the narrower answer and is the broken one: since 2026-09-01
+ * `validateTravelBookingTab` refuses a submit whose work location is
+ * unpinned, so a name copied without its coordinates produces a field that
+ * looks filled in, cannot be submitted, and names Google Maps at a requester
+ * who never typed it.
  */
-test("a copied location carries a name and a sort order and nothing else", () => {
-  const p = roomSharePrefillPatch(host({ workLocations: ["สาขาภูเก็ต"] }), emptyTab());
-  assert.deepEqual(Object.keys(p.workLocations![0]).sort(), ["name", "sortOrder"]);
+test("a copied location carries its pin, so the guest can actually submit", () => {
+  const p = roomSharePrefillPatch(
+    host({ workLocations: [place("สาขาภูเก็ต", 7.88, 98.39)] }),
+    emptyTab(),
+  );
+  assert.deepEqual(p.workLocations, [
+    { name: "สาขาภูเก็ต", sortOrder: 0, lat: 7.88, lng: 98.39 },
+  ]);
+});
+
+/**
+ * Migration 135 added `Lat`/`Lng` with no backfill and **nothing can backfill
+ * them** — the Google key is HTTP-referrer restricted, so a server-side
+ * geocode answers 403. Every location filed before 2026-09-01 is therefore
+ * unpinned, and copying one would hand the guest a row the submit refuses.
+ */
+test("an unpinned host location is not copied at all", () => {
+  for (const bad of [
+    place("สาขาเก่า", null, null),
+    place("สาขาเก่า", 18.79, null),
+    place("สาขาเก่า", null, 98.98),
+    // The (0,0) null island — `hasUsablePin`'s own carve-out, and the shape a
+    // half-initialised pin arrives in.
+    place("สาขาเก่า", 0, 0),
+  ]) {
+    const p = roomSharePrefillPatch(host({ workLocations: [bad] }), emptyTab()) as Record<
+      string,
+      unknown
+    >;
+    assert.ok(
+      !("workLocations" in p),
+      `${JSON.stringify(bad)} was copied. validateTravelBookingTab refuses an unpinned place, ` +
+        "so the guest would be told to pick it from Google Maps — about a row they never typed",
+    );
+  }
+});
+
+test("a usable place is still copied when an unusable one sits beside it", () => {
+  const p = roomSharePrefillPatch(
+    host({ workLocations: [place("สาขาเก่า", null, null), place("สาขาใหม่", 13.75, 100.5)] }),
+    emptyTab(),
+  );
+  assert.deepEqual(
+    p.workLocations,
+    [{ name: "สาขาใหม่", sortOrder: 0, lat: 13.75, lng: 100.5 }],
+    "dropping the unpinned row must not drop the pinned one, and the survivor is re-numbered " +
+      "from zero rather than keeping the hole",
+  );
 });
 
 /* ─────────────────────────── the patch never reaches further ─────────────────────────── */
