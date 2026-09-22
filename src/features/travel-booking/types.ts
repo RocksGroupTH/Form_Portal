@@ -54,6 +54,13 @@ export type TravelReasonOption = TravelSettingsOption;
  */
 export interface Accommodation extends TravelSettingsOption {
   needsRoomBooking: boolean;
+  /**
+   * Package C (migration 154) — selecting this accommodation makes the request
+   * require an ID/Passport scan. Read into `derive-flags.ts`'s
+   * `AccommodationOption` and OR'd into `DerivedBookingFlags.needsIdCard` there;
+   * never trusted from the client.
+   */
+  requiresIdCard: boolean;
 }
 /** One configured departure/place option for a vehicle (AccTravelVehiclePlace). */
 export interface VehiclePlace {
@@ -73,6 +80,11 @@ export interface VehicleOption extends TravelSettingsOption {
   needsDepartTime: boolean;
   needsVehicleRent: boolean;
   places: VehiclePlace[];
+  /**
+   * Package C (migration 154) — selecting this vehicle, on either leg, makes
+   * the request require an ID/Passport scan. See `Accommodation.requiresIdCard`.
+   */
+  requiresIdCard: boolean;
 }
 /**
  * ข้อ15 — เช่ายานพาหนะ (AccTravelRentVehicle). `needsRentBooking` config drives the form:
@@ -80,6 +92,11 @@ export interface VehicleOption extends TravelSettingsOption {
  */
 export interface RentVehicle extends TravelSettingsOption {
   needsRentBooking: boolean;
+  /**
+   * Package C (migration 154) — selecting this rental makes the request
+   * require an ID/Passport scan. See `Accommodation.requiresIdCard`.
+   */
+  requiresIdCard: boolean;
 }
 
 /**
