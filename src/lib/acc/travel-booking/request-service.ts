@@ -515,14 +515,15 @@ const NAME_TABLES = {
  */
 const NAME_TABLE_FLAGS: Record<keyof typeof NAME_TABLES, string[]> = {
   reason: [],
-  accommodation: ["NeedsRoomBooking"],
+  accommodation: ["NeedsRoomBooking", "RequiresIdCard"],
   vehicle: [
     "NeedsDepartureLocations",
     "NeedsTicketBooking",
     "NeedsDepartTime",
     "NeedsVehicleRent",
+    "RequiresIdCard",
   ],
-  rentVehicle: ["NeedsRentBooking"],
+  rentVehicle: ["NeedsRentBooking", "RequiresIdCard"],
 };
 
 /** One settings-option row: its display name, whether it is still offered, and its flags. */
@@ -536,6 +537,7 @@ export interface SettingOptionRow {
   needsDepartTime: boolean;
   needsVehicleRent: boolean;
   needsRentBooking: boolean;
+  requiresIdCard: boolean;
 }
 
 /**
@@ -572,6 +574,7 @@ async function resolveSettingOption(
     needsDepartTime: flag("NeedsDepartTime"),
     needsVehicleRent: flag("NeedsVehicleRent"),
     needsRentBooking: flag("NeedsRentBooking"),
+    requiresIdCard: flag("RequiresIdCard"),
   };
 }
 
@@ -1113,6 +1116,20 @@ export async function loadTravelBookingSettingsMaps(): Promise<TravelBookingSett
 }
 
 /**
+ * One selected option out of its settings map, as `deriveBookingFlags` wants it.
+ *
+ * Nothing selected and an id naming no row collapse to the same `null`, which
+ * is the answer `deriveBookingFlags` already documents for a null option: it
+ * contributes nothing. An id that names no row cannot reach a submit anyway —
+ * `saveTravelBookingDraft` refuses one through `firstInvalidOption` before the
+ * draft is ever written.
+ */
+function settingOptionFor<T>(map: Map<number, T>, id: number | null | undefined): T | null {
+  if (id == null) return null;
+  return map.get(id) ?? null;
+}
+
+/**
  * Per-tab submit validation (spec §6). Checked in spec order, short-circuiting on the
  * first failing rule — matches the brief's `{ ok; error? }` shape (a single result, not
  * an accumulated list like AP-1's `validateForSubmit`). `managerStaffId` resolvability is
@@ -1207,8 +1224,30 @@ export function validateTravelBookingTab(
     }
   }
 
-  // ข้อ17 — แนบบัตรประชาชน หรือ Passport (>=1)
-  if (!tab.idCardFiles || tab.idCardFiles.length === 0) {
+  // ข้อ17 — แนบบัตรประชาชน หรือ Passport (>=1), **only when one of the options
+  // this trip selected is configured to ask for one** (package C, migration
+  // 154's `RequiresIdCard` on the three option tables).
+  //
+  // **Derived from the persisted option rows, never from the posted tab.**
+  // `settings` is `loadTravelBookingSettingsMaps()`, read straight out of
+  // `AccTravelAccommodation` / `AccTravelVehicleOption` / `AccTravelRentVehicle`
+  // — the same authority `resolveSettingOption` hands the draft-save path — and
+  // `deriveBookingFlags` is the one rule both sides run. Its docblock says why a
+  // posted flag cannot be believed, and the reason is unchanged here: a request
+  // posting `needsIdCard: false` beside a hotel that requires one must not be
+  // believed.
+  //
+  // **This changes WHEN a card is asked for, never HOW one is judged.** Where
+  // one is required, the 2026-08-24 fail-closed rule still stands — an image
+  // the check could not verify never becomes a file, so an empty
+  // `tab.idCardFiles` is exactly what an unverified upload leaves behind.
+  const needsIdCard = deriveBookingFlags({
+    accommodation: settingOptionFor(settings.accommodationById, tab.accommodationId),
+    goVehicle: settingOptionFor(settings.vehicleById, tab.goVehicleId),
+    returnVehicle: settingOptionFor(settings.vehicleById, tab.returnVehicleId),
+    rentVehicle: settingOptionFor(settings.rentVehicleById, tab.rentVehicleId),
+  }).needsIdCard;
+  if (needsIdCard && (!tab.idCardFiles || tab.idCardFiles.length === 0)) {
     return fail("กรุณาแนบรูปบัตรประชาชน หรือ Passport อย่างน้อย 1 ไฟล์");
   }
 

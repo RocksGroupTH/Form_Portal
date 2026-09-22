@@ -36,6 +36,7 @@ export function IdCardUpload({
   onSelectPending,
   onRemove,
   hasError,
+  required = true,
 }: {
   files: TravelBookingFileMeta[];
   requestId?: number | null;
@@ -47,6 +48,18 @@ export function IdCardUpload({
   onSelectPending: (file: File | null) => void;
   onRemove: (fileId: number) => Promise<boolean>;
   hasError?: boolean;
+  /**
+   * Whether the submit will refuse without a card (package C — derived from the
+   * selected options' `RequiresIdCard`). Controls the red asterisk and nothing
+   * else: **every upload guard, the consent flow and the fail-closed
+   * verification below are untouched by it.** It defaults true so the only
+   * caller that does not pass it keeps today's behaviour.
+   *
+   * False means the block is on screen only because a card is already attached
+   * from an earlier save — starring it would claim a requirement the server
+   * does not have.
+   */
+  required?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [checking, setChecking] = useState(false);
@@ -208,7 +221,7 @@ export function IdCardUpload({
   return (
     <div>
       <label className={labelClass} style={errLabelStyle(!!hasError)}>
-        แนบรูปบัตรประชาชน หรือ Passport{requiredStar}
+        แนบรูปบัตรประชาชน หรือ Passport{required ? requiredStar : null}
       </label>
 
       <>

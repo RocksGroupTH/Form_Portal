@@ -57,9 +57,16 @@ const STEPS: GuidedTourStep[] = [
     body: "เลือกยานพาหนะเพียงตัวเดียวใช้ทั้งขาไปและขากลับ — ระบบจะเปิดช่องจุดขึ้นรถ/เวลา หรือบล็อกเช่ารถให้เองตามพาหนะที่เลือก วันที่เช่าต้องอยู่ในช่วงวันเดินทาง",
   },
   {
+    // The block this step points at renders only when a selected booking option
+    // is ticked as needing identification (`RequiresIdCard`, migration 154), so
+    // on a trip that needs none the selector matches nothing. GuidedTour handles
+    // that — it polls for 800ms and then shows the card unanchored and centred —
+    // but the copy has to stand on its own there, which is why it says WHEN the
+    // block appears rather than instructing the reader to fill a field they may
+    // not have. It taught the card as unconditional until 2026-09-22.
     selector: '[data-tour="ap17-idcard"]',
     title: "แนบบัตรประชาชน หรือ Passport",
-    body: "ต้องแนบรูปบัตรประชาชน หรือ Passport เพื่อใช้จองที่พัก/ตั๋ว รับเฉพาะไฟล์รูปและระบบจะตรวจก่อนว่าเป็นเอกสารจริง — ถ้าเลือกให้เก็บไว้ ครั้งต่อไปกดใช้รูปเดิมซ้ำได้ทันที",
+    body: "ช่องนี้จะขึ้นเฉพาะเมื่อที่พัก พาหนะ หรือรถเช่าที่เลือกไว้กำหนดให้ต้องยืนยันตัวตน — ถ้าไม่ขึ้นแปลว่าทริปนี้ไม่ต้องแนบ เมื่อขึ้นแล้วรับเฉพาะไฟล์รูป และระบบจะตรวจก่อนว่าเป็นบัตรประชาชนหรือ Passport จริง — ถ้าเลือกให้เก็บไว้ ครั้งต่อไปกดใช้รูปเดิมซ้ำได้ทันที",
   },
   {
     selector: '[data-tour="ap17-submit"]',

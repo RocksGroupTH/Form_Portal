@@ -10,7 +10,7 @@ import { UatDataBanner } from "@/components/UatDataBanner";
 import { AllowanceHistoryModal } from "./AllowanceHistoryModal";
 import { useUserPhoto } from "@/lib/hooks/useUserPhoto";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
-import { useTravelBookingForm } from "@/features/travel-booking/hooks/useTravelBookingForm";
+import { tabNeedsIdCard, useTravelBookingForm } from "@/features/travel-booking/hooks/useTravelBookingForm";
 import { TravelBookingTab } from "./TravelBookingTab";
 import { lockedTravelDates } from "@/features/travel-booking/lib/date-locks";
 import { SectionCard, fmtBaht } from "./shared";
@@ -58,6 +58,7 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
     existingRanges, otherTrips, requesterStaffId, setRequesterStaffId, selectedRequester,
     brands,
     continuationFlags, perDiemEstimates, totalPerDiemEstimate,
+    settingsMaps,
     tabIssues, canSubmit,
     saving, submitting, submitPhase, saveDraft, submitAll, uploadIdCard, removeIdCardFile,
   } = form;
@@ -444,6 +445,9 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
           disabledTravelDates={lockedDates}
           otherTrips={otherTrips}
           issues={tabIssues[activeTabIndex] ?? []}
+          // The same call `validateTab` makes, so the block the requester sees
+          // and the complaint about its absence can never disagree.
+          needsIdCard={tabNeedsIdCard(activeTab, settingsMaps)}
           triedSubmit={triedSubmit}
           requesterStaffId={requesterStaffId}
           brands={brands}

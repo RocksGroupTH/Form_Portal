@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { Plus, Pencil, X, Check, GripVertical, Tag, Trash2 } from "lucide-react";
+import { AlertTriangle, Plus, Pencil, X, Check, GripVertical, Tag, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   DndContext,
@@ -45,6 +45,14 @@ interface TravelOptionRow {
   needsDepartTime?: boolean;
   needsVehicleRent?: boolean;
   places?: { id: number; name: string; sortOrder: number }[];
+  // Accommodations, vehicles and rent-vehicles tabs only — whether selecting
+  // this option requires the requester to attach an ID card / Passport scan
+  // (`AccTravelAccommodation`/`AccTravelVehicleOption`/`AccTravelRentVehicle`
+  // .RequiresIdCard, migration 154). Absent on "reasons" rows, which have no
+  // such column — same shape as `needsRoomBooking` above. This is the source
+  // column `deriveBookingFlags` reads into `needsIdCard`; it is read and
+  // ticked here, never posted from the requester's own form.
+  requiresIdCard?: boolean;
 }
 
 /** Emoji suggestions per tab — each list is relevant to its topic (reasons / accommodation / vehicle / rent). */
@@ -100,6 +108,10 @@ function OptionDialog({
     needsTicketBooking: initial?.needsTicketBooking ?? false,
     needsVehicleRent: initial?.needsVehicleRent ?? false,
     places: (initial?.places ?? []).map((p) => p.name),
+    // accommodation / vehicle / rent-vehicle config — whether this option
+    // requires an ID card / Passport upload. Absent (defaults false) on the
+    // "reasons" tab, which never reads or writes this field.
+    requiresIdCard: initial?.requiresIdCard ?? false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -128,10 +140,13 @@ function OptionDialog({
       body.needsDepartTime = form.needsTicketBooking;
       body.needsVehicleRent = form.needsVehicleRent;
       body.places = form.needsTicketBooking ? form.places.map((p) => p.trim()).filter(Boolean) : [];
+      body.requiresIdCard = form.requiresIdCard;
     } else if (isAccommodation) {
       body.needsRoomBooking = form.needsRoomBooking;
+      body.requiresIdCard = form.requiresIdCard;
     } else if (isRentVehicle) {
       body.needsRentBooking = form.needsRentBooking;
+      body.requiresIdCard = form.requiresIdCard;
     } else {
       body.requiresCustomReason = form.requiresCustomReason;
     }
@@ -300,25 +315,58 @@ function OptionDialog({
                 label="ต้องการเช่ารถ"
                 description="เปิดส่วนเช่ายานพาหนะในฟอร์ม"
               />
+
+              {/* ID card / Passport requirement — RequiresIdCard, migration
+                  154. Derived into `needsIdCard` on the request; see the
+                  field's own comment on TravelOptionRow above. */}
+              <SettingOption
+                variant="checkbox"
+                checked={form.requiresIdCard}
+                onChange={(v) => setForm((f) => ({ ...f, requiresIdCard: v }))}
+                label="ต้องแนบบัตรประชาชน / Passport"
+                description="เมื่อเลือกตัวเลือกนี้ ผู้ขอต้องแนบรูปบัตรประชาชน หรือ Passport ก่อนส่งคำขอ"
+              />
             </>
           ) : isAccommodation ? (
-            /* Admin room booking (12.x — ที่พัก) */
-            <SettingOption
-              variant="checkbox"
-              checked={form.needsRoomBooking}
-              onChange={(v) => setForm((f) => ({ ...f, needsRoomBooking: v }))}
-              label="ให้ Admin จองห้อง"
-              description="เมื่อเลือกที่พักนี้ ทีม Admin จะเป็นผู้จองห้องพักให้"
-            />
+            <>
+              {/* Admin room booking (12.x — ที่พัก) */}
+              <SettingOption
+                variant="checkbox"
+                checked={form.needsRoomBooking}
+                onChange={(v) => setForm((f) => ({ ...f, needsRoomBooking: v }))}
+                label="ให้ Admin จองห้อง"
+                description="เมื่อเลือกที่พักนี้ ทีม Admin จะเป็นผู้จองห้องพักให้"
+              />
+
+              {/* ID card / Passport requirement — RequiresIdCard, migration 154. */}
+              <SettingOption
+                variant="checkbox"
+                checked={form.requiresIdCard}
+                onChange={(v) => setForm((f) => ({ ...f, requiresIdCard: v }))}
+                label="ต้องแนบบัตรประชาชน / Passport"
+                description="เมื่อเลือกที่พักนี้ ผู้ขอต้องแนบรูปบัตรประชาชน หรือ Passport ก่อนส่งคำขอ"
+              />
+            </>
           ) : isRentVehicle ? (
-            /* Admin rental arrangement (ข้อ15 — เช่ายานพาหนะ) */
-            <SettingOption
-              variant="checkbox"
-              checked={form.needsRentBooking}
-              onChange={(v) => setForm((f) => ({ ...f, needsRentBooking: v }))}
-              label="ให้ Admin เช่ายานพาหนะ"
-              description="เมื่อเลือกรายการนี้ ทีม Admin จะเป็นผู้จัดการเช่ายานพาหนะให้"
-            />
+            <>
+              {/* Admin rental arrangement (ข้อ15 — เช่ายานพาหนะ) */}
+              <SettingOption
+                variant="checkbox"
+                checked={form.needsRentBooking}
+                onChange={(v) => setForm((f) => ({ ...f, needsRentBooking: v }))}
+                label="ให้ Admin เช่ายานพาหนะ"
+                description="เมื่อเลือกรายการนี้ ทีม Admin จะเป็นผู้จัดการเช่ายานพาหนะให้"
+              />
+
+              {/* ID card / Passport requirement — RequiresIdCard, migration 154. */}
+              <SettingOption
+                variant="checkbox"
+                checked={form.requiresIdCard}
+                onChange={(v) => setForm((f) => ({ ...f, requiresIdCard: v }))}
+                label="ต้องแนบบัตรประชาชน / Passport"
+                description="เมื่อเลือกรายการนี้ ผู้ขอต้องแนบรูปบัตรประชาชน หรือ Passport ก่อนส่งคำขอ"
+              />
+            </>
           ) : (
             /* Requires custom reason toggle */
             <SettingOption
@@ -438,22 +486,25 @@ function SortableOptionCard({
           {row.name}
         </p>
         {isVehicle ? (
-          (row.needsTicketBooking || row.needsVehicleRent) && (
+          (row.needsTicketBooking || row.needsVehicleRent || row.requiresIdCard) && (
             <div className="mt-1 flex flex-wrap gap-1">
               {row.needsTicketBooking && <ConfigBadge label={`🎫 จองตั๋ว + จุดขึ้น${row.places?.length ? ` (${row.places.length})` : ""} + เวลา`} />}
               {row.needsVehicleRent && <ConfigBadge label="🚙 เช่ารถ" />}
+              {row.requiresIdCard && <ConfigBadge label="🪪 ต้องมีบัตร" />}
             </div>
           )
         ) : isAccommodation ? (
-          row.needsRoomBooking && (
-            <div className="mt-1">
-              <ConfigBadge label="🛏️ จองห้อง" />
+          (row.needsRoomBooking || row.requiresIdCard) && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {row.needsRoomBooking && <ConfigBadge label="🛏️ จองห้อง" />}
+              {row.requiresIdCard && <ConfigBadge label="🪪 ต้องมีบัตร" />}
             </div>
           )
         ) : isRentVehicle ? (
-          row.needsRentBooking && (
-            <div className="mt-1">
-              <ConfigBadge label="🚗 Admin เช่าให้" />
+          (row.needsRentBooking || row.requiresIdCard) && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {row.needsRentBooking && <ConfigBadge label="🚗 Admin เช่าให้" />}
+              {row.requiresIdCard && <ConfigBadge label="🪪 ต้องมีบัตร" />}
             </div>
           )
         ) : (
@@ -520,6 +571,49 @@ export function TravelOptionSettings({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
+  // Commissioning banner — reads the same three tables `RequiresIdCard`
+  // (migration 154) lives on, not only this tab's own. Every option ships
+  // unticked (default 0), so on deploy day no AP-17 request asks for a card
+  // at all, hotel bookings included — see the design spec's "Default:
+  // unticked, and that is a control switched off on deploy day". This has to
+  // be visible from whichever of the three tabs an admin happens to have
+  // open, so it fetches all three kinds rather than only its own — SWR
+  // dedupes the one that matches `apiBase` against the `data` fetch above,
+  // so this costs at most two extra requests, never three. The "reasons" tab
+  // has no such column at all, so it skips the fetch (`null` key) and never
+  // shows the banner.
+  const tracksIdCard = kind !== "reasons";
+  const accommodationsForIdCard = useSWR<{ ok: boolean; data: TravelOptionRow[] }>(
+    tracksIdCard ? "/api/request/travel-booking/settings/accommodations" : null,
+    fetcher,
+  );
+  const vehiclesForIdCard = useSWR<{ ok: boolean; data: TravelOptionRow[] }>(
+    tracksIdCard ? "/api/request/travel-booking/settings/vehicles" : null,
+    fetcher,
+  );
+  const rentVehiclesForIdCard = useSWR<{ ok: boolean; data: TravelOptionRow[] }>(
+    tracksIdCard ? "/api/request/travel-booking/settings/rent-vehicles" : null,
+    fetcher,
+  );
+  const idCardListsLoaded =
+    !accommodationsForIdCard.isLoading &&
+    !vehiclesForIdCard.isLoading &&
+    !rentVehiclesForIdCard.isLoading &&
+    !accommodationsForIdCard.error &&
+    !vehiclesForIdCard.error &&
+    !rentVehiclesForIdCard.error;
+  const someOptionRequiresIdCard = [
+    accommodationsForIdCard.data?.data,
+    vehiclesForIdCard.data?.data,
+    rentVehiclesForIdCard.data?.data,
+  ].some((list) => (list ?? []).some((r) => r.requiresIdCard));
+  // Withheld until every list has actually answered — showing the alarm
+  // while still loading (or after a failed fetch) would read as "nothing is
+  // configured" when the truth is "not measured yet", the same distinction
+  // AP-4's own commissioning banners draw.
+  const showIdCardCommissioningBanner =
+    tracksIdCard && idCardListsLoaded && !someOptionRequiresIdCard;
+
   const rows = data?.data ?? [];
   const q = search.trim().toLowerCase();
   const isFiltering = !!q || statusFilter !== "all";
@@ -581,6 +675,26 @@ export function TravelOptionSettings({
 
   return (
     <div>
+      {/* Commissioning banner — see the module-level comment above
+          `tracksIdCard` for what this reports and why it reads three lists
+          rather than this tab's own. It gets no test: it reads the same
+          rows the grid below renders, so a test of it would only restate
+          the fetch, not check anything a fixture could get wrong. */}
+      {showIdCardCommissioningBanner && (
+        <div
+          className="rounded-xl px-4 py-3 mb-4 flex items-start gap-2.5"
+          style={{ background: "var(--status-bad-bg)", color: "var(--status-bad-text)" }}
+        >
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+          <p className="text-[12px] leading-relaxed">
+            ยังไม่มีตัวเลือกใดกำหนดให้แนบบัตรประชาชน/Passport — คำขอ AP-17 ทุกใบจะไม่ถูกขอให้แนบรูปบัตรประชาชน
+            หรือ Passport เลย ไม่ว่าผู้ขอจะเลือกที่พัก พาหนะ หรือรถเช่าแบบใดก็ตาม จนกว่าจะติ๊ก
+            &quot;ต้องแนบบัตรประชาชน / Passport&quot; ให้กับตัวเลือกอย่างน้อย 1 รายการ ในแท็บ ที่พัก
+            การเดินทาง หรือ เช่ายานพาหนะ
+          </p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between gap-3 mb-4">
         <div className="min-w-0">
