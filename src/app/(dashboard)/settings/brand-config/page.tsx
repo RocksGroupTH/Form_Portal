@@ -11,7 +11,6 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { toast } from "sonner";
 import { APP_DB_CONNECTION_ID } from "@/lib/db/app-connection";
 import { BrandMark } from "@/components/BrandMark";
-import { Toggle } from "@/components/ui/Toggle";
 
 import {
   SearchableSelect,
@@ -211,27 +210,64 @@ function BrandConfigCard({
         <p className="text-[11px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>{config.brandCode}</p>
       </div>
 
-      {/* The app's own `Toggle` rather than a native checkbox with an
-          `accentColor`: `role="switch"` does not change how a browser DRAWS an
-          `<input type="checkbox">`, so what shipped was a plain square that read
-          as a form field rather than an on/off control — which is what the user
-          reported. This is the same switch Form Environment and the brand tabs
-          use, so a reader who has seen one has seen them all.
+      {/* A bare pill switch — a label and a track, no box, no border, no tinted
+          row (the user, 2026-09-23: minimal). It is deliberately NOT the shared
+          `Toggle`: that one is a full-row bordered control built for a settings
+          LIST, where each row has to look like its own tappable thing. Here it
+          sits inside a card that is already a bordered, tappable thing, so the
+          same treatment made one box inside another. `SettingOption` is the
+          shared Toggle's only other caller and is untouched.
 
-          It acts immediately, and still writes one boolean to this app's own
+          It is still a real `role="switch"` with `aria-checked` rather than a
+          checkbox styled to look like one — that was the previous version's
+          actual defect, and the visual weight was a separate question.
+
+          It acts immediately, writing one boolean to this app's own
           `BrandSetting` row rather than the shared `BrandConfig` the Save button
           below edits — folding it into that form would tie a quick toggle to a
           whole BC configuration.
 
-          The in-flight state is the LABEL rather than a spinner beside it: the
-          control is disabled while saving, and a disabled switch with no
-          explanation reads as broken. */}
-      <Toggle
-        checked={config.isEnabled}
-        onChange={onToggleEnabled}
+          The in-flight state is the LABEL, not a spinner beside it: the control
+          is disabled while saving, and a disabled switch with no explanation
+          reads as broken. */}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={config.isEnabled}
+        aria-label={`เปิดใช้งานแบรนด์ ${config.brandName}`}
         disabled={toggling}
-        label={toggling ? "กำลังบันทึก..." : config.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
-      />
+        onClick={() => onToggleEnabled(!config.isEnabled)}
+        className="flex items-center justify-between gap-2 bg-transparent border-none p-0 text-left w-full select-none"
+        style={{ cursor: toggling ? "not-allowed" : "pointer", opacity: toggling ? 0.6 : 1 }}
+      >
+        <span
+          className="text-[12px] font-medium transition-colors"
+          style={{ color: config.isEnabled ? "var(--color-action)" : "var(--text-muted)" }}
+        >
+          {toggling ? "กำลังบันทึก..." : config.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
+        </span>
+        <span
+          className="relative shrink-0 rounded-full transition-colors"
+          aria-hidden
+          style={{
+            width: 34,
+            height: 20,
+            background: config.isEnabled ? "var(--color-action)" : "var(--border-input)",
+          }}
+        >
+          <span
+            className="absolute rounded-full transition-all"
+            style={{
+              width: 14,
+              height: 14,
+              top: 3,
+              left: config.isEnabled ? 17 : 3,
+              background: "#fff",
+              boxShadow: "0 1px 2px rgba(0,0,0,.25)",
+            }}
+          />
+        </span>
+      </button>
 
       {!st.complete && (
         <div className="flex flex-col gap-1">
