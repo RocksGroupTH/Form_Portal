@@ -231,18 +231,38 @@ test("the three services resolve the environment rather than assuming one", () =
         "(resolveEffectiveErpEnvironment, or the caller's explicit override)",
     );
   }
+  /* Per FUNCTION, not per file. A file-level presence test is satisfied by a
+     sibling: `brand-account-service` resolves it three times over (list, upsert
+     and merge, since one service covers both gl and bank), so replacing ONE of
+     them with a literal leaves the file still mentioning the resolver and the
+     test still green. Mutation-verified — that mutation is the reason this arm
+     is written this way rather than as the one-liner it started as. */
+  const offenders: string[] = [];
   for (const rel of [
     "lib/acc/brand-journal-batch-service.ts",
     "lib/acc/brand-account-service.ts",
     "lib/acc/brand-branch-service.ts",
   ]) {
     const src = FILES.find((f) => f.rel === rel)?.src ?? "";
-    assert.ok(
-      src.indexOf("resolveEffectiveErpEnvironment()") !== -1,
-      `${rel} no longer resolves the environment when a caller omits it — every read on the ` +
-        "money path passes nothing, so this is what decides which half they get",
-    );
+    assert.notEqual(src, "", `${rel} is missing — has it been renamed?`);
+    const { code } = scan(src);
+    for (const fn of functions(code)) {
+      const body = code.slice(fn.at, fn.end);
+      // The signal that a function answers per environment at all: it accepts
+      // the override. Every one of those must also carry the fallback, or a
+      // caller that passes nothing gets whatever was hardcoded instead.
+      if (body.indexOf("ErpBcEnvironment") === -1) continue;
+      if (body.indexOf("resolveEffectiveErpEnvironment()") === -1)
+        offenders.push(`${rel} — ${fn.name}`);
+    }
   }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these take an environment override but no longer resolve one when the caller omits it. " +
+      "Every read on the money path passes nothing, so the fallback is what decides which " +
+      "half of the configuration they get:\n  " + offenders.join("\n  "),
+  );
 });
 
 test("AccBrandErpInterface is not split", () => {
