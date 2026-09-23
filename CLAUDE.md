@@ -1628,6 +1628,56 @@ those four explicitly instead. That is the more faithful record and the safer
 direction — an explicit four scopes them to four, where `null` would silently
 widen them to whatever is configured next.
 
+##### The BC mirror is split by environment, and UAT shares ONE test company (2026-09-23)
+
+**`Rocks_ERP_Data` holds Production and Sandbox rows side by side**, told apart
+by `SourceEnvironment` — migration 159 added it to six tables and rebuilt each
+unique key to lead with it; `ErpVendors` had carried it since migration 117 with
+the value hardcoded to `'Production'`, so the column existed for two years and
+nothing filled it in. The user asked for the split on 2026-09-23: *"ตอน sync
+ข้อมูลของ ERP ถ้า Sync และอ่านแยกกันระหว่าง PRO กับ UAT ด้วย"*.
+
+**Every statement naming a mirror table carries the predicate**, and the rule is
+per STATEMENT rather than per file — `erp-source-environment-guard.test.ts`
+slices each one out with its own WHERE, because a file-level check passes as
+soon as one of a file's nine queries has it. The failure it guards is **silent**:
+an unqualified query does not throw, it returns *more rows than it should* — a
+tester's picker listing production's chart of accounts, a production journal
+built against a Sandbox branch, with no error and every row a real row. The
+guard also refuses a literal `'Production'`/`'Sandbox'` comparison, which is
+exactly how `ErpVendors` went wrong.
+
+**⚠ The `Fast_Data` synonyms now point at Production-filtered VIEWS** (migration
+160), and that is about Rocks Fast rather than about us. Measured against
+`../RocksFast/src`: it **MERGEs and UPDATEs** four of the five tables it reaches
+through those synonyms, with an `ON` clause naming `BrandCode` and the natural
+key and **no environment at all**. Left pointing at the tables, its next sync
+would MATCH a Sandbox row and overwrite it with Production data — silently,
+every run. Behind the view its MERGE cannot see one, its INSERT omits the column
+and takes the `DEFAULT`, and `WITH CHECK OPTION` refuses a write that would move
+a row out of the Production set. Verified against the live databases inside a
+rolled-back transaction, all four properties.
+
+**Which BC company a brand talks to is `erp/brand-bc-profile.ts`**, for syncing
+in and sending out. The two halves stay where they already were and neither
+moved: Production in `Fast_Core.BrandConfig` (Settings → Brand Configuration →
+Config BC → **PRO**), Sandbox in `AccBrandErpTargetSetting` (the same rows
+Settings → ERP Interface Environment edits, now also reachable from that page's
+**UAT** tab). **It never falls back between them** — a brand with no Sandbox
+company cannot sync or post in UAT, rather than quietly using the real company,
+which is the whole point of running UAT beside production.
+
+**Every brand's UAT company is the SAME id, deliberately — do not "fix" it.**
+Measured 2026-09-23, `BcUatId` is `5e1925ed-acd4-eb11-86df-000d3ac76629` for
+KSI, PCMY, PCTH and UNO alike, and that GUID is also PCTH's *production* `BcId`.
+It reads exactly like a copy-paste error and it is not: **Sandbox has one shared
+test company** (the user, asked directly: *"ถูกแล้วเพราะใช้ UAT Test
+ตัวเดียวกัน"*). It was raised here as a defect and corrected, which is why it is
+written down. The consequence is expected rather than drift: in UAT every brand
+pulls the same company's data and stores its own copy keyed
+`(SourceEnvironment, BrandCode, …)`, so the Sandbox half of the mirror holds
+roughly four near-identical sets.
+
 ##### Per-form ERP configuration — the default and override rule
 
 Seven brand-keyed configuration tables carry a `FormCode NVARCHAR(20) NULL`
