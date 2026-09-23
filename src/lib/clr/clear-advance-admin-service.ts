@@ -1,4 +1,7 @@
-import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
+import {
+  resolveErpSourceEnvironment,
+  type ErpBcEnvironment,
+} from "@/lib/erp/source-environment";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { isDimensionType, type DimensionType } from "./gl-dimension";
 import { getAppPool } from "@/lib/db/mssql";
@@ -41,13 +44,22 @@ export interface ErpGlOption { accountNo: string; displayName: string | null }
  * list AP-4's line picker uses (`listExpenseAccounts`) would not contain
  * `110721001` — the very account those rules already use today.
  */
-export async function listClrErpGlOptionsForCompany(company: string): Promise<ErpGlOption[]> {
+export async function listClrErpGlOptionsForCompany(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to. AP-3's Interface ERP tab names it, because its route is
+   * pinned to Production in `ROUTE_RULES` while its PRO/UAT toggle decides
+   * which half is being configured.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ErpGlOption[]> {
   const c = company.trim().toUpperCase();
   if (!c) return [];
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("company", sql.NVarChar, c)
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
       SELECT AccountNo, DisplayName FROM [dbo].[ErpAccounts]
       WHERE SourceEnvironment = @env AND AccountCategory = 'GL' AND BrandCode = @company
         AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
@@ -59,12 +71,21 @@ export async function listClrErpGlOptionsForCompany(company: string): Promise<Er
   }));
 }
 
-export async function listClrErpGlOptions(brandCode: string): Promise<ErpGlOption[]> {
+export async function listClrErpGlOptions(
+  brandCode: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to. AP-3's Interface ERP tab names it, because its route is
+   * pinned to Production in `ROUTE_RULES` while its PRO/UAT toggle decides
+   * which half is being configured.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ErpGlOption[]> {
   const brand = brandCode.trim().toUpperCase();
   if (!brand) return [];
   const ctx = await loadErpJournalBuildContext("AP-3");
   const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
-  return listClrErpGlOptionsForCompany(company);
+  return listClrErpGlOptionsForCompany(company, environment);
 }
 
 export interface ErpJournalBatchOption { batchName: string; displayName: string | null; templateName: string | null }
@@ -80,13 +101,22 @@ export interface ErpJournalBatchOption { batchName: string; displayName: string 
  * card passes the Company it inherits from AP-2 (interfaceTarget) so the batch
  * list always matches the Company shown on the card.
  */
-export async function listClrErpJournalBatchesForCompany(company: string): Promise<ErpJournalBatchOption[]> {
+export async function listClrErpJournalBatchesForCompany(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to. AP-3's Interface ERP tab names it, because its route is
+   * pinned to Production in `ROUTE_RULES` while its PRO/UAT toggle decides
+   * which half is being configured.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ErpJournalBatchOption[]> {
   const c = company.trim().toUpperCase();
   if (!c) return [];
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("company", sql.NVarChar, c)
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
       SELECT BatchName, DisplayName, TemplateName FROM [dbo].[ErpGeneralJournalBatch]
       WHERE SourceEnvironment = @env AND BrandCode = @company AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       ORDER BY BatchName
@@ -98,12 +128,21 @@ export async function listClrErpJournalBatchesForCompany(company: string): Promi
   }));
 }
 
-export async function listClrErpJournalBatches(brandCode: string): Promise<ErpJournalBatchOption[]> {
+export async function listClrErpJournalBatches(
+  brandCode: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to. AP-3's Interface ERP tab names it, because its route is
+   * pinned to Production in `ROUTE_RULES` while its PRO/UAT toggle decides
+   * which half is being configured.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ErpJournalBatchOption[]> {
   const brand = brandCode.trim().toUpperCase();
   if (!brand) return [];
   const ctx = await loadErpJournalBuildContext("AP-3");
   const company = (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
-  return listClrErpJournalBatchesForCompany(company);
+  return listClrErpJournalBatchesForCompany(company, environment);
 }
 
 export interface ErpBankAccountOption { accountNo: string; displayName: string | null }
@@ -121,10 +160,19 @@ export interface ErpBankAccountOption { accountNo: string; displayName: string |
  * removes a way for the list and the journal to disagree about whose accounts
  * are on offer.
  */
-export async function listClrErpBankAccountsForCompany(company: string): Promise<ErpBankAccountOption[]> {
+export async function listClrErpBankAccountsForCompany(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to. AP-3's Interface ERP tab names it, because its route is
+   * pinned to Production in `ROUTE_RULES` while its PRO/UAT toggle decides
+   * which half is being configured.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ErpBankAccountOption[]> {
   const c = company.trim().toUpperCase();
   if (!c) return [];
-  return listBank(c);
+  return listBank(c, environment);
 }
 
 export interface ErpBranchOption { code: string; displayName: string | null }

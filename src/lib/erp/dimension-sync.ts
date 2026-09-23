@@ -280,12 +280,25 @@ export interface ErpDimensionOption {
 export async function listErpDimensionOptions(
   brandCode: string,
   dimensionCode: string,
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<ErpDimensionOption[]> {
   const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment))
     .input("dim", sql.NVarChar, dimensionCode.trim().toUpperCase())
     .query(`
       SELECT DimensionCode, Code, DisplayName
@@ -304,12 +317,25 @@ export async function listErpDimensionOptions(
 
 export async function listErpBranchesForBrands(
   brandCodes: string[],
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<Record<string, ErpDimensionOption[]>> {
   const out: Record<string, ErpDimensionOption[]> = {};
   await Promise.all(
     brandCodes.map(async (code) => {
       const brand = code.trim().toUpperCase();
-      out[brand] = await listErpDimensionOptions(brand, BRANCH_DIMENSION_CODE);
+      out[brand] = await listErpDimensionOptions(brand, BRANCH_DIMENSION_CODE, environment);
     }),
   );
   return out;
@@ -317,12 +343,25 @@ export async function listErpBranchesForBrands(
 
 export async function listErpDepartmentsForBrands(
   brandCodes: string[],
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<Record<string, ErpDimensionOption[]>> {
   const out: Record<string, ErpDimensionOption[]> = {};
   await Promise.all(
     brandCodes.map(async (code) => {
       const brand = code.trim().toUpperCase();
-      out[brand] = await listErpDimensionOptions(brand, HR_DEPARTMENT_DIMENSION_CODE);
+      out[brand] = await listErpDimensionOptions(brand, HR_DEPARTMENT_DIMENSION_CODE, environment);
     }),
   );
   return out;

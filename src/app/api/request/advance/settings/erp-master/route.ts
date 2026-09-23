@@ -5,6 +5,10 @@ import {
   listAdvErpMaster,
   listAdvErpMasterForCompanies,
 } from "@/lib/adv/advance-erp-master-service";
+import {
+  INVALID_ERP_ENVIRONMENT_ERROR,
+  parseErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
 
 /**
  * GET /api/request/advance/settings/erp-master
@@ -29,18 +33,30 @@ import {
  * which supplies its Fix Dept list. Closing it means either widening these two
  * routes to AP-4's roster or minting AP-4-pathed twins, and BOTH are policy
  * about another form's access model — not something to slip in here.
+ *
+ * **`?environment=` names which Business Central these lists come FROM** — the
+ * mirror half in `Rocks_ERP_Data`, split by `SourceEnvironment` since migration
+ * 159. The Interface ERP settings screens pass it because their own routes are
+ * pinned to Production in `ROUTE_RULES`, so without it an admin configuring the
+ * UAT half would pick PRODUCTION's batch names and account numbers and store
+ * them as UAT's — the wrong-company value migration 161 exists to keep out.
+ * Absent resolves the request's own environment; an unrecognised value is a 400.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAdvClrSettingsTab("advanceErpInterface");
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();
+    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
     if (company) {
-      const data = await listAdvErpMaster(company);
+      const data = await listAdvErpMaster(company, environment);
       return NextResponse.json({ ok: true, data });
     }
     const companies = (await listErpInterfaceBrands()).map((b) => b.id);
-    const data = await listAdvErpMasterForCompanies(companies);
+    const data = await listAdvErpMasterForCompanies(companies, environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/advance/settings/erp-master] GET", err);

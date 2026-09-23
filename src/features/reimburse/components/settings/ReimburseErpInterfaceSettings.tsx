@@ -1017,12 +1017,14 @@ export function ReimburseErpInterfaceSettings() {
   );
   const { data: erpData, error: erpError, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
-      "/api/request/advance/settings/erp-master",
+      // The environment is in the key, so the pickers offer the SAME BC half
+      // that is being configured.
+      `/api/request/advance/settings/erp-master?environment=${environment}`,
       fetcher,
     );
   const { data: deptData, error: deptError, isLoading: deptLoading, mutate: mutateDept } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyDept> }>(
-      "/api/request/accounting/settings/erp-accounts",
+      `/api/request/accounting/settings/erp-accounts?environment=${environment}`,
       fetcher,
     );
 

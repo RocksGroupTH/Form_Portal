@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import {
+  INVALID_ERP_ENVIRONMENT_ERROR,
+  parseErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
+import {
   listClrErpJournalBatches,
   listClrErpJournalBatchesForCompany,
 } from "@/lib/clr/clear-advance-admin-service";
@@ -18,13 +22,17 @@ export async function GET(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();
+    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
     if (company) {
-      const data = await listClrErpJournalBatchesForCompany(company);
+      const data = await listClrErpJournalBatchesForCompany(company, environment);
       return NextResponse.json({ ok: true, data });
     }
     const brand = (req.nextUrl.searchParams.get("brand") ?? "").trim();
     if (!brand) return NextResponse.json({ ok: true, data: [] });
-    const data = await listClrErpJournalBatches(brand);
+    const data = await listClrErpJournalBatches(brand, environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/clear-advance/settings/erp-journal-batches] GET", err);

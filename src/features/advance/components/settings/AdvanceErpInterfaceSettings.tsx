@@ -536,7 +536,9 @@ export function AdvanceErpInterfaceSettings() {
   // (Erp* tables), keyed by Company (interface target).
   const { data: erpData, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
-      "/api/request/advance/settings/erp-master",
+      // The environment is in the key, so the pickers offer the SAME BC half
+      // that is being configured.
+      `/api/request/advance/settings/erp-master?environment=${environment}`,
       fetcher,
     );
   const erpByCompany = erpData?.data ?? {};

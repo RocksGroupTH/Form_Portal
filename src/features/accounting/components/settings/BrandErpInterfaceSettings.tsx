@@ -1743,7 +1743,10 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
   const { data: erpData, mutate: mutateErp, isLoading: erpLoading } = useSWR<{
     ok: boolean;
     data: ErpAccountsByBrand;
-  }>("/api/request/accounting/settings/erp-accounts", fetcher);
+    // The environment is in the key, so the pickers offer the SAME BC half
+    // that is being configured — the mirror is split by `SourceEnvironment`
+    // (migration 159) exactly as these settings are by `Environment` (161).
+  }>(`/api/request/accounting/settings/erp-accounts${envQuery}`, fetcher);
 
   const page = data?.data;
   const brands = useMemo(() => page?.brands ?? [], [page?.brands]);

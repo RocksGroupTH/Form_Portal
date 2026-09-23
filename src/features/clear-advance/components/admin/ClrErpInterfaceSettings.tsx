@@ -299,11 +299,14 @@ function GroupCard({
   /* One fetch per group, not per member: every brand in a group posts into the
      same Company, so they pick from the same batches and the same chart. */
   const { data: liveBatch, isLoading } = useSWR<{ ok: boolean; error?: string; data?: BatchOpt[] }>(
-    target ? `/api/request/clear-advance/settings/erp-journal-batches?company=${encodeURIComponent(target)}` : null,
+    // The environment is in the key, so the pickers offer the SAME BC half
+    // that is being configured. Without it an admin setting up UAT chooses
+    // from Production's batch names and stores them as UAT's.
+    target ? `/api/request/clear-advance/settings/erp-journal-batches?company=${encodeURIComponent(target)}&environment=${environment}` : null,
     fetcher,
   );
   const { data: liveGl, isLoading: glLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
-    first ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(first.brandCode)}` : null,
+    first ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(first.brandCode)}&environment=${environment}` : null,
     fetcher,
   );
   /*
@@ -314,7 +317,7 @@ function GroupCard({
    * "fix" into matching the G/L call.
    */
   const { data: liveBank, isLoading: bankLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
-    target ? `/api/request/clear-advance/settings/erp-bank-accounts?company=${encodeURIComponent(target)}` : null,
+    target ? `/api/request/clear-advance/settings/erp-bank-accounts?company=${encodeURIComponent(target)}&environment=${environment}` : null,
     fetcher,
   );
   const batchErr = liveBatch && !liveBatch.ok ? (liveBatch.error ?? "ดึง batch ไม่สำเร็จ") : null;
