@@ -1,4 +1,9 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { resolveEffectiveErpEnvironment } from "@/lib/acc/erp-environment";
+import {
+  brandErpEnvPredicate,
+  type ErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
 import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
@@ -30,6 +35,12 @@ export interface BrandAccountRow {
   sortOrder: number;
   /** `null` is the default, which answers every form. */
   formCode: string | null;
+  /**
+   * Which BC this account number exists in (migration 161). **Never null** —
+   * an account number is the name of a row in one company's chart, so it
+   * belongs to exactly one environment.
+   */
+  environment: string;
 }
 
 const TABLE: Record<BrandAccountKind, string> = {
@@ -50,6 +61,7 @@ function mapRow(
     sortOrder: x.SortOrder as number,
     // Never absent — see the note in brand-erp-interface-map-service.
     formCode: (x.FormCode as string | null) ?? null,
+    environment: (x.Environment as string) ?? "Production",
   };
   if (kind === "gl") {
     row.erpDescription = (x.ErpDescription as string) ?? null;
@@ -69,11 +81,18 @@ export async function listBrandAccounts(
   kind: BrandAccountKind,
   brandCode?: string | null,
   formCode?: string,
+  /**
+   * Which BC's accounts to read. **Omitted, the environment this request
+   * already resolves to** — which is why the money path passes nothing and
+   * cannot read the wrong half. See `brand-erp-environment.ts`.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<BrandAccountRow[]> {
+  const env = environment ?? (await resolveEffectiveErpEnvironment());
   const pool = await getAccPool();
   const table = TABLE[kind];
-  const req = pool.request();
-  const conditions: string[] = [];
+  const req = pool.request().input("environment", sql.NVarChar(20), env);
+  const conditions: string[] = [brandErpEnvPredicate()];
   if (brandCode) {
     req.input("brand", sql.NVarChar, brandCode);
     conditions.push("BrandCode = @brand");
@@ -85,7 +104,7 @@ export async function listBrandAccounts(
     conditions.push("FormCode IS NULL");
   }
   const r = await req.query(`
-    SELECT Id, BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, FormCode
+    SELECT Id, BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, FormCode, Environment
     FROM [dbo].[${table}]
     WHERE ${conditions.join(" AND ")}
     ORDER BY BrandCode, SortOrder, AccountNo, ${perFormOrderBy()}
@@ -112,6 +131,8 @@ export async function upsertBrandAccount(
     erpDescription?: string | null;
     isActive?: boolean;
     sortOrder?: number;
+    /** Omitted, the environment this request resolves to. */
+    environment?: ErpBcEnvironment;
   },
   userId: number,
 ): Promise<void> {
@@ -121,6 +142,7 @@ export async function upsertBrandAccount(
   await assertClaimBrandAllowed(brandCode);
   if (!accountNo) throw new Error("กรุณาระบุเลขบัญชี");
 
+  const env = input.environment ?? (await resolveEffectiveErpEnvironment());
   const pool = await getAccPool();
   const table = TABLE[kind];
   // Resolve the target row once, against production, so both databases update
@@ -131,9 +153,12 @@ export async function upsertBrandAccount(
   if (rowId == null) {
     const existing = await pool
       .request()
-      .input("brand", sql.NVarChar, brandCode).query(`
+      .input("brand", sql.NVarChar, brandCode)
+      .input("environment", sql.NVarChar(20), env).query(`
         SELECT TOP 1 Id FROM [dbo].[${table}]
-        WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
+        -- Bounded by the environment too: without it, editing Sandbox's account
+        -- finds Production's row and rewrites it.
+        WHERE BrandCode = @brand AND ${brandErpEnvPredicate()} AND ${perFormWriteMatch(null)}
         ORDER BY SortOrder, Id
       `);
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
@@ -147,6 +172,7 @@ export async function upsertBrandAccount(
       .input("displayName", sql.NVarChar, input.displayName?.trim() || null)
       .input("active", sql.Bit, input.isActive === false ? 0 : 1)
       .input("sort", sql.Int, input.sortOrder ?? 0)
+      .input("environment", sql.NVarChar(20), env)
       .input("user", sql.Int, userId || null);
 
     if (kind === "gl") {
@@ -171,13 +197,13 @@ export async function upsertBrandAccount(
       -- Bounded to the default as well as the id. The row id arrives from the
       -- request body, and this editor only ever edits the default, so an id
       -- naming an override must not be updatable through it.
-      WHERE Id = @id AND ${perFormWriteMatch(null)}
+      WHERE Id = @id AND ${brandErpEnvPredicate()} AND ${perFormWriteMatch(null)}
     `);
     } else {
       await req.query(`
       INSERT INTO [dbo].[${table}]
-        (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, FormCode, CreatedBy)
-      VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription" : ""}, @active, @sort, NULL, @user)
+        (BrandCode, AccountNo, DisplayName${kind === "gl" ? ", ErpDescription" : ""}, IsActive, SortOrder, FormCode, Environment, CreatedBy)
+      VALUES (@brand, @accountNo, @displayName${kind === "gl" ? ", @erpDescription" : ""}, @active, @sort, NULL, @environment, @user)
     `);
     }
   });
@@ -197,7 +223,10 @@ export async function mergeFormBrandAccount(
   accountNo: string,
   erpDescription: string | null,
   userId: number,
+  /** Omitted, the environment this request resolves to. */
+  environment?: ErpBcEnvironment,
 ): Promise<void> {
+  const env = environment ?? (await resolveEffectiveErpEnvironment());
   const brand = brandCode.trim().toUpperCase();
   const form = formCode.trim().toUpperCase();
   const accNo = accountNo.trim();
@@ -211,23 +240,27 @@ export async function mergeFormBrandAccount(
       .request()
       .input("brand", sql.NVarChar, brand)
       .input("formCode", sql.NVarChar(20), form)
+      .input("environment", sql.NVarChar(20), env)
       .query(`
         DELETE FROM [dbo].[${table}]
-        WHERE BrandCode = @brand AND FormCode = @formCode
+        -- The environment bounds the delete. This is delete-then-insert, so
+        -- unbounded it would remove the OTHER environment's override outright.
+        WHERE BrandCode = @brand AND FormCode = @formCode AND ${brandErpEnvPredicate()}
       `);
     const req = tx
       .request()
       .input("brand", sql.NVarChar, brand)
       .input("formCode", sql.NVarChar(20), form)
       .input("accNo", sql.NVarChar, accNo)
+      .input("environment", sql.NVarChar(20), env)
       .input("user", sql.Int, userId || null);
     if (kind === "gl") {
       req.input("erpDesc", sql.NVarChar, erpDescription?.trim() || null);
     }
     await req.query(`
       INSERT INTO [dbo].[${table}]
-        (BrandCode, AccountNo, FormCode, IsActive, SortOrder${kind === "gl" ? ", ErpDescription" : ""}, CreatedBy)
-      VALUES (@brand, @accNo, @formCode, 1, 0${kind === "gl" ? ", @erpDesc" : ""}, @user)
+        (BrandCode, AccountNo, FormCode, IsActive, SortOrder${kind === "gl" ? ", ErpDescription" : ""}, Environment, CreatedBy)
+      VALUES (@brand, @accNo, @formCode, 1, 0${kind === "gl" ? ", @erpDesc" : ""}, @environment, @user)
     `);
   });
 }

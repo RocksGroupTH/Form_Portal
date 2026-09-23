@@ -20,6 +20,9 @@ function row(over: Partial<BrandAccountRow>): BrandAccountRow {
     id: 1,
     brandCode: "PCMY",
     accountNo: "UOB-2726",
+    // Migration 161. These fixtures are about the FORM axis, so every row is
+    // the Production one — the environment axis is exercised in its own guard.
+    environment: "Production",
     displayName: null,
     isActive: true,
     sortOrder: 0,

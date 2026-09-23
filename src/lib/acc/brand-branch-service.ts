@@ -1,4 +1,9 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { resolveEffectiveErpEnvironment } from "@/lib/acc/erp-environment";
+import {
+  brandErpEnvPredicate,
+  type ErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
 import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
@@ -58,6 +63,11 @@ export interface BrandBranchRow {
   sortOrder: number;
   /** `null` is the default, which answers every form. */
   formCode: string | null;
+  /**
+   * Which BC this branch code exists in (migration 161). **Never null** — a
+   * BRANCH dimension value belongs to one company.
+   */
+  environment: string;
 }
 
 function mapRow(x: Record<string, unknown>): BrandBranchRow {
@@ -68,6 +78,7 @@ function mapRow(x: Record<string, unknown>): BrandBranchRow {
     displayName: (x.DisplayName as string) ?? null,
     deptAsBranch: !!x.DeptAsBranch,
     fixedErpDeptCode: (x.FixedErpDeptCode as string) ?? null,
+    environment: (x.Environment as string) ?? "Production",
     isActive: !!x.IsActive,
     sortOrder: x.SortOrder as number,
     // Never absent — see the note in brand-erp-interface-map-service.
@@ -82,10 +93,13 @@ function mapRow(x: Record<string, unknown>): BrandBranchRow {
 export async function listBrandBranches(
   brandCode?: string | null,
   formCode?: string,
+  /** Omitted, the environment this request resolves to. */
+  environment?: ErpBcEnvironment,
 ): Promise<BrandBranchRow[]> {
+  const env = environment ?? (await resolveEffectiveErpEnvironment());
   const pool = await getAccPool();
-  const req = pool.request();
-  const conditions: string[] = [];
+  const req = pool.request().input("environment", sql.NVarChar(20), env);
+  const conditions: string[] = [brandErpEnvPredicate()];
   if (brandCode) {
     req.input("brand", sql.NVarChar, brandCode);
     conditions.push("BrandCode = @brand");
@@ -97,7 +111,7 @@ export async function listBrandBranches(
     conditions.push("FormCode IS NULL");
   }
   const r = await req.query(`
-    SELECT Id, BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, FormCode
+    SELECT Id, BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, FormCode, Environment
     FROM [dbo].[AccBrandBranchCode]
     WHERE ${conditions.join(" AND ")}
     ORDER BY BrandCode, SortOrder, BranchCode, ${perFormOrderBy()}
@@ -138,6 +152,12 @@ export async function upsertBrandBranch(
     fixedErpDeptCode?: string | null;
     isActive?: boolean;
     sortOrder?: number;
+    /**
+     * Which BC this branch code exists in. Omitted, the environment the
+     * request already resolves to — so the settings screen's PRO/UAT toggle
+     * is the only thing that ever needs to name it.
+     */
+    environment?: ErpBcEnvironment;
   },
   userId: number,
 ): Promise<void> {
@@ -160,6 +180,7 @@ export async function upsertBrandBranch(
     await assertFixedErpDeptInErp(interfaceBrand, fixedErpDeptCode);
   }
 
+  const env = input.environment ?? (await resolveEffectiveErpEnvironment());
   const pool = await getAccPool();
   // Bounded to the default — the editor has no form selector, and an unbounded
   // probe could land on an override and rewrite another form's branch code.
@@ -167,9 +188,12 @@ export async function upsertBrandBranch(
   if (rowId == null) {
     const existing = await pool
       .request()
-      .input("brand", sql.NVarChar, brandCode).query(`
+      .input("brand", sql.NVarChar, brandCode)
+      .input("environment", sql.NVarChar(20), env).query(`
         SELECT TOP 1 Id FROM [dbo].[AccBrandBranchCode]
-        WHERE BrandCode = @brand AND ${perFormWriteMatch(null)}
+        -- Bounded by the environment too, or editing Sandbox's branch finds
+        -- Production's row and rewrites it.
+        WHERE BrandCode = @brand AND ${brandErpEnvPredicate()} AND ${perFormWriteMatch(null)}
         ORDER BY SortOrder, Id
       `);
     rowId = (existing.recordset[0] as { Id: number } | undefined)?.Id;
@@ -189,6 +213,7 @@ export async function upsertBrandBranch(
       )
       .input("active", sql.Bit, input.isActive === false ? 0 : 1)
       .input("sort", sql.Int, input.sortOrder ?? 0)
+      .input("environment", sql.NVarChar(20), env)
       .input("user", sql.Int, userId || null);
 
     if (rowId) {
@@ -206,13 +231,13 @@ export async function upsertBrandBranch(
       -- Bounded to the default as well as the id. The row id arrives from the
       -- request body, and this editor only ever edits the default, so an id
       -- naming an override must not be updatable through it.
-      WHERE Id = @id AND ${perFormWriteMatch(null)}
+      WHERE Id = @id AND ${brandErpEnvPredicate()} AND ${perFormWriteMatch(null)}
     `);
     } else {
       await req.query(`
       INSERT INTO [dbo].[AccBrandBranchCode]
-        (BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, FormCode, CreatedBy)
-      VALUES (@brand, @branchCode, @displayName, @deptAsBranch, @fixedErpDept, @active, @sort, NULL, @user)
+        (BrandCode, BranchCode, DisplayName, DeptAsBranch, FixedErpDeptCode, IsActive, SortOrder, FormCode, Environment, CreatedBy)
+      VALUES (@brand, @branchCode, @displayName, @deptAsBranch, @fixedErpDept, @active, @sort, NULL, @environment, @user)
     `);
     }
   });
@@ -248,7 +273,10 @@ export async function mergeFormBrandBranch(
   deptAsBranch: boolean,
   fixedErpDeptCode: string | null,
   userId: number,
+  /** Omitted, the environment this request resolves to. */
+  environment?: ErpBcEnvironment,
 ): Promise<void> {
+  const env = environment ?? (await resolveEffectiveErpEnvironment());
   const brand = brandCode.trim().toUpperCase();
   const form = formCode.trim().toUpperCase();
   const branch = branchCode?.trim() || null;
@@ -283,9 +311,12 @@ export async function mergeFormBrandBranch(
       .request()
       .input("brand", sql.NVarChar, brand)
       .input("formCode", sql.NVarChar(20), form)
+      .input("environment", sql.NVarChar(20), env)
       .query(`
         DELETE FROM [dbo].[AccBrandBranchCode]
-        WHERE BrandCode = @brand AND FormCode = @formCode
+        -- delete-then-insert: unbounded, this removes the OTHER environment's
+        -- override outright.
+        WHERE BrandCode = @brand AND FormCode = @formCode AND ${brandErpEnvPredicate()}
       `);
     if (branch) {
       await tx
@@ -295,11 +326,12 @@ export async function mergeFormBrandBranch(
         .input("branch", sql.NVarChar, branch)
         .input("deptAsBranch", sql.Bit, deptOn ? 1 : 0)
         .input("fixedErpDept", sql.NVarChar, fixedDept)
+        .input("environment", sql.NVarChar(20), env)
         .input("user", sql.Int, userId || null)
         .query(`
           INSERT INTO [dbo].[AccBrandBranchCode]
-            (BrandCode, BranchCode, FormCode, IsActive, SortOrder, DeptAsBranch, FixedErpDeptCode, CreatedBy)
-          VALUES (@brand, @branch, @formCode, 1, 0, @deptAsBranch, @fixedErpDept, @user)
+            (BrandCode, BranchCode, FormCode, IsActive, SortOrder, DeptAsBranch, FixedErpDeptCode, Environment, CreatedBy)
+          VALUES (@brand, @branch, @formCode, 1, 0, @deptAsBranch, @fixedErpDept, @environment, @user)
         `);
     }
   });
