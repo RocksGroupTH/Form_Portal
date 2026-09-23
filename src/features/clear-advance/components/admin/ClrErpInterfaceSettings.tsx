@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
+import {
+  ErpEnvironmentNote,
+  ErpEnvironmentToggle,
+} from "@/components/settings/ErpEnvironmentToggle";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, Circle, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -204,10 +209,13 @@ function GroupCard({
   target,
   members,
   onSaved,
+  environment,
 }: {
   target: string;
   members: ViewRow[];
   onSaved: () => void;
+  /** Which BC half this card reads and writes — see the toggle at the root. */
+  environment: ErpBcEnvironment;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -367,6 +375,7 @@ function GroupCard({
             journalBatchName: batch.trim(),
             vatInputGlAccountNo: v.vatGl.trim() || null,
             whtPayableGlAccountNo: v.whtGl.trim() || null,
+            environment,
             // Omitted entirely when blank — never sent as "" — because the
             // route refuses a present-but-blank bank with a 400: there is no
             // "clear the bank" operation, so a blank here must not travel as
@@ -635,8 +644,13 @@ function GroupCard({
  * belonging to the company whose books it posts into.
  */
 export function ClrErpInterfaceSettings() {
+  /* Production by default, which is what the route resolves for a caller that
+     names nothing — so the screen opens on the same half it always showed. */
+  const [environment, setEnvironment] = useState<ErpBcEnvironment>("Production");
   const { data, isLoading, mutate } = useSWR<{ ok: boolean; data?: ViewRow[] }>(
-    "/api/request/clear-advance/settings/erp-interface", fetcher,
+    // The environment is IN the key, so switching refetches rather than
+    // re-rendering the half already in the cache under the other half's label.
+    `/api/request/clear-advance/settings/erp-interface?environment=${environment}`, fetcher,
   );
   const rows = useMemo(() => data?.data ?? [], [data]);
 
@@ -676,13 +690,28 @@ export function ClrErpInterfaceSettings() {
         บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> (แยกรายแบรนด์เบิก)
       </p>
 
+      <div className="flex flex-col gap-2">
+        <ErpEnvironmentToggle value={environment} onChange={setEnvironment} />
+        <ErpEnvironmentNote value={environment} />
+      </div>
+
       {isLoading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {groups.map((g) => (
-              <GroupCard key={g.target} target={g.target} members={g.members} onSaved={() => mutate()} />
+              /* The environment is in the key so the card REMOUNTS on a
+                 switch. Its editable state is seeded from `members`, and
+                 keeping the instance across halves would show one half's typed
+                 values over the other half's rows. */
+              <GroupCard
+                key={`${environment}:${g.target}`}
+                target={g.target}
+                members={g.members}
+                onSaved={() => mutate()}
+                environment={environment}
+              />
             ))}
           </div>
 

@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
+import {
+  ErpEnvironmentNote,
+  ErpEnvironmentToggle,
+} from "@/components/settings/ErpEnvironmentToggle";
 import { toast } from "sonner";
 import { AlertTriangle, Pencil, CheckCircle2, Circle, Link2, Save, RefreshCw, Download, Plus } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -194,13 +199,15 @@ function GroupFieldSummary({ label, state }: { label: string; state: GroupValue 
  * that its own tab. An inactive member still reads as ปิดใช้งาน here, since a
  * group whose brands are switched off explains a queue that looks empty.
  */
-function GroupCard({ target, members, all, erpByCompany, onSaved }: {
+function GroupCard({ target, members, all, erpByCompany, onSaved, environment }: {
   target: string;
   members: ConfigRow[];
   /** Every claim brand, for the "add a brand" picker — including other groups'. */
   all: ConfigRow[];
   erpByCompany: Record<string, CompanyErp>;
   onSaved: () => void;
+  /** Which BC half this card reads and writes — see the toggle at the root. */
+  environment: ErpBcEnvironment;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -288,6 +295,7 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
             bankAccountNo: v.bank.trim(),
             branchCode: v.branch.trim(),
             journalBatchName: batch.trim(),
+            environment,
           }),
         });
         const j = (await res.json()) as { ok: boolean; error?: string };
@@ -507,15 +515,20 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
 export function AdvanceErpInterfaceSettings() {
   const [rows, setRows] = useState<ConfigRow[]>([]);
   const [loading, setLoading] = useState(true);
+  /* Production by default, which is what the route resolves for a caller that
+     names nothing — so the screen opens on the same half it always showed. */
+  const [environment, setEnvironment] = useState<ErpBcEnvironment>("Production");
 
+  // `environment` is a dependency, so switching halves re-runs the effect below
+  // and reloads. Without it the toggle would move and the rows would not.
   const load = useCallback(() => {
     setLoading(true);
-    fetch("/api/request/advance/settings/erp-interface")
+    fetch(`/api/request/advance/settings/erp-interface?environment=${environment}`)
       .then((r) => r.json())
       .then((j: { ok: boolean; data?: ConfigRow[] }) => setRows(j.ok && j.data ? j.data : []))
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [environment]);
 
   useEffect(() => load(), [load]);
 
@@ -675,6 +688,11 @@ export function AdvanceErpInterfaceSettings() {
         </div>
       </div>
 
+      <div className="flex flex-col gap-2">
+        <ErpEnvironmentToggle value={environment} onChange={setEnvironment} />
+        <ErpEnvironmentNote value={environment} />
+      </div>
+
       {loading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
       ) : rows.length === 0 ? (
@@ -685,8 +703,12 @@ export function AdvanceErpInterfaceSettings() {
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {groups.map((g) => (
-              <GroupCard key={g.target} target={g.target} members={g.members} all={rows}
-                erpByCompany={erpByCompany} onSaved={load} />
+              /* The environment is in the key so the card REMOUNTS on a
+                 switch: its editable state is seeded from `members`, and
+                 keeping the instance across halves would show one half's typed
+                 values over the other half's rows. */
+              <GroupCard key={`${environment}:${g.target}`} target={g.target} members={g.members} all={rows}
+                erpByCompany={erpByCompany} onSaved={load} environment={environment} />
             ))}
           </div>
 
