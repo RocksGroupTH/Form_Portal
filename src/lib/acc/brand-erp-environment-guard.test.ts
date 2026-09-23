@@ -265,6 +265,68 @@ test("the three services resolve the environment rather than assuming one", () =
   );
 });
 
+test("no route hands a service an unparsed environment", () => {
+  /**
+   * The value arrives from a query string or a request body, so it is whatever
+   * the caller typed. Unparsed it reaches the column verbatim — and the unique
+   * key with it — where `'UAT'` or `'prod'` is a row belonging to an
+   * environment nothing will ever read back.
+   *
+   * `parseErpBcEnvironment` is the one place that turns it into the two values
+   * the column holds, or `null` for the 400. A route that names `environment`
+   * without calling it has either skipped the parse or invented a second one.
+   */
+  /* Scoped to the INPUT sites rather than to the word, which is common in
+     these routes for unrelated reasons — the form environment, the ERP
+     environment resolver, the environment chip. What is pinned is: wherever a
+     route reads THIS parameter off a query string or a body, it parses it. */
+  const INPUTS = [
+    'searchParams.get("environment")',
+    "body.environment",
+    "body?.environment",
+  ];
+  /**
+   * One exception, and it is a different question rather than a lapse.
+   *
+   * The ERP send takes `body.environment` as an **echo**: the client sends back
+   * the environment the queue it is looking at was built in, and the route
+   * compares it with the freshly resolved one, answering 409 on drift so the
+   * page reloads instead of posting a journal into a company the operator was
+   * not looking at. The value is compared and discarded — it is never written
+   * to a column, so parsing it into the column's vocabulary would buy nothing.
+   *
+   * The exception is pinned to that fact: the arm below requires the route to
+   * still carry its drift refusal. Turn the echo into something stored and the
+   * comparison goes with it, and this test stops excusing the route.
+   */
+  const ECHO_ROUTE = "app/api/request/accounting/erp-prep/send/route.ts";
+  const echo = FILES.find((f) => f.rel === ECHO_ROUTE);
+  assert.ok(echo, `${ECHO_ROUTE} is missing — has it moved?`);
+  assert.ok(
+    echo.src.indexOf("ENVIRONMENT_STALE_ERROR") !== -1,
+    `${ECHO_ROUTE} no longer refuses on environment drift, so its body.environment is not ` +
+      "an echo any more. Either restore the comparison or parse the value like every " +
+      "other route does",
+  );
+
+  const offenders: string[] = [];
+  for (const { rel, src } of FILES) {
+    if (!rel.startsWith("app/api/")) continue;
+    if (rel === ECHO_ROUTE) continue;
+    const reads = INPUTS.filter((needle) => src.indexOf(needle) !== -1);
+    if (reads.length === 0) continue;
+    if (src.indexOf("parseErpBcEnvironment(") !== -1) continue;
+    offenders.push(`${rel} — reads ${reads.join(" and ")}`);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these routes read an environment parameter but never parse one. A value that is " +
+      "neither 'Production' nor 'Sandbox' would reach the column as typed, and the " +
+      "unique key with it:\n  " + offenders.join("\n  "),
+  );
+});
+
 test("AccBrandErpInterface is not split", () => {
   /* Stated as a test rather than only in prose, because "split the Interface
      ERP tables" reads as though it should be one of them. It maps a claim brand
