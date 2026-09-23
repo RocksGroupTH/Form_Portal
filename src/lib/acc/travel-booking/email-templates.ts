@@ -280,8 +280,24 @@ export interface RoomShareMailInput {
  * rather than a prose fragment — package A's precedent, so a reword does not
  * red the suite for no reason.
  */
+/**
+ * **Softened on the user's instruction, 2026-09-23.** It opened
+ * `"ระบบไม่ได้ขอความยินยอมจากคุณก่อน — นี่เป็นการแจ้งให้ทราบ"`, which is a true
+ * statement of spec §2's "no consent" decision and reads as an apology in the
+ * first line a host meets. It is now simply `"แจ้งเพื่อทราบ"`.
+ *
+ * **What the host is told did not change** — the two consequences that matter
+ * to them are still here, in the same words: their cancellation cancels the
+ * guest, and their date change moves the guest. The clause that went was the
+ * one about how the arrangement came about, not about what it does.
+ *
+ * Spec §2 calls notification "the entire mitigation" for the host having no
+ * veto, and it still is: this mail is sent the moment a guest attaches, names
+ * them, and says what follows. A future editor trimming the consequences
+ * themselves would be removing the mitigation; trimming this sentence was not.
+ */
 export const ROOM_SHARE_HOST_NOTICE_TEXT =
-  "ระบบไม่ได้ขอความยินยอมจากคุณก่อน — นี่เป็นการแจ้งให้ทราบ " +
+  "แจ้งเพื่อทราบ " +
   "หากคำขอของคุณถูกยกเลิก/ไม่อนุมัติ คำขอของผู้พักร่วมจะถูกยกเลิกตามอัตโนมัติ " +
   "และหากคุณเปลี่ยนวันเดินทาง วันเดินทางของผู้พักร่วมจะเปลี่ยนตามอัตโนมัติ " +
   "หากไม่ถูกต้อง กรุณาติดต่อผู้พักร่วมโดยตรง";
