@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { toast } from "sonner";
 import { AlertTriangle, Pencil, CheckCircle2, Circle, Link2, Save, RefreshCw, Download, Plus } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -674,6 +675,8 @@ export function AdvanceErpInterfaceSettings() {
           </Button>
         </div>
       </div>
+
+      <ErpEnvironmentNotice />
 
       {loading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>

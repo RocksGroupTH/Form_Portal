@@ -1,4 +1,7 @@
-import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
+import {
+  resolveErpSourceEnvironment,
+  type ErpBcEnvironment,
+} from "@/lib/erp/source-environment";
 import { getAppPool, sql } from "@/lib/db/mssql";
 import { ADVANCE_JOURNAL_TEMPLATE } from "@/lib/adv/advance-batch-service";
 import type { EmployeeCodeLookup } from "@/lib/adv/vendor-match-core";
@@ -33,9 +36,21 @@ export interface AdvErpCompanyMaster {
   vendors: AdvErpVendorOption[];
 }
 
-async function listGl(company: string): Promise<AdvErpAcctOption[]> {
+async function listGl(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvErpAcctOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
     SELECT AccountNo, DisplayName FROM [dbo].[ErpAccounts]
     WHERE SourceEnvironment = @env AND BrandCode = @c AND AccountCategory = 'GL'
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
@@ -50,9 +65,21 @@ async function listGl(company: string): Promise<AdvErpAcctOption[]> {
  * Exported 2026-09-22 so AP-3's own Bank Account picker reads the same cards
  * AP-2's Interface ERP screen does, rather than a second copy of this query.
  */
-export async function listBank(company: string): Promise<AdvErpAcctOption[]> {
+export async function listBank(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvErpAcctOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
     SELECT AccountNo, DisplayName FROM [dbo].[ErpBankAccountCard]
     WHERE SourceEnvironment = @env AND BrandCode = @c
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
@@ -63,9 +90,21 @@ export async function listBank(company: string): Promise<AdvErpAcctOption[]> {
   }));
 }
 
-async function listBranch(company: string): Promise<AdvErpBranchOption[]> {
+async function listBranch(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvErpBranchOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
     SELECT Code, DisplayName FROM [dbo].[ErpDimensionValue]
     WHERE SourceEnvironment = @env AND BrandCode = @c AND DimensionCode = 'BRANCH'
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
@@ -76,14 +115,26 @@ async function listBranch(company: string): Promise<AdvErpBranchOption[]> {
   }));
 }
 
-async function listBatch(company: string): Promise<AdvErpBatchOption[]> {
+async function listBatch(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvErpBatchOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
   // Only PAYMENTS-template batches — the PPAP CU (CU 50263) posts under the
   // PAYMENTS template and rejects any other, so other templates must not appear.
   const r = await pool.request()
     .input("c", sql.NVarChar, company)
     .input("tpl", sql.NVarChar, ADVANCE_JOURNAL_TEMPLATE)
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
     SELECT BatchName, DisplayName, TemplateName FROM [dbo].[ErpGeneralJournalBatch]
     WHERE SourceEnvironment = @env AND BrandCode = @c
       AND UPPER(LTRIM(RTRIM(TemplateName))) = @tpl
@@ -96,14 +147,26 @@ async function listBatch(company: string): Promise<AdvErpBatchOption[]> {
   }));
 }
 
-export async function listVendors(company: string): Promise<AdvErpVendorOption[]> {
+export async function listVendors(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvErpVendorOption[]> {
   const c = company.trim().toUpperCase();
   if (!c) return [];
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("c", sql.NVarChar, c)
     .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment)).query(`
     SELECT VendorNo, DisplayName FROM [dbo].[ErpVendors]
     WHERE SourceEnvironment = @env AND BrandCode = @c
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
@@ -222,11 +285,27 @@ export async function findSelectableVendor(company: string, vendorNo: string): P
 }
 
 /** All five master lists for one Company, read from Rocks_ERP_Data. */
-export async function listAdvErpMaster(company: string): Promise<AdvErpCompanyMaster> {
+export async function listAdvErpMaster(
+  company: string,
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvErpCompanyMaster> {
   const c = company.trim().toUpperCase();
   if (!c) return { gl: [], bank: [], branch: [], journalBatch: [], vendors: [] };
   const [gl, bank, branch, journalBatch, vendors] = await Promise.all([
-    listGl(c), listBank(c), listBranch(c), listBatch(c), listVendors(c),
+    listGl(c, environment),
+    listBank(c, environment),
+    listBranch(c, environment),
+    listBatch(c, environment),
+    listVendors(c, environment),
   ]);
   return { gl, bank, branch, journalBatch, vendors };
 }
@@ -234,9 +313,19 @@ export async function listAdvErpMaster(company: string): Promise<AdvErpCompanyMa
 /** Master lists for several Companies, keyed by Company code. */
 export async function listAdvErpMasterForCompanies(
   companies: string[],
+  /**
+   * Which BC's mirror to offer from. Omitted, the environment this request
+   * resolves to — what every validation and money path passes.
+   *
+   * The Interface ERP settings screens name it: their routes are pinned to
+   * Production in `ROUTE_RULES`, so without it an admin configuring the UAT
+   * half would pick from PRODUCTION's batch names and account numbers and
+   * store them as UAT's.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<Record<string, AdvErpCompanyMaster>> {
   const uniq = Array.from(new Set(companies.map((c) => c.trim().toUpperCase()).filter(Boolean)));
   const out: Record<string, AdvErpCompanyMaster> = {};
-  await Promise.all(uniq.map(async (c) => { out[c] = await listAdvErpMaster(c); }));
+  await Promise.all(uniq.map(async (c) => { out[c] = await listAdvErpMaster(c, environment); }));
   return out;
 }

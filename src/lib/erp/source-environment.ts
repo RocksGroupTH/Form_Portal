@@ -63,8 +63,22 @@ export const ERP_SOURCE_ENVIRONMENT_COLUMN = "SourceEnvironment";
  * direction here: a script that syncs or reads without a request is doing
  * production's work.
  */
-export async function resolveErpSourceEnvironment(): Promise<ErpBcEnvironment> {
-  return resolveEffectiveErpEnvironment();
+export async function resolveErpSourceEnvironment(
+  /**
+   * An explicit half, for the settings screens alone.
+   *
+   * Every other caller passes nothing and gets the request's own environment,
+   * which is what keeps the money path unable to read the wrong mirror. The
+   * override exists because the Interface ERP settings routes are pinned to
+   * Production in `ROUTE_RULES` — so their PRO/UAT toggle has no other way to
+   * say which company's chart the pickers should offer.
+   *
+   * It is still the named seam either way, so `erp-source-environment-guard`
+   * keeps recognising the call.
+   */
+  override?: ErpBcEnvironment,
+): Promise<ErpBcEnvironment> {
+  return override ?? resolveEffectiveErpEnvironment();
 }
 
 export type { ErpBcEnvironment };

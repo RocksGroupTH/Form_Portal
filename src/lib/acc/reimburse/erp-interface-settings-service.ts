@@ -1,4 +1,5 @@
 import { listAllBrands } from "@/lib/acc/brand-options";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveAllErpTargetProfiles } from "@/lib/acc/erp-target-profile";
@@ -148,11 +149,21 @@ export interface ReimburseErpGroupsView {
  * "ครบแล้ว". In the grouped shape it lands in `unassigned` instead, which is
  * the correct place for a brand nobody has pointed at a target yet.
  */
-export async function loadReimburseErpGroups(): Promise<ReimburseErpGroupsView> {
+export async function loadReimburseErpGroups(
+  /**
+   * Which BC half to show. Omitted, the environment the request resolves to —
+   * which for this route is always Production, since `/api/request/reimburse/settings`
+   * is pinned there in `ROUTE_RULES` so a config-row id in the path is not read
+   * as an AccRequest id. The screen's PRO/UAT toggle is what names the other
+   * half; the split is a COLUMN precisely so it does not depend on which
+   * database a request happens to resolve.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ReimburseErpGroupsView> {
   const [allBrands, ctx, profiles, ifaceMaps, reimburseBrands, branchRows, batchRows, bankRows] =
     await Promise.all([
       listAllBrands(),
-      loadErpJournalBuildContext(AP4_FORM_CODE),
+      loadErpJournalBuildContext(AP4_FORM_CODE, environment),
       // Resolved once for every target — not per row. The loader this
       // replaces called `resolveErpTargetProfile` once per claim brand, each
       // doing four reads; a target's profile does not depend on which claim
@@ -160,9 +171,9 @@ export async function loadReimburseErpGroups(): Promise<ReimburseErpGroupsView> 
       resolveAllErpTargetProfiles(AP4_FORM_CODE),
       listBrandErpInterfaceMaps(AP4_FORM_CODE),
       listFormBrands(AP4_FORM_CODE),
-      listBrandBranches(null, AP4_FORM_CODE),
-      listBrandJournalBatches(null, AP4_FORM_CODE),
-      listBrandAccounts("bank", null, AP4_FORM_CODE),
+      listBrandBranches(null, AP4_FORM_CODE, environment),
+      listBrandJournalBatches(null, AP4_FORM_CODE, environment),
+      listBrandAccounts("bank", null, AP4_FORM_CODE, environment),
     ]);
 
   const brandByCode = new Map(allBrands.map((b) => [b.brandCode.toUpperCase(), b]));
@@ -325,6 +336,16 @@ export interface ReimburseErpGroupSaveInput {
 export async function saveReimburseErpGroup(
   input: ReimburseErpGroupSaveInput,
   userId: number,
+  /**
+   * Which BC half this save writes. Omitted, the request's own environment.
+   *
+   * It reaches the three `mergeFormBrand*` calls and deliberately NOT
+   * `upsertFormBrandErpInterfaceMap`: claim brand -> interface target is the
+   * same answer in both environments and `AccBrandErpInterface` carries no
+   * such column — see `brand-erp-environment.ts`, and
+   * `brand-erp-environment-guard.test.ts` fails if one is ever added.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<void> {
   const target = input.targetCode.trim().toUpperCase();
   if (!target) throw new Error("กรุณาระบุแบรนด์ปลายทาง");
@@ -333,7 +354,15 @@ export async function saveReimburseErpGroup(
   for (const member of input.members) {
     const brand = member.brandCode.trim().toUpperCase();
     await upsertFormBrandErpInterfaceMap(brand, target, AP4_FORM_CODE, userId);
-    await mergeFormBrandAccount("bank", brand, AP4_FORM_CODE, member.bankAccountNo, null, userId);
+    await mergeFormBrandAccount(
+      "bank",
+      brand,
+      AP4_FORM_CODE,
+      member.bankAccountNo,
+      null,
+      userId,
+      environment,
+    );
     await mergeFormBrandBranch(
       brand,
       AP4_FORM_CODE,
@@ -341,11 +370,12 @@ export async function saveReimburseErpGroup(
       !!member.deptAsBranch,
       member.fixedErpDeptCode || null,
       userId,
+      environment,
     );
     // Called once per member with the SAME value — the fan-out the module
     // docblock's Journal Batch section explains. Never stored once against
     // `target`.
-    await mergeFormBrandBatch(brand, AP4_FORM_CODE, batch, userId);
+    await mergeFormBrandBatch(brand, AP4_FORM_CODE, batch, userId, environment);
   }
 }
 

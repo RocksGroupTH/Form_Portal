@@ -30,8 +30,16 @@ const SERVICE_PATH = "src/lib/clr/clear-advance-interface-settings-service.ts";
 
 const read = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), "utf8");
 
-/** The one call this guard cares about, wherever whitespace falls inside it. */
-const BANK_READ_CALL = /listBrandAccounts\(\s*"bank"\s*,\s*null\s*,\s*AP3_FORM_CODE\s*\)/;
+/**
+ * The one call this guard cares about, wherever whitespace falls inside it.
+ *
+ * The third argument may be followed by a fourth — the BC environment, since
+ * migration 161 split these rows by it — so the pattern ends on a comma or the
+ * closing paren rather than the paren alone. It still pins all three arguments
+ * it was written to pin, which is the whole of its job; whether a fourth is
+ * passed is `brand-erp-environment-guard.test.ts`'s question, not this one's.
+ */
+const BANK_READ_CALL = /listBrandAccounts\(\s*"bank"\s*,\s*null\s*,\s*AP3_FORM_CODE\s*[,)]/;
 
 test("the settings view reads AP-3's own bank rows, not AP-2's or a literal", () => {
   const src = read(SERVICE_PATH);
@@ -66,6 +74,16 @@ test("is not vacuous — the pattern catches AP-2's form code substituted in, an
   // right, and un-refactorable) rows.
   assert.doesNotMatch(
     'listBrandAccounts("bank", null, "AP-3")',
+    BANK_READ_CALL,
+  );
+  // Widened for the environment argument, so the widened form must still match
+  // — and the two defects above must still fail with one present.
+  assert.match(
+    'listBrandAccounts("bank", null, AP3_FORM_CODE, environment)',
+    BANK_READ_CALL,
+  );
+  assert.doesNotMatch(
+    'listBrandAccounts("bank", null, AP2_FORM_CODE, environment)',
     BANK_READ_CALL,
   );
 });

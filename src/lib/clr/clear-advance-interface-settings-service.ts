@@ -2,6 +2,7 @@ import { listAllBrands } from "@/lib/acc/brand-options";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
 import { listBrandAccounts } from "@/lib/acc/brand-account-service";
 import { AP2_FORM_CODE } from "@/features/advance/constants";
@@ -49,14 +50,23 @@ export interface ClrInterfaceConfigView {
   active: boolean;
 }
 
-export async function listClrInterfaceConfigView(): Promise<ClrInterfaceConfigView[]> {
+export async function listClrInterfaceConfigView(
+  /**
+   * Which BC half to show or write. Omitted, the environment the request
+   * resolves to — always Production for these routes, which `ROUTE_RULES`
+   * pins so a config-row id is not read as an AccRequest id. The screen's
+   * PRO/UAT toggle is what names the other half; the split is a COLUMN
+   * precisely so it does not depend on which database a request resolves.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<ClrInterfaceConfigView[]> {
   const [allBrands, ctx, ap2Maps, clr, ap3Brands, bankRows] = await Promise.all([
     listAllBrands(),
-    loadErpJournalBuildContext("AP-3"),
+    loadErpJournalBuildContext("AP-3", environment),
     listBrandErpInterfaceMaps(AP2_FORM_CODE),
     listClrInterfaceConfig(),
     listFormBrands("AP-3"),
-    listBrandAccounts("bank", null, AP3_FORM_CODE),
+    listBrandAccounts("bank", null, AP3_FORM_CODE, environment),
   ]);
   const bankByBrand = groupClrBankAccountsByBrand(bankRows);
   const ap2ByCode = new Map(ap2Maps.map((m) => [m.brandCode.toUpperCase(), m]));

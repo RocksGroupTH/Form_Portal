@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, Circle, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -675,6 +676,8 @@ export function ClrErpInterfaceSettings() {
         ตั้งค่าที่นี่: <b>Journal Batch</b> (ใช้ร่วมกันทั้งกลุ่ม) · <b>บัญชีธนาคาร</b> ·
         บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> (แยกรายแบรนด์เบิก)
       </p>
+
+      <ErpEnvironmentNotice />
 
       {isLoading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>

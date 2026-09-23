@@ -9,6 +9,7 @@ import {
   type ReimburseErpGroupSaveMember,
 } from "@/lib/acc/reimburse/erp-interface-settings-service";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 
 /**
  * AP-4's own Business Central posting configuration, grouped by interface
@@ -84,11 +85,30 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  */
 
 /** GET — one card per interface target, plus the unassigned claim brands. */
-export async function GET() {
+/**
+ * **Which BC half this reads and writes follows the navbar's PRO/UAT switch**,
+ * not a query string and not this route's own path. The user's rule,
+ * 2026-09-24: *"UAT หรือ PRO ไม่ต้องเปลี่ยนตรงนี้ เพราะเปลี่ยนจากด้านบน navbar
+ * อยู่แล้ว"* — one switch, where it already is.
+ *
+ * It comes from `resolveSettingsErpEnvironment()` rather than the ordinary
+ * `resolveEffectiveErpEnvironment()`, which would answer Production however the
+ * navbar is set: the settings prefix is pinned to `null` in `ROUTE_RULES` so a
+ * config-row id is not read as an `AccRequest` id, and a `null` class resolves
+ * Production outright. That pin is about which DATABASE answers; since
+ * migration 161 the two halves are told apart by a COLUMN, so the rows can come
+ * from Production's database while the half on screen follows the person.
+ */
+export async function GET(req: NextRequest) {
   const session = await requireReimburseSettingsTab("erpInterface");
   if (session instanceof Response) return session;
   try {
-    const data = await loadReimburseErpGroups();
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
+
+    const data = await loadReimburseErpGroups(environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/reimburse/settings/erp-interface] GET", err);
@@ -170,9 +190,15 @@ export async function POST(req: NextRequest) {
 
     const journalBatchName = (body.journalBatchName ?? "").trim() || null;
 
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
+
     await saveReimburseErpGroup(
       { targetCode, journalBatchName, members },
       Number(session.user.id),
+      environment,
     );
     return NextResponse.json({ ok: true });
   } catch (err) {

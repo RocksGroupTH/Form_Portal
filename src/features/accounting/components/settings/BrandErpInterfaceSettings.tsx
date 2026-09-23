@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import useSWR from "swr";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { ExternalLink, CheckCircle2, ChevronRight, Circle, GitBranch, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
@@ -2660,6 +2661,10 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
           <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
             ตั้งค่าครบ {completeCount}/{brands.length} แบรนด์เบิก · {targetGroups.length} กลุ่ม
           </p>
+          {/* Read-only. The counts above are counted from whichever half the
+              navbar's PRO/UAT switch selects, so "ตั้งค่าครบ 4/4" in UAT means
+              UAT is configured — this line is what makes that legible. */}
+          <ErpEnvironmentNotice />
           {canSyncErp && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2.5">
               <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>

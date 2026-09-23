@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { listClrErpGlOptions } from "@/lib/clr/clear-advance-admin-service";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 
 /**
  * GET ?brand=PCTH — active GL accounts for a brand from Rocks_ERP_Data.dbo.ErpAccounts.
@@ -16,8 +17,13 @@ export async function GET(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const brand = (req.nextUrl.searchParams.get("brand") ?? "").trim();
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
+
     if (!brand) return NextResponse.json({ ok: true, data: [] });
-    const data = await listClrErpGlOptions(brand);
+    const data = await listClrErpGlOptions(brand, environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/clear-advance/settings/erp-gl-accounts] GET", err);

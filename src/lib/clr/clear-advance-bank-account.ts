@@ -102,6 +102,7 @@ export type MergeFormBrandAccount = (
   accountNo: string,
   erpDescription: string | null,
   userId: number,
+  environment?: string,
 ) => Promise<void>;
 
 /**
@@ -117,9 +118,22 @@ async function mergeRealFormBrandAccount(
   accountNo: string,
   erpDescription: string | null,
   userId: number,
+  environment?: string,
 ): Promise<void> {
   const { mergeFormBrandAccount } = await import("@/lib/acc/brand-account-service");
-  return mergeFormBrandAccount(kind, brandCode, formCode, accountNo, erpDescription, userId);
+  const { parseErpBcEnvironment } = await import("@/lib/acc/brand-erp-environment");
+  // Re-parsed rather than cast: the seam's type is a plain string so the fake
+  // in the tests needs no import, and a value that is neither environment must
+  // not reach the column. `undefined` means "resolve the request's own".
+  return mergeFormBrandAccount(
+    kind,
+    brandCode,
+    formCode,
+    accountNo,
+    erpDescription,
+    userId,
+    parseErpBcEnvironment(environment) ?? undefined,
+  );
 }
 
 /**
@@ -147,6 +161,8 @@ export async function saveClrBankAccount(
   accountNo: string,
   userId: number,
   merge: MergeFormBrandAccount = mergeRealFormBrandAccount,
+  /** Which BC half. Omitted, the environment the request resolves to. */
+  environment?: string,
 ): Promise<void> {
-  await merge("bank", brandCode, AP3_FORM_CODE, accountNo, null, userId);
+  await merge("bank", brandCode, AP3_FORM_CODE, accountNo, null, userId, environment);
 }

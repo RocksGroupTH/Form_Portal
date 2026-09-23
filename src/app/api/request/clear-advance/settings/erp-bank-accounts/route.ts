@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { listClrErpBankAccountsForCompany } from "@/lib/clr/clear-advance-admin-service";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 
 /** GET active Bank Account cards from Rocks_ERP_Data.dbo.ErpBankAccountCard.
@@ -21,10 +22,15 @@ export async function GET(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
+
     if (!company || !(await isErpInterfaceBrand(company))) {
       return NextResponse.json({ ok: true, data: [] });
     }
-    const data = await listClrErpBankAccountsForCompany(company);
+    const data = await listClrErpBankAccountsForCompany(company, environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/clear-advance/settings/erp-bank-accounts] GET", err);

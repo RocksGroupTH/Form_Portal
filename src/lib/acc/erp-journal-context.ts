@@ -187,8 +187,24 @@ export async function saveErpJournalDescriptionTemplate(
  */
 export async function loadErpJournalBuildContext(
   formCode: string,
+  /**
+   * Which BC's per-brand configuration to build from. **Omitted, the
+   * environment this request resolves to** — which is what every send and
+   * every prep read does, and why the money path cannot build a journal from
+   * the wrong half.
+   *
+   * The settings screens name it, because their routes are pinned to
+   * Production in `ROUTE_RULES` while their PRO/UAT toggle decides which half
+   * is on screen. Without it AP-4's UAT card reads "ครบแล้ว" off Production's
+   * inherited defaults — a green tick over configuration that does not exist
+   * in the company the UAT send would post into.
+   *
+   * The cache key already carries the environment, so an override selects a
+   * different entry rather than poisoning the one the money path reads.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<ErpJournalBuildContext> {
-  const erpEnvironment = await resolveEffectiveErpEnvironment();
+  const erpEnvironment = environment ?? (await resolveEffectiveErpEnvironment());
   const cacheKey = journalContextCacheKey(erpEnvironment, formCode);
   const cached = getAccCached<ErpJournalBuildContext>(cacheKey, JOURNAL_CONTEXT_CACHE_TTL_MS);
   if (cached) return cached;
@@ -205,10 +221,10 @@ export async function loadErpJournalBuildContext(
   ] = await Promise.all([
     getErpJournalDescriptionTemplate(),
     getBrandErpConfigPage(formCode),
-    listBrandAccounts("gl", null, formCode),
-    listBrandAccounts("bank", null, formCode),
-    listBrandBranches(null, formCode),
-    listBrandJournalBatches(null, formCode),
+    listBrandAccounts("gl", null, formCode, erpEnvironment),
+    listBrandAccounts("bank", null, formCode, erpEnvironment),
+    listBrandBranches(null, formCode, erpEnvironment),
+    listBrandJournalBatches(null, formCode, erpEnvironment),
     resolveAllErpTargetProfiles(formCode),
     listErpInterfaceBrands().then((bs) => listErpDepartmentsForBrands(bs.map((b) => b.id))),
   ]);

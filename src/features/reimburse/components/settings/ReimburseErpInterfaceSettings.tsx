@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -1122,6 +1123,7 @@ export function ReimburseErpInterfaceSettings() {
             จัดกลุ่มตาม Company ปลายทาง — Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data —
             การตั้งค่านี้เป็นการเตรียมข้อมูลไว้ล่วงหน้า AP-4 ยังไม่มีขั้นตอนส่งเข้า Business Central
           </p>
+          <ErpEnvironmentNotice />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Button

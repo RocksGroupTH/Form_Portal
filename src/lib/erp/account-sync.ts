@@ -608,12 +608,25 @@ export async function syncAllBrandErpAccounts(
 
 export async function listErpGlAccountOptions(
   brandCode: string,
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<ErpAccountOption[]> {
   const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment))
     .query(`
       SELECT AccountNo, DisplayName, BcCategory
       FROM [dbo].[ErpAccounts]
@@ -634,12 +647,25 @@ export async function listErpGlAccountOptions(
 
 export async function listErpJournalBatchOptions(
   brandCode: string,
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<ErpJournalBatchOption[]> {
   const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment))
     .query(`
       SELECT BatchName, DisplayName, TemplateName
       FROM [dbo].[ErpGeneralJournalBatch]
@@ -659,12 +685,25 @@ export async function listErpJournalBatchOptions(
 
 export async function listErpBankAccountCardOptions(
   brandCode: string,
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<ErpAccountOption[]> {
   const pool = await getErpDataPool();
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
-    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment(environment))
     .query(`
       SELECT AccountNo, DisplayName, BankName
       FROM [dbo].[ErpBankAccountCard]
@@ -686,13 +725,39 @@ export async function listErpBankAccountCardOptions(
 export async function listErpAccountOptions(
   brandCode: string,
   category: ErpAccountCategory,
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<ErpAccountOption[]> {
-  if (category === "BANK") return listErpBankAccountCardOptions(brandCode);
-  return listErpGlAccountOptions(brandCode);
+  if (category === "BANK") return listErpBankAccountCardOptions(brandCode, environment);
+  return listErpGlAccountOptions(brandCode, environment);
 }
 
 export async function listErpAccountsForBrands(
   brandCodes: string[],
+  /**
+   * Which BC's mirror to read. Omitted, the environment this request resolves
+   * to — which is what every money path passes and why none of them can read
+   * the other company's chart.
+   *
+   * The Interface ERP settings screens name it, because their routes are
+   * pinned to Production in `ROUTE_RULES` while their PRO/UAT toggle decides
+   * which half is being configured. Without it, an admin setting up the UAT
+   * half picks from PRODUCTION's batch names and account numbers — and stores
+   * them as UAT's, which is precisely the wrong-company value migration 161
+   * exists to keep out.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<Record<string, {
   gl: ErpAccountOption[];
   bank: ErpAccountOption[];
@@ -707,9 +772,9 @@ export async function listErpAccountsForBrands(
     brandCodes.map(async (code) => {
       const brand = code.trim().toUpperCase();
       const [gl, bank, journalBatch] = await Promise.all([
-        listErpGlAccountOptions(brand),
-        listErpBankAccountCardOptions(brand),
-        listErpJournalBatchOptions(brand),
+        listErpGlAccountOptions(brand, environment),
+        listErpBankAccountCardOptions(brand, environment),
+        listErpJournalBatchOptions(brand, environment),
       ]);
       out[brand] = { gl, bank, journalBatch };
     }),

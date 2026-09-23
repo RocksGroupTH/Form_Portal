@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 import {
   listClrErpJournalBatches,
   listClrErpJournalBatchesForCompany,
@@ -18,13 +19,18 @@ export async function GET(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
+
     if (company) {
-      const data = await listClrErpJournalBatchesForCompany(company);
+      const data = await listClrErpJournalBatchesForCompany(company, environment);
       return NextResponse.json({ ok: true, data });
     }
     const brand = (req.nextUrl.searchParams.get("brand") ?? "").trim();
     if (!brand) return NextResponse.json({ ok: true, data: [] });
-    const data = await listClrErpJournalBatches(brand);
+    const data = await listClrErpJournalBatches(brand, environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/clear-advance/settings/erp-journal-batches] GET", err);

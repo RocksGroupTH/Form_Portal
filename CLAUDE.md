@@ -1678,6 +1678,152 @@ pulls the same company's data and stores its own copy keyed
 `(SourceEnvironment, BrandCode, …)`, so the Sandbox half of the mirror holds
 roughly four near-identical sets.
 
+##### The per-brand Interface ERP settings are split by BC environment too (migration 161, 2026-09-23)
+
+**`AccBrandJournalBatch`, `AccBrandGlAccount`, `AccBrandBankAccount` and
+`AccBrandBranchCode` carry an `Environment NVARCHAR(20) NOT NULL` column**, and
+each of the four unique keys was rebuilt to lead with it. Applied to **both**
+form databases and verified: every pre-existing row reads `Production`
+(6 / 6 / 11 / 8 in each), and `npm run check:alignment` still reports **30**
+tables — these are already dual-written and adding a column must not move that
+count.
+
+**Why, in one sentence: every value in these tables is the NAME OF AN OBJECT
+INSIDE ONE COMPANY.** Measured the same day, all 31 rows — batch names
+`TRAVELING` and `Q`, accounts `610301014` / `110723001`, bank cards `K-CA6999` /
+`UOB-2726`, branches `HQ01` / `RFM`. Not one is a value this application
+invented; each must *exist* in the Business Central company the journal posts
+into. Until migration 159 there was one such company per brand, so one stored
+value was right by construction. Splitting the mirror ended that: the **lists
+these settings are chosen from** now differ per environment while the **chosen
+value** stayed shared, and the failure lands when somebody presses Send. The
+user asked for it directly: *"เวลาส่ง interface ERP หรือ Setting
+ใช้ข้อมูลคนละชุดกัน ข้อมูลไม่เท่ากันอาจจะทำให้ interface ERP ไม่สำเร็จ"*.
+
+**`AccBrandErpInterface` is deliberately NOT split, and that is the distinction
+to keep.** Claim brand → interface target says which company a brand's claims
+post into — a decision about the business, the same answer in both
+environments — not the name of an object inside a company. Giving it an
+`Environment` would invite two different org charts, and
+`brand-erp-environment-guard.test.ts` fails if a statement on it ever names one.
+
+**The rule lives in `src/lib/acc/brand-erp-environment.ts`**, which imports
+nothing but a type: `BRAND_ERP_ENVIRONMENT_COLUMN`, `brandErpEnvPredicate()`,
+`rowsForEnvironment()` and `parseErpBcEnvironment()`. It is
+`per-form-config.ts`'s **sibling, on an independent axis** — that one owns
+*which form* a row answers for, this one owns *which BC it was chosen for* — so
+the two predicates are `AND`ed and neither folds into the other. **There is no
+default here**: `perFormPredicate` has an `IS NULL` arm because `NULL` means
+"answers every form", and this one has none because a row belongs to exactly one
+environment. Absence cannot mean "either" when the whole point is that the two
+environments hold different objects.
+
+**The services resolve it themselves, which is what makes the money path unable
+to forget.** `listBrandJournalBatches`, `listBrandAccounts`, `listBrandBranches`,
+the three `upsert*` and the three `mergeFormBrand*` all take a trailing
+`environment?` and otherwise call `resolveEffectiveErpEnvironment()`. Every
+send, every prep read and `loadErpJournalBuildContext` pass **nothing** — so
+they cannot pass the wrong thing — and the parameter exists only for the
+settings screens, which follow the navbar's PRO/UAT switch. The alternative,
+threading it through ~52 call
+sites, was designed and rejected for exactly that reason.
+
+**Why a COLUMN rather than letting each database hold its own.** The settings
+routes are pinned to Production in `ROUTE_RULES`
+(`"/api/request/accounting/settings" → null` and its AP-2 twin, deliberately, so
+a config-row id in the path is not read as an `AccRequest` id), so an admin
+working in UAT mode would still have written the PRO database. Keying on a
+column makes the split independent of which database a request happens to
+resolve; the navbar's PRO/UAT switch decides which row is being edited.
+
+**The UAT half starts EMPTY on every brand and nothing is copied across.** A
+guessed batch name is one that may not exist in the test company, which is the
+failure this migration is about. Until an admin fills it in, a UAT send has no
+configuration and refuses — the fail-safe direction. Each Interface ERP tab
+renders a Thai line saying so when UAT is selected, because otherwise the first
+admin to press it sees blank fields and concludes the page is broken.
+
+**Which half a settings screen is configuring follows the NAVBAR's PRO/UAT
+switch, and there is no control on the page.** A segmented control was built
+into all four Interface ERP tabs first; the user removed it on 2026-09-24 —
+*"UAT หรือ PRO ไม่ต้องเปลี่ยนตรงนี้ เพราะเปลี่ยนจากด้านบน navbar อยู่แล้ว"* —
+and the reasoning holds independently of the instruction: `erp-environment.ts`
+already states that **two switches sharing the word "UAT" is how a test request
+ends up in the real ERP**, and a per-tab control was exactly that second switch.
+
+- **`resolveSettingsErpEnvironment()` (`src/lib/acc/erp-environment.ts`) is what
+  these routes call, and the ordinary `resolveEffectiveErpEnvironment()` would
+  be WRONG here in a way that compiles and returns a real value.** The settings
+  prefix is pinned to `null` in `ROUTE_RULES` — deliberately, so a config-row id
+  is not read as an `AccRequest` id — and a `null` class resolves **Production
+  outright**, before the viewer's UAT mode is consulted. So the ordinary
+  resolver answers Production however the navbar is set, and the screen would
+  show and save the PRO half to somebody looking at a UAT chip.
+- **That pin is about which DATABASE answers; this is a different question, and
+  keying on a COLUMN is what let them diverge honestly.** The rows are read from
+  Production's form database, as the pin requires, while the half of them on
+  screen follows the person. Before migration 161 the two were the same fact and
+  this could not have been built at all.
+- **It asks membership, not the cookie.** `viewerIsTesting()` requires an active
+  `UatTester` row beside the cookie and re-checks it on every resolve, so a
+  forged cookie changes nothing. With no request scope it is false, so scripts
+  resolve Production exactly as their database does.
+- **It is for CONFIGURATION only.** Nothing that posts, sends or prices may use
+  it: those run on the form's own routes where `resolveEffectiveErpEnvironment()`
+  already answers correctly, and where the answer must come from the record and
+  the form's switches rather than from a switch the viewer can flip mid-flight.
+- **`ErpEnvironmentNotice` is read-only and says nothing in PRO.** In UAT it
+  renders one Thai line on each tab, because the two halves look identical and
+  the UAT one opens **blank** — migration 161 copied nothing across on purpose —
+  so without it the first admin to look concludes the page is broken. It is
+  withheld while `/api/form-environment` is loading and after a failed fetch,
+  never rendered as "you are in PRO" on a guess: AP-4's commissioning banners'
+  rule, that not-measured-yet must not render as a measurement.
+- **The option pickers follow the same switch**, through an explicit override on
+  `resolveErpSourceEnvironment(override?)`. This is the sharper half of the whole
+  change and was not true when the tabs first shipped: those dropdowns read the
+  mirror, which resolves the *request's* environment, which on these
+  Production-pinned routes is always Production — so an admin configuring UAT
+  was choosing from **Production's** batch names and storing them as UAT's. The
+  override reaches the option lists only; `findVendorByEmployeeCode`,
+  `isBranchSelectable`, `isVendorSelectable`, `findSelectableVendor` and both
+  `getLast*Sync` still resolve the request's own environment, because validation
+  on the money path must not be steerable by a screen.
+- **One pre-existing resolver is deliberately left disagreeing.** AP-2's live
+  batch picker (`advanceErpEnvironment()`, `advance-batch-service.ts`) goes
+  through `resolveFormAccess(AP-2)`, which consults the same `viewerIsTesting()`
+  **and** additionally requires AP-2 itself to be UAT-enabled — so a tester whose
+  AP-2 has `UatEnabled` off gets Production there and Sandbox on the Interface
+  ERP tab. It is not part of the 161 split, and changing what an existing picker
+  resolves is a decision rather than a tidy-up. `brand-erp-environment-guard.test.ts`
+  admits it by name so the divergence is recorded rather than discovered.
+
+**`parseErpBcEnvironment()` survives with one caller and no route.** It exists
+for `clear-advance-bank-account.ts`'s test seam, whose environment parameter is
+typed `string` so the fakes in its tests need no import — the parse is what stops
+a value that is neither `'Production'` nor `'Sandbox'` reaching the column. It is
+**not** a route-level validator any more: no settings route takes an environment
+off the wire, and the guard fails if one starts. The one request body that
+legitimately carries an environment is the ERP send's **echo**, which is compared
+against the freshly resolved value and answered 409 on drift, then discarded.
+
+**`brand-erp-environment-guard.test.ts` is the guard, and it earned its keep
+before it was even correct.** On its first run it found `upsertBrandBranch`
+half-converted: three statements named `@environment` with nothing binding it,
+and both INSERTs supplied the value with no column to put it in — neither a type
+error, both runtime SQL failures. Then three versions of its own extraction were
+wrong (slicing from the table name loses the verb, which sits before it;
+splitting a function body on backticks inverts its parity, because these
+services' doc comments are full of backticks; testing for the word INSERT
+anywhere classifies both delete-then-insert DELETEs as INSERTs, since their own
+comment says the phrase). It now scans each file once, blanking comments, and
+**counts** `brandErpEnvPredicate` calls per function rather than looking for one
+— the predicate is usually seeded into a `conditions` array outside the
+statement that needs it, so a presence test is satisfied by a sibling's call.
+Mutation-verified: dropping the predicate from a conditions seed, dropping the
+column from an INSERT, unbounding a merge DELETE, giving `AccBrandErpInterface`
+an environment, and pinning one of two resolvers to a literal are all caught.
+
 ##### Per-form ERP configuration — the default and override rule
 
 Seven brand-keyed configuration tables carry a `FormCode NVARCHAR(20) NULL`
@@ -2141,6 +2287,11 @@ repo — it exists only on the server, and a rebuilt server loses it.
   - **Not yet applied to either database as at 2026-09-22.** It was written and committed alongside the code and deliberately left here; applying it is the user's call, not the implementing branch's.
 - **156 and 157 go in before the code, and deploying ahead of 156 is an OUTAGE across AP-17 rather than a dormant feature.** `156_acc_travel_room_share.sql` creates `AccTravelRoomShare` in **BOTH** form databases (AP-17's พักห้องเดียวกับ — see that entry above). `157_uat_room_share_identity.sql` is **`Rocks_Portal_Form_UAT` only**, refuses any database whose name does not end in `_UAT` exactly as 061 and 064 do, and goes **after** 156 and **before any UAT write can reach the table** — 061's own rule, and the reason the two are separate files at all: 156 has to succeed against `Rocks_Portal_Form`, so one file cannot carry both guards honestly. The table is transactional, so it is **not** dual-written and **not** in `MASTER_TABLES`: `npm run check:alignment` must still read **30**, and **31 means it was wrongly added to the shared list**. **What the missing table costs is much wider than the feature**, because `IS_ROOM_SHARE_GUEST_COLUMN` is interpolated **unconditionally** into three query sites that have nothing to do with room sharing on their face — `getTravelBookingRequest` (the detail read, and the read the submit's own group load goes through), `listMyTravelBookings`, and `PERDIEM_ROW_COLUMNS`, which serves both of `perdiem-recompute.ts`'s readers — and the form's live estimate is fed from the first of those, so it goes with them. Before 156 lands every one answers `Invalid object name`, and the recompute's copy fails **inside the cancelling transaction, rolling a whole cancellation back** rather than failing one read, the same shape migration 138's header records. Worse, **the code that clears share rows before a draft is hard-deleted ships with this package, so deploying before 156 breaks AP-17 draft deletion for everyone** — not only for anybody using room sharing. **Unapplied to either database as at 2026-09-22**: both were written and committed alongside the code and deliberately left there, since applying is the user's call. **Corrected 2026-09-23 — both ARE applied.** The sentence before this one was true when written and was then repeated by two later task reports after it had stopped being true, which is exactly the drift this file's house style exists to catch, so it is dated rather than overwritten. The correction comes from the user's own briefing and was **not** re-measured against the databases here; anybody standing one up should check rather than trust either sentence. Numbered 156/157 for the reason the 154 bullet above gives — 153 is taken on the unmerged `feat/all-requests-report` branch, so `ls migrations/` on this branch alone would have produced the twelfth duplicated number.
 - **158 goes to BOTH form databases before the code, and deploying ahead of it breaks every AP-17 SUBMIT — not only a guest's.** `158_room_share_notified_at.sql` adds `AccTravelRoomShare.NotifiedAt DATETIME2(7) NULL`, the memory that makes the host notice exactly-once per binding (see "The host is told at SUBMIT" above). `claimRoomShareHostNotice` names that column **unconditionally**, once per tab, **inside `submitTravelBookingGroup`'s transaction** — and SQL Server binds column names at compile time, so before 158 lands on a given side every submit against that database answers `Invalid object name` and rolls back, whether or not anybody is sharing a room. Same hazard as 090/120/144/147/149/156. **The migration backfills `NotifiedAt = CreatedAt` on every pre-existing row**, which is exact rather than approximate: those rows were written by the code that mailed in the same transaction as the INSERT, so the host was told at precisely that timestamp, and leaving them NULL would earn each of those hosts a duplicate notice on the first resubmit after the deploy. **The backfill runs only where the migration itself creates the column** — `ALTER` and backfill in one batch inside the `IF`, the backfill through `sp_executesql` because a batch binds column names at compile time, both wrapped in one transaction so a failure takes the column with it and leaves the file re-runnable. `WHERE NotifiedAt IS NULL` alone would **not** have been a safe guard, and that is the trap worth reading: once the code is live a NULL stops meaning "written by the old code, host already told" and starts meaning "a guest picked a host and has not submitted yet", so a re-run would stamp exactly those rows and **silently suppress a notice that was owed** — this change's own failure mode, arriving by the back door. `AccTravelRoomShare` is transactional — not dual-written, not in `MASTER_TABLES` — so **`npm run check:alignment` must still read 30**; 31 means the wrong table was altered. **Applied to BOTH form databases on 2026-09-23** — and verified against the databases rather than from the apply script's output, which prints neither the migration's own `PRINT` lines nor its closing `SELECT`, so "applied OK" is not evidence of anything. Measured immediately after: `NotifiedAt` is `datetime2(7)`, nullable, no default constraint, in both. **The backfill touched nothing, because both tables held ZERO rows** — 156 landed only days earlier and nobody has shared a room yet — so the `CreatedAt` argument above is correct and was, in the event, moot: the first binding anybody creates will be the first row this column has ever described. `npm run check:alignment` re-run straight afterwards: **PASS at 30 tables, 183 rows.** *(This sentence replaces one saying it was unapplied, which was true when written and false forty minutes later — the same drift the 156/157 bullet above records having suffered twice. It is dated for that reason; check rather than trust it.)*
+- **159, 160 and 161 are the 2026-09-23 ERP-environment batch, and the target is per migration — read each header. All three are applied and verified.**
+  - **159** (`159_erp_mirror_source_environment.sql`, **`Rocks_ERP_Data` only**) adds `SourceEnvironment` to six mirror tables, rebuilds five unique keys to lead with it, and creates five `vwErp*Production` views `WITH CHECK OPTION`. **160** (`160_fast_data_erp_production_views.sql`, **`Fast_Data` only**) repoints that database's five synonyms at those views and **refuses to run if 159 has not** — the order is 159 → 160 and it is not optional, since the views 160 needs do not exist until 159 has made them. What 160 protects is the **siblings**, not us: Rocks Fast MERGEs four of those tables through the synonyms with no environment in its `ON` clause, so left pointing at the tables its next sync would overwrite Sandbox rows with Production data — silently, every run. Neither database is dual-written and neither is in `MASTER_TABLES`, so `npm run check:alignment` stays at **30** throughout. Both verified against the live databases, 160's four properties inside a rolled-back transaction because RocksFast cannot be run here.
+  - **161** (`161_brand_erp_config_environment.sql`, **BOTH form databases, before the code**) adds `Environment NVARCHAR(20) NOT NULL DEFAULT 'Production'` to `AccBrandJournalBatch`, `AccBrandGlAccount`, `AccBrandBankAccount` and `AccBrandBranchCode`, and rebuilds each of their four unique keys to lead with it. **It must follow 159**, because it answers a problem 159 creates: once the mirror holds two companies' lists, a value chosen from one of them stops being right by construction. All four tables are **already** in `MASTER_TABLES`, so this adds a **column, not a table** — `npm run check:alignment` must still read **30**, and **31 means the wrong thing was created**. The checker compares every non-datetime column, so a one-sided apply reds these four, which is the check working. Idempotent, guarded on `sys.columns` / `sys.indexes`. Applied to both databases and verified: every pre-existing row reads `Production` (6 / 6 / 11 / 8 in each), all four keys lead with the column, and `check:alignment` PASSes at 30.
+    - **A one-sided apply is `Msg 207, Invalid column name 'Environment'` — loud, not a silent "no configuration".** SQL Server binds column names at compile time, and every read of these four tables now either names the column or binds `@environment`, so the query fails outright against whichever database is missing it. That is the error to grep for, and it is Msg 207 rather than the Msg 208 `Invalid object name` a missing *table* gives.
+    - **Nothing is copied into the Sandbox half, deliberately** — a guessed batch name is one that may not exist in the test company, which is the failure this migration is about. So **after deploying, each brand's UAT half has to be filled in on every form's Interface ERP tab while the navbar's PRO/UAT switch is on UAT**. Until it is, a UAT send has no configuration and refuses, which is the fail-safe direction; the tab renders a Thai line saying so whenever the viewer is in UAT mode, so "is this done yet?" is answerable by opening the page.
 - **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. Membership is what permits the action; an `accountApproval` tick in `AccBookingApproverTab` only decides who is shown the menu, and the hub shows it to roster members regardless.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.

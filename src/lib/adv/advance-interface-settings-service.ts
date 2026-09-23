@@ -2,6 +2,7 @@ import { listAllBrands } from "@/lib/acc/brand-options";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveErpTargetProfile } from "@/lib/acc/erp-target-profile";
+import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
 import { listBrandErpInterfaceMaps, upsertFormBrandErpInterfaceMap } from "@/lib/acc/brand-erp-interface-map-service";
 import { listBrandAccounts, mergeFormBrandAccount } from "@/lib/acc/brand-account-service";
 import { listBrandBranches, mergeFormBrandBranch } from "@/lib/acc/brand-branch-service";
@@ -25,16 +26,25 @@ export interface AdvanceInterfaceConfigView {
   active: boolean;
 }
 
-export async function listAdvanceInterfaceConfigView(): Promise<AdvanceInterfaceConfigView[]> {
+export async function listAdvanceInterfaceConfigView(
+  /**
+   * Which BC half to show or write. Omitted, the environment the request
+   * resolves to — always Production for these routes, which `ROUTE_RULES`
+   * pins so a config-row id is not read as an AccRequest id. The screen's
+   * PRO/UAT toggle is what names the other half; the split is a COLUMN
+   * precisely so it does not depend on which database a request resolves.
+   */
+  environment?: ErpBcEnvironment,
+): Promise<AdvanceInterfaceConfigView[]> {
   const [allBrands, ctx, ifaceMaps, ap2Brands, branchRows, batchRows, bankRows] =
     await Promise.all([
       listAllBrands(),
-      loadErpJournalBuildContext(AP2_FORM_CODE),
+      loadErpJournalBuildContext(AP2_FORM_CODE, environment),
       listBrandErpInterfaceMaps(AP2_FORM_CODE),
       listFormBrands(AP2_FORM_CODE),
-      listBrandBranches(null, AP2_FORM_CODE),
-      listBrandJournalBatches(null, AP2_FORM_CODE),
-      listBrandAccounts("bank", null, AP2_FORM_CODE),
+      listBrandBranches(null, AP2_FORM_CODE, environment),
+      listBrandJournalBatches(null, AP2_FORM_CODE, environment),
+      listBrandAccounts("bank", null, AP2_FORM_CODE, environment),
     ]);
 
   const activeByCode = new Map(ap2Brands.map((b) => [b.brandCode.toUpperCase(), b.isActive]));
@@ -136,13 +146,46 @@ export async function saveAdvanceInterfacePerForm(
     journalBatchName: string | null;
   },
   userId: number,
+  /**
+   * Which BC half to show or write. Omitted, the environment the request
+   * resolves to — always Production for these routes, which `ROUTE_RULES`
+   * pins so a config-row id is not read as an AccRequest id. The screen's
+   * PRO/UAT toggle is what names the other half; the split is a COLUMN
+   * precisely so it does not depend on which database a request resolves.
+   */
+  environment?: ErpBcEnvironment,
 ): Promise<void> {
   await Promise.all([
+    // NOT given the environment, deliberately: claim brand -> interface target
+    // is the same answer in both, and AccBrandErpInterface carries no such
+    // column. brand-erp-environment-guard.test.ts fails if one is added.
     upsertFormBrandErpInterfaceMap(brandCode, values.interfaceBrandCode, AP2_FORM_CODE, userId),
-    mergeFormBrandAccount("bank", brandCode, AP2_FORM_CODE, values.bankAccountNo, null, userId),
+    mergeFormBrandAccount(
+      "bank",
+      brandCode,
+      AP2_FORM_CODE,
+      values.bankAccountNo,
+      null,
+      userId,
+      environment,
+    ),
     // AP-2 has no Fix Dept control of its own yet — always false/null, same as
     // every other caller before AP-4's grouped Interface ERP tab added it.
-    mergeFormBrandBranch(brandCode, AP2_FORM_CODE, values.branchCode || null, false, null, userId),
-    mergeFormBrandBatch(brandCode, AP2_FORM_CODE, values.journalBatchName || null, userId),
+    mergeFormBrandBranch(
+      brandCode,
+      AP2_FORM_CODE,
+      values.branchCode || null,
+      false,
+      null,
+      userId,
+      environment,
+    ),
+    mergeFormBrandBatch(
+      brandCode,
+      AP2_FORM_CODE,
+      values.journalBatchName || null,
+      userId,
+      environment,
+    ),
   ]);
 }
