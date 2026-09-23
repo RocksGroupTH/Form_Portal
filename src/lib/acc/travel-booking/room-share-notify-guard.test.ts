@@ -58,6 +58,7 @@ function code(relative: string): string {
 const NOTIFY = "lib/acc/travel-booking/room-share-notify.ts";
 const APPLY = "lib/acc/travel-booking/room-share-cascade-apply.ts";
 const SERVICE = "lib/acc/travel-booking/room-share-service.ts";
+const REQUEST_SERVICE = "lib/acc/travel-booking/request-service.ts";
 
 /** One function's body, sliced from its signature to the next top-level function declaration. */
 function bodyOf(file: string, signature: string): string {
@@ -76,6 +77,19 @@ function assertBefore(body: string, a: string, b: string, why: string): void {
   assert.notEqual(ai, -1, `${a} not found — ${why}`);
   assert.notEqual(bi, -1, `${b} not found`);
   assert.ok(ai < bi, `${a} must come before ${b}: ${why}`);
+}
+
+/**
+ * Where a pattern first matches — the receiver-agnostic counterpart of
+ * `assertBefore`, for ordering against things like `tx.commit()` that this
+ * file has **measured** can be dodged by a cast (see the note on the transaction
+ * assertions below). Fails closed: a pattern that no longer matches at all is
+ * a red, not a skipped assertion.
+ */
+function indexOfMatch(body: string, re: RegExp, what: string): number {
+  const m = re.exec(body);
+  assert.notEqual(m, null, `${what} not found — has this function been rewritten?`);
+  return (m as RegExpExecArray).index;
 }
 
 /* ─────────────────── the three sites that must notify ─────────────────── */
@@ -121,31 +135,63 @@ test("the death cascade mails what it APPLIED, never what it merely decided", ()
   );
 });
 
-/**
- * **The attach is `applyRoomShareSelection` now, and it commits nothing** — the
- * tab's own save owns the transaction (2026-09-22). So "before the commit" can
- * no longer be asserted here at all; what replaces it is the pair of facts
- * that make the notice atomic with the binding anyway:
+/* ══════════ the host notice — MOVED from the save to the submit, 2026-09-23 ══════════
  *
- * - it is queued **on `tx`**, the caller's open transaction, so a save that
- *   rolls back takes the notice with it and a save that commits cannot
- *   commit a binding without one;
- * - this function **opens no transaction of its own**, which is what makes the
- *   first fact mean something.
+ * **These four tests ARE the assertion this file used to make about
+ * `applyRoomShareSelection`. It was moved, not deleted**, and that sentence is
+ * here so the next reader does not conclude the mail was dropped.
  *
- * Both matter for the same reason the old ordering assertion did. Spec §2
- * declined to ask the host for consent and §5 makes this notice the only
- * mitigation: a binding that commits while the notice does not is that
- * mitigation silently not happening, and the host learns of their room-mate at
- * check-in.
+ * What changed and why: the notice used to be queued at the end of
+ * `applyRoomShareSelection`, which runs inside `saveTravelBookingDraft` — so a
+ * host was told *"มีผู้ขอพักห้องร่วมกับคำขอของคุณ"* the moment somebody picked
+ * them on a **draft**, before the guest had submitted anything and whether or
+ * not they ever did. The user's instruction, 2026-09-23: *"เมลจะส่งเมื่อ
+ * ส่งคำขอเท่านั้น"*.
+ *
+ * Moving the call alone would have answered only half of it. A `Returned`
+ * request is resubmitted through the same path, so a submit-time send with no
+ * memory mails the host a second identical notice for ONE guest — and since
+ * spec §2 declined to ask the host's consent precisely on the condition that
+ * §5's notice compensates, a host reading it twice may reasonably conclude
+ * **two people** have attached. So the send is keyed on `AccTravelRoomShare.
+ * NotifiedAt` (migration 158) and is exactly-once per binding.
+ *
+ * The atomicity argument did not change, only which transaction it is about,
+ * and it is asserted here the same way: queued **on the caller's open
+ * transaction**, by a function that **opens none of its own**.
  */
-test("the attach tells the host, on the caller's own transaction", () => {
+
+test("the tab SAVE no longer tells the host", () => {
   const body = bodyOf(SERVICE, "export async function applyRoomShareSelection");
   assert.ok(
-    /queueRoomShareAttachedMail\s*\(\s*tx\s*,/.test(body),
-    "applyRoomShareSelection no longer calls queueRoomShareAttachedMail(tx, …). Spec §2 " +
-      "declined to ask the host for consent and §5 makes this notice the only mitigation — " +
-      "without it a guest attaches to somebody else's room and the host finds out at check-in",
+    !/queueRoomShareAttachedMail\s*\(/.test(body),
+    "applyRoomShareSelection queues the host notice again. That is the bug the 2026-09-23 " +
+      "change removed: it runs inside saveTravelBookingDraft, so the host is mailed when a " +
+      "DRAFT is saved — before the guest has submitted anything, and a requester who then " +
+      "changes their mind has already mailed a colleague. The notice belongs to " +
+      "claimRoomShareHostNotice, called from submitTravelBookingGroup",
+  );
+  /* And nobody else may write the binding: a second writer is a second place
+     the stamp can be got wrong, which is how "the host is told exactly once"
+     becomes "the host is told about as often as it happens to work out". */
+  const save = code(REQUEST_SERVICE);
+  const calls = save.match(/applyRoomShareSelection\s*\(/g) ?? [];
+  assert.equal(
+    calls.length,
+    1,
+    `request-service.ts calls applyRoomShareSelection ${calls.length} times, not once — the ` +
+      "group save is the single writer of the binding",
+  );
+});
+
+test("the SUBMIT tells the host, on the caller's own transaction", () => {
+  const body = bodyOf(SERVICE, "export async function claimRoomShareHostNotice");
+  assert.ok(
+    /queueRoomShareAttachedMail\s*\(\s*tx\s*,\s*\{\s*guestRequestId\s*,\s*hostRequestId\s*\}\s*\)/.test(body),
+    "claimRoomShareHostNotice no longer calls queueRoomShareAttachedMail(tx, { guestRequestId, " +
+      "hostRequestId }). Spec §2 declined to ask the host for consent and §5 makes this notice " +
+      "the only mitigation — without it a guest attaches to somebody else's room and the host " +
+      "finds out at check-in. `hostRequestId` must be the one the claim OUTPUT, not a second read",
   );
   /* Matched as `.commit(` / `.begin(` rather than `tx.commit()`, because the
      literal spelling was **measured green** against a mutation on 2026-09-22:
@@ -154,20 +200,111 @@ test("the attach tells the host, on the caller's own transaction", () => {
      pattern cannot be dodged by renaming the variable or casting it. */
   assert.ok(
     !/\.\s*begin\s*\(/.test(body) && !/\.\s*commit\s*\(/.test(body),
-    "applyRoomShareSelection runs a transaction of its own again. Queuing on a transaction it " +
-      "owns would let the notice commit while the tab that caused it rolls back, and the " +
-      "reverse — the binding and its only mitigation must be one atomic thing",
+    "claimRoomShareHostNotice runs a transaction of its own. Queuing on a transaction it owns " +
+      "would let the notice commit while the submit that caused it rolls back, and the " +
+      "reverse — the stamp, the notice and the submission it announces must be one atomic thing",
   );
-  /* And nobody else may write the binding: a second writer is a second place
-     the notice can be forgotten, which is how "the host is always told"
-     becomes "the host is usually told". */
-  const save = code("lib/acc/travel-booking/request-service.ts");
-  const calls = save.match(/applyRoomShareSelection\s*\(/g) ?? [];
+});
+
+/**
+ * **The stamp IS the claim.** One conditional `UPDATE … WHERE NotifiedAt IS
+ * NULL` that `OUTPUT`s the host it just claimed, and the mail only where that
+ * matched.
+ *
+ * A `SELECT` then an `UPDATE` would look identical in review and be wrong
+ * twice: READ COMMITTED releases the SELECT's shared lock at statement end, so
+ * two submits racing one guest both read NULL and both mail; and an
+ * unconditional UPDATE re-stamps a binding the host was told about at its
+ * first submit, which is the `Returned` → resubmit double-notice this column
+ * exists to prevent. Hence the shape is pinned rather than the outcome — no
+ * behavioural test can reach this function at all (`@/env`).
+ */
+test("the host notice is claimed exactly once per binding, not read-then-written", () => {
+  const body = bodyOf(SERVICE, "export async function claimRoomShareHostNotice");
+  assert.ok(
+    /UPDATE\s+\[dbo\]\.\[AccTravelRoomShare\][\s\S]*?SET\s+NotifiedAt\s*=\s*SYSDATETIME\(\)/.test(body),
+    "claimRoomShareHostNotice no longer stamps AccTravelRoomShare.NotifiedAt with SYSDATETIME(). " +
+      "Without the stamp every resubmit of a Returned guest mails the host again; a JS Date " +
+      "instead of SYSDATETIME() writes the wrong wall clock, which every other audit timestamp " +
+      "in these databases avoids the same way",
+  );
+  assert.ok(
+    /WHERE\s+GuestRequestId\s*=\s*@gid\s+AND\s+NotifiedAt\s+IS\s+NULL/.test(body),
+    "the claim's WHERE no longer carries `AND NotifiedAt IS NULL`. Unconditional, it re-stamps " +
+      "and re-mails on every submit — so a Returned request resubmitted tells the host a second " +
+      "time, which reads as a SECOND person having attached to their room",
+  );
+  assert.ok(
+    /OUTPUT\s+inserted\.HostRequestId/.test(body),
+    "the claim no longer OUTPUTs the host it claimed. Read separately, the host can come from a " +
+      "row this statement did not win — and the whole point of the conditional UPDATE is that " +
+      "the winner is the only one who mails",
+  );
+  const queries = body.match(/\.query\(/g) ?? [];
+  assert.equal(
+    queries.length,
+    1,
+    `claimRoomShareHostNotice runs ${queries.length} statements, not one. The single conditional ` +
+      "UPDATE is what makes the claim atomic; a second statement is either the read half of a " +
+      "read-then-write or a second writer of the same column",
+  );
+  assert.ok(
+    !/\bSELECT\b/.test(body),
+    "claimRoomShareHostNotice reads before it writes. READ COMMITTED releases a SELECT's shared " +
+      "lock at statement end, so two submits racing one guest both see NotifiedAt IS NULL and " +
+      "both mail the host — the exact duplicate this column exists to prevent",
+  );
+  assert.ok(
+    /if\s*\(\s*(?:!\s*hostRequestId|hostRequestId\s*==\s*null)\s*\)/.test(body),
+    "the null check on the claimed host is gone, so a guest with NO binding — the overwhelmingly " +
+      "common case — would reach queueRoomShareAttachedMail with nothing to name",
+  );
+  assertBefore(
+    body,
+    "NotifiedAt IS NULL",
+    "queueRoomShareAttachedMail",
+    "the claim must come before the mail: mailing first and stamping afterwards sends a notice " +
+      "that a concurrent submit may have already sent",
+  );
+});
+
+/**
+ * And it is `submitTravelBookingGroup` that calls it, once per tab, **inside
+ * the submit's own transaction**.
+ *
+ * Two separate failures are pinned here because they look alike and are not.
+ * A call moved *after* `tx.commit()` sends a notice that a rolled-back submit
+ * cannot take back, and stamps `NotifiedAt` on a binding nothing was sent
+ * about — either way the two halves stop being atomic. A *second* call site is
+ * a second place the once-per-binding rule has to hold; it happens to hold
+ * (the claim is conditional), but a second site is also a second place the
+ * mail can be sent from a path that is not a submit, which is what this whole
+ * change was about.
+ */
+test("submitTravelBookingGroup is the one site, and it is inside the transaction", () => {
+  const src = code(REQUEST_SERVICE);
+  const calls = src.match(/claimRoomShareHostNotice\s*\(/g) ?? [];
   assert.equal(
     calls.length,
     1,
-    `request-service.ts calls applyRoomShareSelection ${calls.length} times, not once — the ` +
-      "group save is the single writer of the binding",
+    `request-service.ts calls claimRoomShareHostNotice ${calls.length} times, not once. The ` +
+      "submit is the only event that may tell the host — the tab save deliberately does not, " +
+      "which is the whole of the 2026-09-23 change",
+  );
+
+  const body = bodyOf(REQUEST_SERVICE, "export async function submitTravelBookingGroup");
+  const begin = indexOfMatch(body, /\.\s*begin\s*\(/, "the submit's tx.begin()");
+  const notice = indexOfMatch(
+    body,
+    /claimRoomShareHostNotice\s*\(\s*tx\s*,/,
+    "claimRoomShareHostNotice(tx, …) inside submitTravelBookingGroup",
+  );
+  const commit = indexOfMatch(body, /\.\s*commit\s*\(/, "the submit's tx.commit()");
+  assert.ok(
+    begin < notice && notice < commit,
+    "claimRoomShareHostNotice is no longer called between the submit's begin and commit. After " +
+      "the commit the host is told about a submission that may have rolled back, and the stamp " +
+      "saying they were told commits separately from the mail saying it",
   );
 });
 
