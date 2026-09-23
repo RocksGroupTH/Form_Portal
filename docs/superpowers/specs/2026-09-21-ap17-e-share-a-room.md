@@ -215,3 +215,45 @@ missing call is what a behavioural test of the four cannot see.
 - **More than one guest per host.** Not restricted — several guests may attach
   to one host, and the cascade already iterates. What is restricted is depth.
 - **Backfilling.** Existing requests have no shares.
+
+---
+
+## Amendment — 2026-09-23: §5's host notice fires at SUBMIT, not at attach
+
+§5 above says the host is told *"when a guest attaches"*, and that is what
+shipped: `queueRoomShareAttachedMail` was called at the end of
+`applyRoomShareSelection`, which runs inside `saveTravelBookingDraft`. So a
+host was mailed the moment somebody picked them **on a draft** — before the
+guest had submitted anything, and whether or not they ever did. A requester who
+picked a colleague, saved, then changed their mind had already mailed them.
+
+The user's instruction: *"เมลจะส่งเมื่อ ส่งคำขอเท่านั้น"*.
+
+**Moving the call answers only half of it.** A `Returned` request is
+resubmitted through the same path, so a submit-time send with no memory mails
+the host a second identical *"มีผู้ขอพักห้องร่วมกับคำขอของคุณ"* about **one**
+guest. §2 declined to ask the host's consent *on the condition* that this
+notice compensates for it, so a host who receives it twice may reasonably
+conclude two people have attached — a notification that can be misread as a
+different event is worse than a late one.
+
+So the send is exactly-once **per binding**, keyed on a new nullable column,
+`AccTravelRoomShare.NotifiedAt` (migration 158, both form databases). One
+conditional `UPDATE … SET NotifiedAt = SYSDATETIME() OUTPUT
+inserted.HostRequestId WHERE GuestRequestId = @gid AND NotifiedAt IS NULL`
+claims it, and the mail is queued on the same transaction where that claimed a
+row — `claimRoomShareHostNotice` in `room-share-service.ts`, called once per tab
+from `submitTravelBookingGroup`, last in the tab's body so the mail can name the
+running number and per-diem figures the statements above it have just written.
+(The old save-time send rendered `เลขที่คำขอของผู้พักร่วม` as `-`, the guest
+being an unnumbered draft; this is a repair as well as a move.)
+
+The four cases §3's storage makes possible fall out of the column with no extra
+branches: a draft never submitted mails nobody; a host changed before
+submitting replaces the row, so only the new host is told; a resubmit with the
+same host keeps the stamp and tells nobody twice; a resubmit with a different
+host is a new row and a new host.
+
+**The other five mails are unchanged.** Every one of them fires from the
+*host's* action — cancel, reject, delete, re-date — which is post-submit by
+definition. Only the attach notice was mistimed.

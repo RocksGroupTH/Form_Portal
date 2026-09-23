@@ -49,7 +49,10 @@ import {
   applyRoomShareDeath,
 } from "@/lib/acc/travel-booking/room-share-cascade-apply";
 import { ROOM_SHARE_CASCADE_ACTIONS } from "@/lib/acc/travel-booking/room-share-actions";
-import { applyRoomShareSelection } from "@/lib/acc/travel-booking/room-share-service";
+import {
+  applyRoomShareSelection,
+  claimRoomShareHostNotice,
+} from "@/lib/acc/travel-booking/room-share-service";
 import type {
   Accommodation,
   BookingDetail,
@@ -1910,6 +1913,36 @@ export async function submitTravelBookingGroup(
         .input("no", sql.NVarChar, requestNo)
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
                 VALUES (@id, @by, 'submitted', @no)`);
+
+      /* THE ROOM-SHARE HOST NOTICE (AP-17 package E, spec §5), and **this is
+         the only place it is sent** since 2026-09-23. It used to fire from
+         `applyRoomShareSelection` inside the tab SAVE, so a host was told the
+         moment somebody picked them on a draft — before any request existed to
+         be told about, and whether or not it was ever filed. The user's
+         instruction: *"เมลจะส่งเมื่อ ส่งคำขอเท่านั้น"*.
+
+         **LAST IN THE TAB'S BODY, and that ordering is load-bearing.** The
+         mail renders the guest's running number and its per-diem figures, and
+         both are written by statements above — the number by the allocate two
+         steps up, the figures by the `AccTravelBooking` update. Moved earlier
+         it would mail `-` for a number the very same transaction is about to
+         mint, which is what the old save-time send actually did.
+
+         **On `tx`, and exactly once per binding.** The claim, the stamp and
+         the queued row are one transaction, so a submit that rolls back tells
+         nobody and leaves nothing stamped; `NotifiedAt` (migration 158) is
+         what stops a `Returned` request's resubmit sending a second identical
+         "somebody is sharing your room", which a host may reasonably read as
+         two people having attached. See `claimRoomShareHostNotice`'s own
+         docblock for why those are two separate rules.
+
+         Unconditional rather than gated on anything this loop knows: whether
+         a tab is a guest is a fact in the database, the claim answers it in
+         one indexed write, and a flag threaded down from the group read would
+         be a second copy of the question. The route's `processQueue()` after
+         the commit is what drains it, exactly as it drains the manager
+         mails. */
+      await claimRoomShareHostNotice(tx, requestId);
     }
 
     // I1 (2026-09-22): `flagsByRequest` was computed over the requester's WHOLE

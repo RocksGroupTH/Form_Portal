@@ -252,12 +252,19 @@ async function queueOne(
 }
 
 /**
- * **Mail 1 — to the host, the moment a guest attaches.**
+ * **Mail 1 — to the host, when a guest SUBMITS a request attached to theirs.**
  *
- * Spec §5: *"naming the guest and the dates, so an unexpected one is visible
- * immediately rather than at check-in."* This is the only thing standing
- * between a host and a stranger in their room, because §2 declined to ask them
- * first.
+ * Spec §5 says *"when a guest attaches"* and that is no longer where this
+ * fires: *"เมลจะส่งเมื่อ ส่งคำขอเท่านั้น"* (the user, 2026-09-23). Attaching
+ * is a draft save, which somebody can undo by changing their mind, and until
+ * that date this mail went out on it. What §5 actually asks for is intact —
+ * *"naming the guest and the dates, so an unexpected one is visible
+ * immediately rather than at check-in"* — and it is now **better served**,
+ * because a submitted guest has a running number to name where a draft had
+ * none and rendered `เลขที่คำขอของผู้พักร่วม` as `-`.
+ *
+ * This is the only thing standing between a host and a stranger in their
+ * room, because §2 declined to ask them first.
  *
  * It goes to `AccRequest.RequesterEmail` of the **host** request — the
  * traveller whose room it is, not whoever filed the request on their behalf.
@@ -265,9 +272,12 @@ async function queueOne(
  * nothing else to do with it, and failing the attach over a missing HR email
  * would punish the guest for the host's record.
  *
- * Called inside the transaction that records the binding — the tab save's own,
- * through `applyRoomShareSelection` — so the binding and the notice about it
- * commit together.
+ * Called inside the transaction that files the guest — the submit's own,
+ * through `claimRoomShareHostNotice` (`room-share-service.ts`), which has
+ * already claimed the binding's `NotifiedAt` in the same transaction. So the
+ * notice, the stamp saying it was sent, and the submission it announces all
+ * commit together, and the host is told exactly once per binding however many
+ * times a `Returned` request is resubmitted.
  */
 export async function queueRoomShareAttachedMail(
   runner: SqlRunner,

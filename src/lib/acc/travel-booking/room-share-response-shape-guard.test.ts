@@ -632,6 +632,11 @@ test("the service exports exactly the surface Task 4 defines", () => {
   // `attachRoomShare` and `detachRoomShare` are gone, replaced by the one
   // `applyRoomShareSelection` the tab save calls; `loadHostByRequestNo` and
   // its `HostLookupResult` are the picker's second tab (2026-09-22).
+  // `claimRoomShareHostNotice` is the host notice, moved off the tab save on
+  // 2026-09-23 — it reads no host row and returns nothing about one, so it
+  // adds no reach for this file's own subject; it is listed because the
+  // surface is pinned whole. `room-share-notify-guard.test.ts` is what
+  // polices what it does.
   assert.deepEqual(found, [
     "HOST_NOT_FILED_MESSAGE",
     "HostCandidateRow",
@@ -639,6 +644,7 @@ test("the service exports exactly the surface Task 4 defines", () => {
     "HostSearchFilters",
     "RoomShareView",
     "applyRoomShareSelection",
+    "claimRoomShareHostNotice",
     "loadGuestsOf",
     "loadHostByRequestNo",
     "loadHostableRequests",

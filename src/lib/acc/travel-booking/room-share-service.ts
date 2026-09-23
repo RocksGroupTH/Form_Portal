@@ -3,7 +3,7 @@
  *
  * `room-share-policy.ts` decides who may host and who may attach;
  * `room-share-cascade.ts` decides what happens to a host's guests. Neither
- * touches a database. **This module is the one that does**, and it owns four
+ * touches a database. **This module is the one that does**, and it owns five
  * jobs:
  *
  * - `loadHostableRequests` — the picker's list of one colleague's requests
@@ -11,6 +11,8 @@
  * - `loadHostByRequestNo` — the same admission decision for **one** request
  *   named by its running number (the picker's second tab, 2026-09-22);
  * - `loadRoomShare` / `applyRoomShareSelection` — the guest's own binding;
+ * - `claimRoomShareHostNotice` — telling the host, once per binding, at the
+ *   guest's submit (2026-09-23);
  * - `loadGuestsOf` — every guest of one host, for the cascade (spec §4).
  *
  * ## The binding is written by the TAB SAVE, not by an endpoint of its own
@@ -867,11 +869,12 @@ function isUniqueViolation(err: unknown): boolean {
  * ## The three shapes, and the one that costs nothing
  *
  * - **unchanged** — the stored host is already the one being saved. Returns
- *   immediately, writes nothing and **mails nobody**: an ordinary re-save of a
- *   guest tab must not tell the host again, and must not churn `CreatedBy` or
- *   `CreatedAt`. This is also the cheap path for every tab that has no binding
- *   and wants none, which is nearly every tab of nearly every save — one
- *   `SELECT`, no lock, no write.
+ *   immediately and writes nothing, so it must not churn `CreatedBy`,
+ *   `CreatedAt` or `NotifiedAt` — and **keeping `NotifiedAt` is what makes a
+ *   resubmit silent**, since `claimRoomShareHostNotice` only mails a row that
+ *   has never been stamped. This is also the cheap path for every tab that has
+ *   no binding and wants none, which is nearly every tab of nearly every
+ *   save — one `SELECT`, no lock, no write.
  * - **cleared** (`hostRequestId` null over a stored row) — the row is deleted.
  *   Nothing is restored: the requester is put back at an unanswered
  *   ที่พักค้างคืน, which is the honest state, and resurrecting the choice the
@@ -893,14 +896,34 @@ function isUniqueViolation(err: unknown): boolean {
  * `INSERT` itself rather than from anything the caller sent — it is display
  * data, and the one thing worse than a stale label is a caller-chosen one.
  *
+ * ## It MAILS NOBODY, and that is the 2026-09-23 correction
+ *
+ * This function used to end with `queueRoomShareAttachedMail(tx, …)`, so the
+ * host was told *"มีผู้ขอพักห้องร่วมกับคำขอของคุณ"* the moment a **draft** was
+ * saved with a host picked — before the guest had submitted anything, and
+ * whether or not they ever did. A requester who picked a colleague, saved,
+ * then changed their mind had already mailed them. The user's instruction:
+ * *"เมลจะส่งเมื่อ ส่งคำขอเท่านั้น"*.
+ *
+ * The notice is now `claimRoomShareHostNotice`, called once per tab from
+ * `submitTravelBookingGroup` inside **its** transaction — see that function
+ * for why the send is keyed on `NotifiedAt` rather than simply moved. Nothing
+ * about the atomicity argument changed, only which transaction it is: spec §5
+ * still makes this notice the entire mitigation for §2's missing consent, so
+ * it still commits or rolls back with the thing it announces.
+ *
+ * **The delete-then-insert above is half of "once per binding".** A replaced
+ * row takes its `NotifiedAt` with it, so a guest who changes host before
+ * submitting tells the new host and nobody else; a guest who resubmits with
+ * the *same* host hits the `unchanged` early return, keeps the stamp, and
+ * tells nobody twice.
+ *
  * ## It does not drain the mail queue, and must not
  *
- * `queueRoomShareAttachedMail` writes its row on `tx`, so the notice and the
- * binding stand or fall together (spec §5: telling the host is the entire
- * protection, since §2 declined to ask their consent). Draining is
- * `saveTravelBookingDraft`'s unconditional `processQueue()` **after the
- * commit** — the same call the two cascades already rely on. Draining from in
- * here would try to send a notice about a binding that has not committed yet.
+ * Draining is `saveTravelBookingDraft`'s unconditional `processQueue()`
+ * **after the commit** — the same call the two cascades already rely on, and
+ * they still queue on `tx` from inside this save. Draining from in here would
+ * try to send a notice about a cascade that has not committed yet.
  */
 export async function applyRoomShareSelection(
   tx: SqlRunner,
@@ -1001,12 +1024,77 @@ export async function applyRoomShareSelection(
      for the whole argument, including why it is a separate module. */
   await clearGuestOwnAccommodation(tx, input.guestRequestId);
 
-  await queueRoomShareAttachedMail(tx, {
-    guestRequestId: input.guestRequestId,
-    hostRequestId,
-  });
-
   return { changed: true };
+}
+
+/* ───────────────────── telling the host, once per binding ───────────────────── */
+
+/**
+ * **Tell this guest's host, if they have not been told about THIS binding —
+ * on the caller's open transaction, as part of submitting the request.**
+ *
+ * Called once per tab by `submitTravelBookingGroup`, after that tab's claim,
+ * its running number and its per-diem figures have been written. A guest with
+ * no binding is the overwhelmingly common case and costs one indexed write
+ * that matches nothing.
+ *
+ * ## Why "on submit" and why "once per binding" are two different rules
+ *
+ * *"เมลจะส่งเมื่อ ส่งคำขอเท่านั้น"* (the user, 2026-09-23) is the first half
+ * and it is answered by the CALL SITE: `applyRoomShareSelection` no longer
+ * mails, so a draft save tells nobody and a requester who changes their mind
+ * before submitting has mailed nobody at all.
+ *
+ * Firing on every submit would answer only that half. A `Returned` request is
+ * resubmitted through the same path, so the host would get a second identical
+ * *"somebody is sharing your room"* — and spec §2 declined to ask the host's
+ * consent precisely on the condition that §5's notice compensates for it, so
+ * a host reading that twice may reasonably conclude **two people** have
+ * attached. A notification that can be misread as a different event is worse
+ * than a late one. `NotifiedAt` (migration 158) is the memory that makes the
+ * send exactly-once per binding, and each case falls out of it rather than
+ * needing its own branch — see the migration's header for the four of them.
+ *
+ * ## The stamp IS the claim; there is no read-then-write here
+ *
+ * One conditional `UPDATE … WHERE NotifiedAt IS NULL`, `OUTPUT`ing the host
+ * it just claimed, exactly as every state transition in this codebase is
+ * written (CLAUDE.md, Conventions → State transitions). A `SELECT` followed by
+ * an `UPDATE` would release its shared lock at statement end under this
+ * database's READ COMMITTED, and two submits racing the same guest would both
+ * read NULL and both mail. An empty recordset means somebody else claimed it
+ * or there was never a binding, and either way this call mails nothing.
+ *
+ * `SYSDATETIME()`, never a JS `Date`: these databases hold a Thai wall clock
+ * and every audit timestamp beside this one is written the same way.
+ *
+ * ## It queues on `tx`, and it must not drain
+ *
+ * `queueRoomShareAttachedMail` writes its `AccEmailQueue` row on the same
+ * runner, so the stamp and the notice it authorises commit or roll back
+ * together: a submit that rolls back cannot leave a binding stamped as told
+ * with nothing sent, and cannot send a notice about a submit that did not
+ * happen. Draining is the submit **route's** `processQueue()`, after the
+ * commit — the same call the manager mails already rely on.
+ *
+ * @returns whether a notice was queued — a fact, not a control; nothing acts on it.
+ */
+export async function claimRoomShareHostNotice(
+  tx: SqlRunner,
+  guestRequestId: number,
+): Promise<boolean> {
+  const claimed = await tx
+    .request()
+    .input("gid", sql.Int, guestRequestId)
+    .query(`UPDATE [dbo].[AccTravelRoomShare]
+               SET NotifiedAt = SYSDATETIME()
+             OUTPUT inserted.HostRequestId AS HostRequestId
+             WHERE GuestRequestId = @gid AND NotifiedAt IS NULL`);
+  const hostRequestId = claimed.recordset[0]?.HostRequestId as number | undefined;
+  if (hostRequestId == null) return false;
+
+  await queueRoomShareAttachedMail(tx, { guestRequestId, hostRequestId });
+  return true;
 }
 
 /* ─────────────────────────── the cascade's loader ─────────────────────────── */
