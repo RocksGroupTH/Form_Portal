@@ -11,6 +11,7 @@ import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
 import { toast } from "sonner";
 import { APP_DB_CONNECTION_ID } from "@/lib/db/app-connection";
 import { BrandMark } from "@/components/BrandMark";
+import { Toggle } from "@/components/ui/Toggle";
 
 import {
   SearchableSelect,
@@ -189,9 +190,6 @@ function BrandConfigCard({
         background: "var(--bg-card)",
         border: `1px solid ${st.complete ? "var(--border-info-green)" : "var(--border-card)"}`,
         boxShadow: "var(--shadow-sm)",
-        // Dimmed rather than hidden: this page is where a brand is turned back
-        // on, so it has to stay visible and legible while off.
-        opacity: config.isEnabled ? 1 : 0.55,
       }}
     >
       <div className="flex items-start justify-between gap-2">
@@ -213,28 +211,27 @@ function BrandConfigCard({
         <p className="text-[11px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>{config.brandCode}</p>
       </div>
 
-      {/* The switch acts immediately — it writes one boolean to this app's own
-          BrandSetting row, not to the shared BrandConfig the Save button below
-          edits, so folding it into that form would tie a quick toggle to a
-          whole BC configuration. */}
-      <label className="flex items-center justify-between gap-2 cursor-pointer">
-        <span className="text-[12px] font-medium" style={{ color: "var(--text-secondary)" }}>
-          {config.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
-        </span>
-        <span className="flex items-center gap-1.5">
-          {toggling && <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />}
-          <input
-            type="checkbox"
-            role="switch"
-            checked={config.isEnabled}
-            disabled={toggling}
-            onChange={(e) => onToggleEnabled(e.target.checked)}
-            aria-label={`เปิดใช้งานแบรนด์ ${config.brandName}`}
-            className="cursor-pointer"
-            style={{ width: 34, height: 18, accentColor: "var(--color-action)" }}
-          />
-        </span>
-      </label>
+      {/* The app's own `Toggle` rather than a native checkbox with an
+          `accentColor`: `role="switch"` does not change how a browser DRAWS an
+          `<input type="checkbox">`, so what shipped was a plain square that read
+          as a form field rather than an on/off control — which is what the user
+          reported. This is the same switch Form Environment and the brand tabs
+          use, so a reader who has seen one has seen them all.
+
+          It acts immediately, and still writes one boolean to this app's own
+          `BrandSetting` row rather than the shared `BrandConfig` the Save button
+          below edits — folding it into that form would tie a quick toggle to a
+          whole BC configuration.
+
+          The in-flight state is the LABEL rather than a spinner beside it: the
+          control is disabled while saving, and a disabled switch with no
+          explanation reads as broken. */}
+      <Toggle
+        checked={config.isEnabled}
+        onChange={onToggleEnabled}
+        disabled={toggling}
+        label={toggling ? "กำลังบันทึก..." : config.isEnabled ? "เปิดใช้งาน" : "ปิดอยู่"}
+      />
 
       {!st.complete && (
         <div className="flex flex-col gap-1">
