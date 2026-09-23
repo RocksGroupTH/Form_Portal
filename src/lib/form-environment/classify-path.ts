@@ -66,6 +66,31 @@ export const ROUTE_RULES: RouteRule[] = [
   // whose travel-expense claims are what the queue is made of.
   { prefix: "/api/request/accounting/erp-prep", result: "AP-1" },
 
+  /* **The Business Central MIRROR is not settings, and must not inherit the
+     Production pin below.** Added 2026-09-23, after a tester pressed Sync ERP
+     in UAT mode and watched it pull production's data and write it as
+     Production — measured in `ErpSyncLog`.
+
+     The pin's own reasoning is the next comment's: *settings read production
+     because the service layer dual-writes, so both copies are identical.* That
+     is true of `AccApprover`, `AccVehicle` and the rest — and false of
+     `Rocks_ERP_Data`, which is **one physical copy, not dual-written, not in
+     `MASTER_TABLES`, and not even in the form database**. Since migration 159
+     it holds Production and Sandbox rows side by side and the environment
+     decides which half is read and written. So these routes were swept up by a
+     rule whose argument never covered them.
+
+     **Safe to route by form**: the pin exists so a config-row id in the PATH is
+     not read as an `AccRequest.Id`, and not one of these five carries a numeric
+     segment — they end in `erp-accounts`, `sync`, `erp-master`, `erp-batches`.
+     The routes that DO carry one (`tiers/[id]`, `approvers/[id]`,
+     `banks/[id]`) keep the pin, which is why these rules are narrow rather
+     than lifting it.
+
+     Longest matching prefix wins, so these override the pin beneath them. */
+  { prefix: "/api/request/accounting/settings/erp-accounts", result: "AP-1" },
+  { prefix: "/api/request/accounting/settings/departments/sync", result: "AP-1" },
+
   // Settings read production; dual-write happens in the service layer.
   { prefix: "/api/request/accounting/settings", result: null },
 
@@ -82,6 +107,13 @@ export const ROUTE_RULES: RouteRule[] = [
   // AP-2 settings — like AP-1's, these carry a config-row id (tier/approver id),
   // not an AccRequest id, so they must NOT be request-id routed. Read Production;
   // the service layer dual-writes to both databases.
+  // The BC mirror again — see the note on AP-1's own three above. None of these
+  // three carries a numeric path segment, so the id hazard the pin below exists
+  // for does not reach them.
+  { prefix: "/api/request/advance/settings/erp-master", result: "AP-2" },
+  { prefix: "/api/request/advance/settings/erp-batches", result: "AP-2" },
+  { prefix: "/api/request/advance/settings/vendors/sync", result: "AP-2" },
+
   { prefix: "/api/request/advance/settings", result: null },
 
   // AP-2 proper (เบิกเงินทดรองจ่าย / Advance). Its own top-level prefix, so the

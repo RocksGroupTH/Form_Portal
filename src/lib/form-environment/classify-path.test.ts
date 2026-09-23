@@ -164,3 +164,73 @@ test("AP-4's own paths classify to AP-4, not to AP-1's catch-all", () => {
 test("AP-4 is a known form code", () => {
   assert.equal(isFormCode("AP-4"), true);
 });
+
+/**
+ * **The Business Central mirror follows the viewer's environment; the settings
+ * rows beside it stay pinned to Production.**
+ *
+ * Reported 2026-09-23: a tester pressed Sync ERP in UAT mode and it pulled
+ * production's data and stored it as Production. The sync routes sit under
+ * `/api/request/accounting/settings` and `/api/request/advance/settings`, both
+ * pinned `null`, and `null` is Production outright — the viewer's UAT mode is
+ * never consulted. Measured in `ErpSyncLog`: four brands, `[Production]`, while
+ * the operator was in UAT.
+ *
+ * **The pin's own argument does not cover the mirror.** Its comment reads
+ * *"settings read production; dual-write happens in the service layer"* — true
+ * of `AccApprover` and the rest, and false of `Rocks_ERP_Data`, which is one
+ * physical copy, not dual-written, not in `MASTER_TABLES`, and not in the form
+ * database at all. Since migration 159 it holds both environments' rows and the
+ * environment decides which half is touched.
+ *
+ * Both halves are asserted here, and the second is the one that matters more:
+ * the pin exists so a config-row id in the PATH is not read as an
+ * `AccRequest.Id`, and widening it would route a tier id to a database.
+ */
+test("the ERP mirror routes follow their form, not the Production pin", () => {
+  for (const p of [
+    "/api/request/accounting/settings/erp-accounts",
+    "/api/request/accounting/settings/erp-accounts/sync",
+    "/api/request/accounting/settings/departments/sync",
+  ]) {
+    assert.equal(
+      classifyPath(p),
+      "AP-1",
+      `${p} reads and writes Rocks_ERP_Data, which is split by environment — pinned to ` +
+        "Production a tester syncs from the real BC and stores the rows as production's",
+    );
+  }
+  for (const p of [
+    "/api/request/advance/settings/erp-master",
+    "/api/request/advance/settings/erp-batches",
+    "/api/request/advance/settings/vendors/sync",
+  ]) {
+    assert.equal(classifyPath(p), "AP-2", `${p} reads or writes the BC mirror`);
+  }
+});
+
+test("the settings pin still covers every route it was written for", () => {
+  /* The narrow rules above must not have widened the pin. A route carrying a
+     config-row id in its path — a tier, an approver, a bank — must stay `null`,
+     or the resolver reads that id as an `AccRequest.Id` and picks a database
+     from it. That is the hazard the pin exists for and it is unrelated to the
+     mirror. */
+  for (const p of [
+    "/api/request/advance/settings/tiers/12",
+    "/api/request/advance/settings/approvers/7",
+    "/api/request/advance/settings/banks/3",
+    "/api/request/advance/settings/erp-interface",
+    "/api/request/advance/settings/access",
+    "/api/request/accounting/settings/approvers",
+    "/api/request/accounting/settings/departments",
+    "/api/request/accounting/settings/departments/map",
+    "/api/request/accounting/settings/vehicles",
+  ]) {
+    assert.equal(
+      classifyPath(p),
+      null,
+      `${p} is no longer pinned to Production. These carry config-row ids and dual-written ` +
+        "rows; routing them by form is how a tier id becomes a database selector",
+    );
+  }
+});
