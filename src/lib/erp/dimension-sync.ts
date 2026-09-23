@@ -111,10 +111,13 @@ export async function resolveBrandBcDimensionContext(
   const profile = await resolveBrandBcProfile(code, environment);
   if (!profile) throw new Error(missingBcProfileMessage(code, environment));
 
+  // The environment, or the builder appends its "Production" default to a base
+  // URL that already ends in /Sandbox — see account-sync's own note.
   const odataUrl = `${buildBcODataEntityUrl(
     profile.baseUrl,
     profile.bcCompanyName,
     BC_DIMENSION_ENTITY,
+    environment,
   )}?$filter=Dimension_Code eq '${dim}'`;
 
   return {

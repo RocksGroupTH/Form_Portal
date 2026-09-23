@@ -10,8 +10,6 @@ import {
   refreshBcConnectionToken,
 } from "@/lib/bc/bc-connection";
 
-const BC_HOST = "api.businesscentral.dynamics.com";
-const DEFAULT_ENVIRONMENT = "Production";
 const BC_GET_TIMEOUT_MS = 30_000;
 const BC_GET_MAX_TRANSIENT_RETRIES = 3;
 
@@ -47,61 +45,18 @@ async function fetchBcGet(url: string, token: string): Promise<Response> {
   }
 }
 
-/** Escape company name for OData Company('...') segment. */
-export function escapeODataCompanyName(name: string): string {
-  return name.trim().replace(/'/g, "''");
-}
-
-/**
- * Build ODataV4 entity URL from BcConnection.BaseUrl + company + entity.
- * BaseUrl is typically: https://api.businesscentral.dynamics.com/v2.0/{tenantId}
- */
-export function buildBcODataEntityUrl(
-  baseUrl: string,
-  companyName: string,
-  entitySet: string,
-  environment = DEFAULT_ENVIRONMENT,
-): string {
-  const root = baseUrl.trim().replace(/\/+$/, "");
-  const company = escapeODataCompanyName(companyName);
-
-  const envSegment = `/${environment}`;
-  if (root.toLowerCase().endsWith(envSegment.toLowerCase())) {
-    return `${root}/ODataV4/Company('${company}')/${entitySet}`;
-  }
-
-  if (!root.toLowerCase().includes(BC_HOST)) {
-    throw new Error("BC Base URL must point to api.businesscentral.dynamics.com");
-  }
-
-  return `${root}${envSegment}/ODataV4/Company('${company}')/${entitySet}`;
-}
-
-/**
- * Build BC API v2.0 entity URL: .../Production/api/v2.0/companies({companyId})/{entitySet}
- * companyId is BrandConfig.bcId (GUID).
- */
-export function buildBcApiV2CompanyEntityUrl(
-  baseUrl: string,
-  companyId: string,
-  entitySet: string,
-  environment = DEFAULT_ENVIRONMENT,
-): string {
-  const root = baseUrl.trim().replace(/\/+$/, "");
-  const company = companyId.trim();
-  if (!company) throw new Error("BC Company Id is required");
-
-  const envSegment = `/${environment}`;
-  const apiRoot = root.toLowerCase().endsWith(envSegment.toLowerCase())
-    ? root
-    : `${root}${envSegment}`;
-
-  if (!apiRoot.toLowerCase().includes(BC_HOST)) {
-    throw new Error("BC Base URL must point to api.businesscentral.dynamics.com");
-  }
-
-  return `${apiRoot}/api/v2.0/companies(${company})/${entitySet}`;
-}
+/* The three URL builders moved to `bc-url.ts` on 2026-09-23 — pure, import-free
+   and therefore unit-testable, which they could not be here: this module reaches
+   `connection-crypto` and `bc-connection`, so `@/env` validates the whole
+   environment on import and a test of a string function could not even load.
+   Re-exported so every existing import of this module keeps working. */
+export {
+  escapeODataCompanyName,
+  buildBcODataEntityUrl,
+  buildBcApiV2CompanyEntityUrl,
+  DEFAULT_BC_ENVIRONMENT,
+} from "@/lib/bc/bc-url";
+import { buildBcODataEntityUrl, buildBcActionUrl } from "@/lib/bc/bc-url";
 
 async function fetchBcJsonCollection<T extends Record<string, unknown>>(
   connectionId: number,
@@ -196,26 +151,6 @@ export async function fetchBcApiV2Collection<T extends Record<string, unknown>>(
   return fetchBcJsonCollection<T>(connectionId, initialUrl, "BC API error");
 }
 
-/** Build an ODataV4 unbound action URL: {root}[/{env}]/ODataV4/{action} */
-function buildBcActionUrl(
-  baseUrl: string,
-  environment: "Production" | "Sandbox",
-  action: string,
-): string {
-  const root = baseUrl.trim().replace(/\/+$/, "");
-  const env = environment === "Sandbox" ? "Sandbox" : "Production";
-  const envSegment = `/${env}`;
-
-  if (root.toLowerCase().endsWith(envSegment.toLowerCase())) {
-    return `${root}/ODataV4/${action}`;
-  }
-
-  if (!root.toLowerCase().includes(BC_HOST)) {
-    throw new Error("BC Base URL must point to api.businesscentral.dynamics.com");
-  }
-
-  return `${root}${envSegment}/ODataV4/${action}`;
-}
 
 function buildPpapJournalActionUrl(
   baseUrl: string,

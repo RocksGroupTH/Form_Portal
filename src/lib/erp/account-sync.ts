@@ -216,16 +216,24 @@ export async function resolveBrandAccountSyncContext(
     bcCompanyName,
     bcConnectionId: profile.bcConnectionId,
     environment,
-    glUrl: buildBcApiV2CompanyEntityUrl(conn.BaseUrl, bcCompanyId, "accounts"),
+    /* `environment` is passed to all three. Both builders default it to
+       "Production" and append it unless the base URL already ends in it — and
+       the UAT connection's base URL ends in `/Sandbox`, so omitting it built
+       `.../Sandbox/Production/ODataV4/...`, two environment segments, which BC
+       answered 400 RequestDataInvalid. Measured from the failure the user
+       reported, 2026-09-23. */
+    glUrl: buildBcApiV2CompanyEntityUrl(conn.BaseUrl, bcCompanyId, "accounts", environment),
     bankCardUrl: buildBcODataEntityUrl(
       conn.BaseUrl,
       bcCompanyName,
       BC_BANK_ACCOUNT_CARD_ENTITY,
+      environment,
     ),
     journalBatchUrl: buildBcODataEntityUrl(
       conn.BaseUrl,
       bcCompanyName,
       BC_GENERAL_JOURNAL_BATCHES_ENTITY,
+      environment,
     ),
   };
 }

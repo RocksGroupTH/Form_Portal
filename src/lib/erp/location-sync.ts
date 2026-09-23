@@ -27,7 +27,11 @@ import { getErpDataPool, sql } from "@/lib/db/mssql";
 import { normalizeLocationRow, type CodexLocationRow } from "./location-sync-core";
 
 /** Locations are read from Production for every brand, as vendors are. */
-export const ERP_LOCATION_SOURCE_ENVIRONMENT = "Production";
+/* `ERP_LOCATION_SOURCE_ENVIRONMENT = "Production"` stood here, the same shape
+   `vendor-sync` carried: a literal deciding which BC is CALLED. It is
+   `ctx.environment` now — resolved once per brand alongside the company this
+   sync reads, so the environment in the URL and the environment stamped on the
+   rows cannot disagree. */
 
 interface BrandLocationSyncContext {
   brandCode: string;
@@ -110,7 +114,7 @@ export async function syncBrandErpLocations(
     const raw = await postBcCodexStoreRpc<CodexLocationRow>(
       ctx.bcConnectionId,
       ctx.bcCompanyId,
-      ERP_LOCATION_SOURCE_ENVIRONMENT,
+      ctx.environment,
       ctx.baseUrl,
       "RPCCodexStore_CodexGetLocations",
       [],
