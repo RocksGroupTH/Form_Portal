@@ -513,15 +513,15 @@ function BrandConfigModal({
             </p>
             <div className="flex items-center gap-3">
               <div
-                className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
+                className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
                 style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
               >
                 <BrandMark
                   src={brand.brandLogo}
                   alt={brand.brandName}
                   code={brand.brandCode}
-                  size={40}
-                  rounded="rounded"
+                  size={56}
+                  rounded="rounded-xl"
                 />
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-1.5">
@@ -574,38 +574,56 @@ function BrandConfigModal({
                 is optional — most brands have never had one. Making it
                 conditional on both would mark every working brand Incomplete
                 the day this shipped. */}
-            <SectionHeader status={bcEnv === "PRO" ? bcStatus : { ...bcStatus, key: "bc", label: "Config BC (UAT)" }} />
+            <SectionHeader
+              status={
+                bcEnv === "PRO"
+                  ? bcStatus
+                  : { ...getBcGroupStatus(form.bcUatId, form.bcUatName), label: "Config BC (UAT)" }
+              }
+            />
 
             {/* PRO / UAT — the user, 2026-09-23: one Config BC section, two
                 environments, "เพื่อที่จะเอาไว้ใช้ในการ sync data or Send data
                 to ERP". The two halves live in different tables and neither
                 moved: PRO is BrandConfig, UAT is AccBrandErpTargetSetting, the
                 same rows Settings → ERP Interface Environment edits. */}
-            <div className="flex gap-1.5 mb-3">
+            {/* A segmented control rather than two chips. The selected half is
+                FILLED — the primary button colour, white text — against a plain
+                track, so which one is showing is readable at a glance rather
+                than a shade apart; the first version tinted the active one and
+                the two were hard to tell apart on screen (the user, 2026-09-23).
+                `aria-pressed` carries the same fact to a screen reader, which a
+                colour difference alone does not. */}
+            <div
+              className="inline-flex gap-1 p-1 rounded-xl mb-3"
+              style={{ background: "var(--bg-badge)" }}
+              role="group"
+              aria-label="Config BC environment"
+            >
               {(["PRO", "UAT"] as const).map((e) => {
                 const active = bcEnv === e;
-                const filled = e === "PRO"
-                  ? !!form.bcId.trim() && !!form.bcName.trim()
-                  : !!form.bcUatId.trim() && !!form.bcUatName.trim();
                 return (
                   <button
                     key={e}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => setBcEnv(e)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-colors"
+                    className="px-4 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-colors"
                     style={{
-                      background: active ? "var(--nav-active-bg)" : "var(--bg-badge)",
-                      color: active ? "var(--nav-active-text)" : "var(--text-muted)",
+                      /* The SOLID action colour, not `--btn-primary-bg`. That
+                         token is a 14% wash against the card (globals.css
+                         explains why, for buttons that must not shout), which
+                         is precisely the near-invisible selection the user
+                         reported. A segmented control has to say which segment
+                         is live, so this one is filled. White is safe on it in
+                         both themes: `--color-action` is single-valued by
+                         design — only the washes built from it move. */
+                      background: active ? "var(--color-action)" : "transparent",
+                      color: active ? "#fff" : "var(--text-muted)",
+                      boxShadow: active ? "var(--shadow-card)" : "none",
                     }}
                   >
                     {e}
-                    {/* A dot rather than a tick: it says "something is set
-                        here", not "this is complete", which is the most an
-                        unopened tab can honestly claim. */}
-                    <span
-                      className="inline-block w-1.5 h-1.5 rounded-full"
-                      style={{ background: filled ? "var(--text-info-green)" : "var(--border-card)" }}
-                    />
                   </button>
                 );
               })}
