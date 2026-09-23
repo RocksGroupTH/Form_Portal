@@ -2,10 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { BRAND_ERP_ENVIRONMENT_COLUMN } from "@/lib/acc/brand-erp-environment";
 
 /**
  * **Every statement against the four per-brand Interface ERP tables bounds
- * itself by the BC environment.**
+ * itself to one Business Central environment.**
  *
  * Migration 161 split `AccBrandJournalBatch`, `AccBrandGlAccount`,
  * `AccBrandBankAccount` and `AccBrandBranchCode` by BC environment, because
@@ -26,14 +27,13 @@ import path from "node:path";
  * calling screen, which renders a list either way. The text of the SQL is what
  * can be checked, so that is what this reads.
  *
- * ## What counts as bounding it, and why there are two spellings
+ * ## It found a real defect on its first run, which is why it counts rather
+ * ## than merely looks
  *
- * `brandErpEnvPredicate()` is the one to use — that is what the module exists
- * for. But a `SELECT` names the column plainly (`…, FormCode, Environment`) and
- * an `INSERT` names it in its column list, so requiring the helper alone would
- * red every one of those. Either spelling satisfies this; what fails is a
- * statement that names neither, which is a statement that cannot tell the two
- * environments apart.
+ * `upsertBrandBranch` was half-converted: three statements named `@environment`
+ * with nothing binding it, and both INSERTs supplied the value with no column
+ * to put it in. The typecheck was clean — an unbound SQL parameter and a
+ * column-count mismatch are both runtime errors.
  *
  * ## `AccBrandErpInterface` is deliberately absent
  *
@@ -70,52 +70,158 @@ const FILES = sourceFiles(SRC)
   .filter((f) => !f.rel.endsWith(SELF));
 
 /**
- * The template literals in a file, which is where every statement here lives.
+ * Scan a source once, returning every template literal with its position, and a
+ * copy of the source with comments blanked out (same length, so positions still
+ * line up).
  *
- * Slicing from the table's NAME forward — the obvious first attempt — is wrong
- * twice over: the verb sits BEFORE the name (`DELETE FROM [dbo].[X]`), so the
- * slice loses the very keyword that says it is a statement, and the slice then
- * runs into whatever follows. Odd-indexed backtick-delimited chunks are the
- * template bodies, which is the unit a statement actually occupies.
+ * **Two cheaper approaches were tried and both were wrong**, which is why this
+ * is a scanner rather than a regex. Slicing from the table's NAME forward loses
+ * the verb, because it sits BEFORE the name (`DELETE FROM [dbo].[X]`).
+ * Splitting on backticks and taking the odd chunks then broke the moment the
+ * unit became a function body rather than a whole file: the doc comments in
+ * these services are full of backticks, so an odd count inside one comment
+ * INVERTS the parity and every "template" afterwards is the code between them.
+ * That is not a theoretical failure — it reported two INSERTs as missing a
+ * column they plainly have.
+ *
+ * Blanking comments matters for the counting rule too: a `brandErpEnvPredicate`
+ * named in prose must not be counted as a call that bounds a statement.
  */
-function templates(src: string): string[] {
-  const parts = src.split("`");
-  const out: string[] = [];
-  for (let i = 1; i < parts.length; i += 2) out.push(parts[i]);
-  return out;
+function scan(src: string): { templates: { at: number; text: string }[]; code: string } {
+  const templates: { at: number; text: string }[] = [];
+  const code: string[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (c === "/" && next === "/") {
+      while (i < src.length && src[i] !== "\n") code.push(" "), i++;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const end = src.indexOf("*/", i + 2);
+      const stop = end === -1 ? src.length : end + 2;
+      while (i < stop) code.push(src[i] === "\n" ? "\n" : " "), i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      const start = i;
+      code.push(c);
+      i++;
+      while (i < src.length && src[i] !== quote) {
+        if (src[i] === "\\") code.push(src[i]), i++;
+        if (i < src.length) code.push(src[i]), i++;
+      }
+      code.push(src[i] ?? "");
+      i++;
+      if (quote === "`") templates.push({ at: start, text: src.slice(start + 1, i - 1) });
+      continue;
+    }
+    code.push(c);
+    i++;
+  }
+  return { templates, code: code.join("") };
+}
+
+/**
+ * A statement's verb — its FIRST keyword, with `--` comments removed first.
+ *
+ * Not "does the word INSERT appear anywhere", which is what this asked at
+ * first and which is wrong in a way the SQL here makes routine: the comment
+ * above both delete-then-insert statements says the words *delete-then-insert*,
+ * so every one of those DELETEs was classified as an INSERT, sent down the
+ * column-list arm, and reported as missing a column it has no business having.
+ */
+function verb(sql: string): string | null {
+  const body = sql.replace(/--[^\n]*/g, " ");
+  const m = /\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i.exec(body);
+  return m ? m[1].toUpperCase() : null;
 }
 
 function isStatement(sql: string): boolean {
-  return /\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql);
+  return verb(sql) !== null;
 }
 
-test("every statement on a split table bounds itself by the environment", () => {
+function isInsert(sql: string): boolean {
+  return verb(sql) === "INSERT";
+}
+
+/**
+ * The source's top-level functions, as `{ name, at, end }`.
+ *
+ * The unit has to be the function rather than the statement, because the
+ * predicate a statement depends on is frequently not inside it — see the
+ * counting rule in the first test. Read off the comment-blanked copy, so a
+ * `function` written in prose cannot open a phantom range.
+ */
+function functions(code: string): { name: string; at: number; end: number }[] {
+  const re = /\n(?:export )?(?:async )?function (\w+)/g;
+  const marks: { name: string; at: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) marks.push({ name: m[1], at: m.index });
+  return marks.map((mark, i) => ({
+    name: mark.name,
+    at: mark.at,
+    end: i + 1 < marks.length ? marks[i + 1].at : code.length,
+  }));
+}
+
+test("every statement on a split table bounds itself to one environment", () => {
   const offenders: string[] = [];
   for (const { rel, src } of FILES) {
-    for (const sql of templates(src)) {
-      if (!isStatement(sql)) continue;
-      const table = SPLIT_TABLES.find((t) => sql.indexOf(t) !== -1);
-      if (!table) continue;
-      if (sql.indexOf("brandErpEnvPredicate") !== -1) continue;
-      if (sql.indexOf("Environment") !== -1) continue;
-      offenders.push(`${rel} — a statement on ${table}`);
+    const { templates, code } = scan(src);
+    for (const fn of functions(code)) {
+      const stmts = templates
+        .filter((t) => t.at >= fn.at && t.at < fn.end)
+        .map((t) => t.text)
+        .filter((sql) => isStatement(sql) && SPLIT_TABLES.some((t) => sql.indexOf(t) !== -1));
+      if (stmts.length === 0) continue;
+
+      // An INSERT bounds itself by naming the column; it has no WHERE to put a
+      // predicate in. Supplying @environment without the column is a
+      // column-count mismatch, which is how this arm earned its keep.
+      for (const sql of stmts) {
+        if (!isInsert(sql)) continue;
+        const cols = /\(([^)]*)\)\s*(?:\r?\n\s*)?VALUES/i.exec(sql);
+        if (!cols || cols[1].indexOf(BRAND_ERP_ENVIRONMENT_COLUMN) === -1)
+          offenders.push(`${rel} — ${fn.name}: an INSERT with no Environment column`);
+      }
+
+      /* Everything else needs a predicate, and the calls are COUNTED rather
+         than merely found. The predicate is often seeded into an array the
+         template interpolates — `const conditions = [brandErpEnvPredicate()]` —
+         so the text a read depends on sits outside the read's own template. A
+         presence test would then be satisfied by a SIBLING statement's call,
+         and an earlier version of this file was satisfied by a SELECT's column
+         LIST while its WHERE went unbounded. One call per statement is the
+         rule that actually holds. */
+      const need = stmts.filter((sql) => !isInsert(sql)).length;
+      const have = code.slice(fn.at, fn.end).split("brandErpEnvPredicate").length - 1;
+      if (have < need)
+        offenders.push(
+          `${rel} — ${fn.name}: ${need} statement(s) need the environment, ` +
+            `${have} brandErpEnvPredicate call(s)`,
+        );
     }
   }
   assert.deepEqual(
     offenders,
     [],
-    "these read or write a per-brand Interface ERP table without naming the environment. Since " +
-      "migration 161 each holds Production AND Sandbox rows: a read returns the other " +
-      "environment's account or batch, and an unbounded delete-then-insert removes it:\n  " +
+    "these read or write a per-brand Interface ERP table without bounding it to one " +
+      "environment. Since migration 161 each table holds Production AND Sandbox rows: a read " +
+      "returns the other environment's account or batch, and an unbounded delete-then-insert " +
+      "removes it:\n  " +
       offenders.join("\n  "),
   );
 });
 
 test("the three services resolve the environment rather than assuming one", () => {
   /* They resolve it themselves when the caller does not say — that is what
-     keeps the money path from being able to forget. What must not happen is a
-     literal: `Environment = 'Production'` is correct for exactly one half of
-     the users and wrong for the other, with no error either way. */
+     keeps the money path from being able to forget, and why the parameter
+     exists only for the settings screens' PRO/UAT toggle. What must not happen
+     is a literal: `Environment = 'Production'` is correct for exactly one half
+     of the users and wrong for the other, with no error either way. */
   for (const { rel, src } of FILES) {
     const bad = /Environment\s*=\s*'(Production|Sandbox)'/.exec(src);
     assert.equal(
@@ -136,11 +242,6 @@ test("the three services resolve the environment rather than assuming one", () =
       `${rel} no longer resolves the environment when a caller omits it — every read on the ` +
         "money path passes nothing, so this is what decides which half they get",
     );
-    assert.ok(
-      src.indexOf("brandErpEnvPredicate") !== -1,
-      `${rel} no longer uses the shared predicate. Hand-writing it per query is how one copy ` +
-        "loses its arm and silently reads the other environment's configuration",
-    );
   }
 });
 
@@ -151,11 +252,12 @@ test("AccBrandErpInterface is not split", () => {
      environments; giving it an Environment would invite two org charts. */
   for (const { rel, src } of FILES) {
     if (rel.endsWith(".test.ts")) continue;
-    for (const sql of templates(src)) {
+    for (const { text: sql } of scan(src).templates) {
       if (!isStatement(sql)) continue;
       if (sql.indexOf("AccBrandErpInterface") === -1) continue;
       assert.ok(
-        sql.indexOf("Environment") === -1 && sql.indexOf("brandErpEnvPredicate") === -1,
+        sql.indexOf(BRAND_ERP_ENVIRONMENT_COLUMN) === -1 &&
+          sql.indexOf("brandErpEnvPredicate") === -1,
         `${rel} names the environment in a statement on AccBrandErpInterface. That table has no ` +
           "such column and must not gain one — claim brand -> target is a business decision, " +
           "not the name of an object inside a BC company",
