@@ -1,4 +1,8 @@
 import { listBrandRegistry } from "@/lib/brand-registry";
+import {
+  listErpTargetSettings,
+  upsertErpTargetUatSetting,
+} from "@/lib/acc/erp-target-setting-service";
 import { BRANDS } from "@/lib/brand";
 
 /**
@@ -33,6 +37,22 @@ export interface BrandConfigPublic {
   bcName: string | null;
   bcConnectionId: number | null;
   bcConnectionName: string | null;
+  /**
+   * The SANDBOX half of Config BC, read from `AccBrandErpTargetSetting` —
+   * **not** from `BrandConfig`, which has no UAT columns and is not being
+   * given any.
+   *
+   * The two halves stay in the two places they were already stored, and this
+   * shape is where they are presented as one question. Copying the Sandbox
+   * company into `BrandConfig` would be a third copy of a BC company id to
+   * keep in step, and Settings → ERP Interface Environment still edits these
+   * same rows. See `erp/brand-bc-profile.ts`, which resolves either half for
+   * the sync and the send.
+   */
+  bcUatId: string | null;
+  bcUatName: string | null;
+  bcUatConnectionId: number | null;
+  bcUatConnectionName: string | null;
   dbConnectionId: number | null;
   dbConnectionCode: string | null;
   dbConnectionName: string | null;
@@ -54,6 +74,16 @@ export interface BrandConfigInput {
   bcId?: string | null;
   bcName?: string | null;
   bcConnectionId?: number | null;
+  /**
+   * The Sandbox half. **Absent leaves the stored row alone; an explicit null
+   * clears it** — the same three-valued rule the API-key PATCH draws for
+   * `expiresAt`, and for the same reason: a caller sending only the Production
+   * fields must not wipe a brand's UAT company as a side effect of a change
+   * nobody would connect to it.
+   */
+  bcUatId?: string | null;
+  bcUatName?: string | null;
+  bcUatConnectionId?: number | null;
   dbConnectionId?: number | null;
   databaseName?: string | null;
   dashboardDbConnectionId?: number | null;
@@ -174,6 +204,34 @@ export async function listBrandConfigs(userId: number): Promise<BrandConfigPubli
     byCode.set(r.BrandCode as string, r);
   }
 
+  /* The Sandbox half, from its own table. Read here rather than joined,
+     because it lives in a DIFFERENT DATABASE — `AccBrandErpTargetSetting` is
+     in the form database and `BrandConfig` is in Fast_Core — so a join would
+     have to interpolate a database name into the statement, the env-drift
+     hazard CLAUDE.md already records for `MSSQL_ERP_DATA_DATABASE`.
+
+     A failure is swallowed to an empty map on purpose: the Production half of
+     this page must stay editable when the form database is down, which is the
+     same reason the settings pages that read Fast_Core stay up. A brand then
+     shows no Sandbox company, which is honest — it could not be read. */
+  const uatByCode = new Map<string, { id: string | null; name: string | null; connId: number | null }>();
+  try {
+    for (const row of await listErpTargetSettings()) {
+      uatByCode.set(row.brandCode.trim().toUpperCase(), {
+        id: row.bcUatId,
+        name: row.bcUatName,
+        connId: row.bcUatConnectionId,
+      });
+    }
+  } catch {
+    // Left empty — see above.
+  }
+  const connNameById = new Map<number, string>();
+  for (const r of result.recordset as Record<string, unknown>[]) {
+    const id = r.BcConnectionId as number | null;
+    if (id != null && r.BcConnName) connNameById.set(id, r.BcConnName as string);
+  }
+
   return enabledBrands.map((brand) => {
     const r = byCode.get(brand.code);
     const dbId = (r?.DbConnectionId as number) ?? null;
@@ -195,6 +253,16 @@ export async function listBrandConfigs(userId: number): Promise<BrandConfigPubli
       bcName: (r?.BcName as string) ?? null,
       bcConnectionId: (r?.BcConnectionId as number) ?? null,
       bcConnectionName: (r?.BcConnName as string) ?? null,
+      bcUatId: uatByCode.get(brand.code)?.id ?? null,
+      bcUatName: uatByCode.get(brand.code)?.name ?? null,
+      bcUatConnectionId: uatByCode.get(brand.code)?.connId ?? null,
+      /* Resolved from the connections this query already named, so the UAT row
+         shows a connection's NAME rather than a bare id where one of the
+         brands happens to use the same connection. Null otherwise — the page's
+         picker still labels it, and inventing a name here would be a second
+         answer to what a connection is called. */
+      bcUatConnectionName:
+        connNameById.get(uatByCode.get(brand.code)?.connId ?? -1) ?? null,
       dbConnectionId: dbId,
       dbConnectionCode: erpConn.code,
       dbConnectionName: erpConn.name,
@@ -271,6 +339,32 @@ export async function updateBrandConfig(
   }
 
   await req.query(`UPDATE BrandConfig SET ${sets.join(", ")} WHERE BrandCode = @brandCode`);
+
+  /* The Sandbox half goes to its own table, through the service that already
+     owns it — the same rows Settings → ERP Interface Environment writes.
+     Touched only when the caller sent at least one of the three, so a save of
+     the Production half alone cannot clear a brand's UAT company.
+
+     **This does widen who may set the Sandbox company** from System Admin (the
+     `/api/settings/erp-interface` route) to IT Admin (this page). Stated
+     rather than slipped in — and it is not an escalation in any meaningful
+     sense: the same person already edits the PRODUCTION company two fields
+     above, which is strictly the more consequential of the two. */
+  if (
+    input.bcUatId !== undefined ||
+    input.bcUatName !== undefined ||
+    input.bcUatConnectionId !== undefined
+  ) {
+    await upsertErpTargetUatSetting(
+      brandCode,
+      {
+        bcUatId: input.bcUatId,
+        bcUatName: input.bcUatName,
+        bcUatConnectionId: input.bcUatConnectionId,
+      },
+      userId,
+    );
+  }
 
   const list = await listBrandConfigs(userId);
   return list.find((c) => c.brandCode === brandCode) ?? null;
