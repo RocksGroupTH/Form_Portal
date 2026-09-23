@@ -36,6 +36,28 @@ import path from "node:path";
  * single literal — and is closed below; two more probes were added in the
  * same round. Full results are in this branch's Task 8 report.
  *
+ * ## Mutation-verified again, 2026-09-23 — 19 mutations, one found green and closed
+ *
+ * The round that moved the attach notice from the tab save to the submit. Each
+ * of the new assertions was defeated on purpose before it was trusted: the
+ * notice put back into `applyRoomShareSelection`; the mail deleted from
+ * `claimRoomShareHostNotice`; `AND NotifiedAt IS NULL` dropped; `SYSDATETIME()`
+ * replaced by a bound parameter; the conditional `UPDATE` rewritten as
+ * `SELECT`-then-`UPDATE` and as `UPDATE`-then-`SELECT`; `OUTPUT inserted.
+ * HostRequestId` removed; the null check on the claimed host removed; a
+ * transaction of its own opened **through a cast**, the spelling measured green
+ * in 2026-09-22's round; the runner swapped for a pool at both the queue call
+ * and the submit's call site; the host id swapped for the guest's; the submit's
+ * call deleted, moved after `tx.commit()`, moved before the running-number
+ * allocation, and duplicated into `saveTravelBookingDraft`; and a new export
+ * added to the service.
+ *
+ * **One came back green**, and it was not in either of the functions this round
+ * touched: the whole 2441-test suite passed against a narrowed `unchanged`
+ * early return in `applyRoomShareSelection`, and against its delete-then-insert
+ * rewritten as an in-place `UPDATE`. Both defeat once-per-binding from the
+ * other end — see "the binding's write shape…" below, which closes them.
+ *
  * **What this file deliberately cannot catch**, stated so it is not mistaken
  * for coverage: a body gutted with an early `return`. Every call, argument
  * and gate below would still read correctly in the source. The realistic
@@ -181,6 +203,53 @@ test("the tab SAVE no longer tells the host", () => {
     1,
     `request-service.ts calls applyRoomShareSelection ${calls.length} times, not once — the ` +
       "group save is the single writer of the binding",
+  );
+});
+
+/**
+ * **Found GREEN on 2026-09-23 and closed the same round.** The whole
+ * 2441-test suite passed against a narrowed `unchanged` early return, and
+ * against replacing the delete-then-insert with an in-place `UPDATE`. Both
+ * matter because "once per binding" rests on TWO things and only one of them
+ * is in `claimRoomShareHostNotice`:
+ *
+ * - **the early return is what PRESERVES the stamp.** Narrow it and an
+ *   ordinary re-save of an untouched guest tab deletes and re-inserts the
+ *   binding, so `NotifiedAt` is NULL again and a `Returned` request's
+ *   resubmit tells the host a second time — which is exactly what they may
+ *   read as a SECOND person having attached;
+ * - **delete-then-insert is what DROPS it.** Rewrite the replace path as an
+ *   `UPDATE … SET HostRequestId` and the stamp survives a change of host, so
+ *   the guest attaches to somebody new and **that person is never told at
+ *   all** — the mitigation §2 traded the host's consent for, silently absent.
+ *
+ * Neither is visible from `claimRoomShareHostNotice`, and neither can be
+ * reached by a behavioural test (`@/env`). They are pinned here rather than in
+ * `room-share-response-shape-guard.test.ts` because what they protect is the
+ * notification, not the response shape.
+ */
+test("the binding's write shape is what makes the notice once-per-binding", () => {
+  const body = bodyOf(SERVICE, "export async function applyRoomShareSelection");
+  assert.ok(
+    /if\s*\(\s*currentHostId\s*===\s*input\.hostRequestId\s*\)\s*return\s*\{\s*changed:\s*false\s*\}/.test(body),
+    "applyRoomShareSelection's `unchanged` early return is gone or no longer tests exactly " +
+      "`currentHostId === input.hostRequestId`. It is what leaves an untouched binding — and its " +
+      "NotifiedAt stamp — alone on an ordinary re-save; without it every save of a guest tab " +
+      "re-creates the row, and the next submit of a Returned request tells the host a second time",
+  );
+  assertBefore(
+    body,
+    "return { changed: false }",
+    "DELETE FROM [dbo].[AccTravelRoomShare]",
+    "the early return must come before anything is deleted, or it is not an early return",
+  );
+  assert.ok(
+    /DELETE FROM \[dbo\]\.\[AccTravelRoomShare\]/.test(body) &&
+      /INSERT INTO \[dbo\]\.\[AccTravelRoomShare\]/.test(body) &&
+      !/UPDATE\s+\[dbo\]\.\[AccTravelRoomShare\]/.test(body),
+    "applyRoomShareSelection changes a host in place instead of DELETE-then-INSERT. An UPDATE " +
+      "carries NotifiedAt across to the new host, so a guest who switches colleagues is never " +
+      "announced to the one they actually attached to — the row reads as already notified",
   );
 });
 
