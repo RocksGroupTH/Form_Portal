@@ -196,10 +196,10 @@ function BrandConfigCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div
-          className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+          className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
           style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
         >
-          <BrandMark src={config.brandLogo} alt={config.brandName} code={config.brandCode} size={36} rounded="rounded" />
+          <BrandMark src={config.brandLogo} alt={config.brandName} code={config.brandCode} size={48} rounded="rounded-xl" />
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           {st.groups.map((g) => (
