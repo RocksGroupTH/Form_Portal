@@ -10,10 +10,19 @@
  * are COCO. This sync is what lets the journal builder send the real one.
  */
 
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import { postBcCodexStoreRpc } from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
+import {
+  resolveErpSourceEnvironment,
+  type ErpBcEnvironment,
+} from "@/lib/erp/source-environment";
+import {
+  missingBcProfileMessage,
+  resolveBrandBcProfile,
+} from "@/lib/erp/brand-bc-profile";
+
 import { getErpDataPool, sql } from "@/lib/db/mssql";
 import { normalizeLocationRow, type CodexLocationRow } from "./location-sync-core";
 
@@ -26,6 +35,8 @@ interface BrandLocationSyncContext {
   bcCompanyName: string;
   bcConnectionId: number;
   baseUrl: string;
+  /** Which BC this read, and what every row it writes is stamped with. */
+  environment: ErpBcEnvironment;
 }
 
 export interface LocationSyncResult {
@@ -36,26 +47,25 @@ export interface LocationSyncResult {
 
 async function resolveBrandLocationSyncContext(brandCode: string): Promise<BrandLocationSyncContext> {
   const code = brandCode.trim().toUpperCase();
-  const brand = await getBrandConfig(code);
-  if (!brand) throw new Error(`Brand ${code} is not configured`);
-  if (!brand.bcId?.trim()) throw new Error(`Brand ${code} has no BC company id`);
-  if (!brand.bcName?.trim()) throw new Error(`Brand ${code} has no BC company name`);
-  if (!brand.bcConnectionId) throw new Error(`Brand ${code} has no BC connection`);
-
-  const connection = await getBcConnectionById(brand.bcConnectionId);
-  if (!connection?.IsActive) throw new Error(`BC connection for ${code} is not active`);
+  const environment = await resolveErpSourceEnvironment();
+  // No fallback between environments — see `brand-bc-profile.ts`.
+  const profile = await resolveBrandBcProfile(code, environment);
+  if (!profile) throw new Error(missingBcProfileMessage(code, environment));
 
   return {
     brandCode: code,
-    bcCompanyId: brand.bcId.trim(),
-    bcCompanyName: brand.bcName.trim(),
-    bcConnectionId: brand.bcConnectionId,
-    baseUrl: connection.BaseUrl,
+    bcCompanyId: profile.bcCompanyId,
+    bcCompanyName: profile.bcCompanyName,
+    bcConnectionId: profile.bcConnectionId,
+    baseUrl: profile.baseUrl,
+    environment,
   };
 }
 
 async function insertSyncLog(
   brandCode: string,
+  /** Which BC the run read — one answer per sync, decided where it starts. */
+  environment: ErpBcEnvironment,
   status: "success" | "failed",
   rowsUpserted: number,
   errorMessage: string | null,
@@ -67,6 +77,7 @@ async function insertSyncLog(
     .request()
     .input("syncType", sql.NVarChar, "LOCATIONS")
     .input("brand", sql.NVarChar, brandCode)
+    .input("env", sql.NVarChar, environment)
     .input("status", sql.NVarChar, status)
     .input("rows", sql.Int, rowsUpserted)
     .input("err", sql.NVarChar, errorMessage)
@@ -74,9 +85,9 @@ async function insertSyncLog(
     .input("by", sql.Int, triggeredBy ?? null)
     .query(`
       INSERT INTO [dbo].[ErpSyncLog]
-        (SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
+        (SourceEnvironment, SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
       VALUES
-        (@syncType, @brand, @status, @rows, @err, @started, SYSDATETIME(), @by)
+        (@env, @syncType, @brand, @status, @rows, @err, @started, SYSDATETIME(), @by)
     `);
 }
 
@@ -121,6 +132,7 @@ export async function syncBrandErpLocations(
       await pool
         .request()
         .input("brand", sql.NVarChar, ctx.brandCode)
+        .input("env", sql.NVarChar, ctx.environment)
         .input("code", sql.NVarChar, loc.code)
         .input("name", sql.NVarChar, loc.displayName)
         .input("branch", sql.NVarChar, loc.branchCode)
@@ -129,8 +141,9 @@ export async function syncBrandErpLocations(
         .input("raw", sql.NVarChar, loc.rawJson)
         .query(`
           MERGE [dbo].[ErpLocation] AS t
-          USING (SELECT @brand AS BrandCode, @code AS Code) AS s
-          ON t.BrandCode = s.BrandCode AND t.Code = s.Code
+          USING (SELECT @env AS SourceEnvironment, @brand AS BrandCode, @code AS Code) AS s
+          ON t.SourceEnvironment = s.SourceEnvironment
+            AND t.BrandCode = s.BrandCode AND t.Code = s.Code
           WHEN MATCHED THEN
             UPDATE SET
               DisplayName = @name,
@@ -141,8 +154,8 @@ export async function syncBrandErpLocations(
               SyncedAt = SYSDATETIME(),
               RawJson = @raw
           WHEN NOT MATCHED THEN
-            INSERT (BrandCode, Code, DisplayName, BranchCode, BuCode, DepartmentCode, IsActive, SyncedAt, RawJson)
-            VALUES (@brand, @code, @name, @branch, @bu, @dept, 1, SYSDATETIME(), @raw);
+            INSERT (SourceEnvironment, BrandCode, Code, DisplayName, BranchCode, BuCode, DepartmentCode, IsActive, SyncedAt, RawJson)
+            VALUES (@env, @brand, @code, @name, @branch, @bu, @dept, 1, SYSDATETIME(), @raw);
         `);
       locationRows++;
     }
@@ -150,14 +163,15 @@ export async function syncBrandErpLocations(
     await pool
       .request()
       .input("brand", sql.NVarChar, ctx.brandCode)
+      .input("env", sql.NVarChar, ctx.environment)
       .input("cutoff", sql.DateTime2, startedAt)
       .query(`
         UPDATE [dbo].[ErpLocation]
         SET IsActive = 0
-        WHERE BrandCode = @brand AND SyncedAt < @cutoff
+        WHERE SourceEnvironment = @env AND BrandCode = @brand AND SyncedAt < @cutoff
       `);
 
-    await insertSyncLog(ctx.brandCode, "success", locationRows, null, triggeredBy, startedAt);
+    await insertSyncLog(ctx.brandCode, ctx.environment, "success", locationRows, null, triggeredBy, startedAt);
 
     return {
       brandCode: ctx.brandCode,
@@ -166,7 +180,7 @@ export async function syncBrandErpLocations(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Location sync failed";
-    await insertSyncLog(ctx.brandCode, "failed", locationRows, msg, triggeredBy, startedAt);
+    await insertSyncLog(ctx.brandCode, ctx.environment, "failed", locationRows, msg, triggeredBy, startedAt);
     throw e;
   }
 }
@@ -178,7 +192,7 @@ export async function syncAllBrandErpLocations(triggeredBy: number | null): Prom
 }> {
   const results: LocationSyncResult[] = [];
   const errors: { brandCode: string; error: string }[] = [];
-  for (const brand of ERP_INTERFACE_BRANDS) {
+  for (const brand of await listErpInterfaceBrands()) {
     try {
       results.push(await syncBrandErpLocations(brand.id, triggeredBy));
     } catch (error) {

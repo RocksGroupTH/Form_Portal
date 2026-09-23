@@ -1,7 +1,15 @@
 /** Sync Business Central vendors into Rocks_ERP_Data.ErpVendors via RPCCodexStore_CodexGetVendors. */
 
 import type { Transaction } from "mssql";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
+import {
+  resolveErpSourceEnvironment,
+  type ErpBcEnvironment,
+} from "@/lib/erp/source-environment";
+import {
+  missingBcProfileMessage,
+  resolveBrandBcProfile,
+} from "@/lib/erp/brand-bc-profile";
 import {
   postBcCodexStoreRpc,
   buildBcApiV2CompanyEntityUrl,
@@ -76,7 +84,13 @@ function normalizeCodexVendors(rows: CodexVendorRow[]): NormalizedCodexVendor[] 
 }
 
 export const ERP_VENDOR_SYNC_TYPE = "VENDORS";
-export const ERP_VENDOR_SOURCE_ENVIRONMENT = "Production";
+
+/* `ctx.environment = "Production"` stood here until 2026-09-23.
+   Migration 117 built this table with a `SourceEnvironment` column at the head
+   of its unique key and the wiring was never done, so every vendor row in the
+   mirror said Production whichever BC it came from. It is `ctx.environment`
+   now — resolved per brand, from the same switch that decides which BC a
+   journal posts to. */
 
 interface BrandVendorSyncContext {
   brandCode: string;
@@ -84,6 +98,12 @@ interface BrandVendorSyncContext {
   bcCompanyName: string;
   bcConnectionId: number;
   baseUrl: string;
+  /**
+   * Which BC this sync is reading, and the value every row it writes is
+   * stamped with. Resolved ONCE per brand, so the company called and the
+   * rows stored can never be from different environments.
+   */
+  environment: ErpBcEnvironment;
 }
 
 export interface VendorSyncResult {
@@ -94,21 +114,21 @@ export interface VendorSyncResult {
 
 async function resolveBrandVendorSyncContext(brandCode: string): Promise<BrandVendorSyncContext> {
   const code = brandCode.trim().toUpperCase();
-  const brand = await getBrandConfig(code);
-  if (!brand) throw new Error(`Brand ${code} is not configured`);
-  if (!brand.bcId?.trim()) throw new Error(`Brand ${code} has no BC company id`);
-  if (!brand.bcName?.trim()) throw new Error(`Brand ${code} has no BC company name`);
-  if (!brand.bcConnectionId) throw new Error(`Brand ${code} has no BC connection`);
-
-  const connection = await getBcConnectionById(brand.bcConnectionId);
-  if (!connection?.IsActive) throw new Error(`BC connection for ${code} is not active`);
+  const environment = await resolveErpSourceEnvironment();
+  /* One resolver for both environments, and it does NOT fall back: a tester
+     whose brand has no Sandbox company configured must not sync from the real
+     one. See `brand-bc-profile.ts` — that is the whole reason it answers null
+     rather than the other half. */
+  const profile = await resolveBrandBcProfile(code, environment);
+  if (!profile) throw new Error(missingBcProfileMessage(code, environment));
 
   return {
     brandCode: code,
-    bcCompanyId: brand.bcId.trim(),
-    bcCompanyName: brand.bcName.trim(),
-    bcConnectionId: brand.bcConnectionId,
-    baseUrl: connection.BaseUrl,
+    bcCompanyId: profile.bcCompanyId,
+    bcCompanyName: profile.bcCompanyName,
+    bcConnectionId: profile.bcConnectionId,
+    baseUrl: profile.baseUrl,
+    environment,
   };
 }
 
@@ -119,7 +139,7 @@ async function writeVendor(
   snapshotAt: Date,
 ): Promise<void> {
   await new sql.Request(transaction)
-    .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+    .input("environment", sql.NVarChar, ctx.environment)
     .input("brand", sql.NVarChar, ctx.brandCode)
     .input("companyId", sql.NVarChar, ctx.bcCompanyId)
     .input("companyName", sql.NVarChar, ctx.bcCompanyName)
@@ -179,6 +199,8 @@ async function writeVendor(
 
 async function insertVendorSyncLog(
   brandCode: string,
+  /** Which BC the run read — one answer per sync, decided where it starts. */
+  environment: ErpBcEnvironment,
   status: "success" | "failed",
   rows: number,
   errorMessage: string | null,
@@ -189,6 +211,7 @@ async function insertVendorSyncLog(
   await pool.request()
     .input("syncType", sql.NVarChar, ERP_VENDOR_SYNC_TYPE)
     .input("brand", sql.NVarChar, brandCode)
+    .input("env", sql.NVarChar, environment)
     .input("status", sql.NVarChar, status)
     .input("rows", sql.Int, rows)
     .input("error", sql.NVarChar, errorMessage?.slice(0, 1500) ?? null)
@@ -196,9 +219,9 @@ async function insertVendorSyncLog(
     .input("triggeredBy", sql.Int, triggeredBy)
     .query(`
       INSERT INTO [dbo].[ErpSyncLog]
-        (SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
+        (SourceEnvironment, SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
       VALUES
-        (@syncType, @brand, @status, @rows, @error, @started, SYSDATETIME(), @triggeredBy)
+        (@env, @syncType, @brand, @status, @rows, @error, @started, SYSDATETIME(), @triggeredBy)
     `);
 }
 
@@ -220,7 +243,7 @@ async function enrichVendorHomePages(ctx: BrandVendorSyncContext): Promise<numbe
     ctx.baseUrl,
     ctx.bcCompanyId,
     "vendors",
-    ERP_VENDOR_SOURCE_ENVIRONMENT,
+    ctx.environment,
   )}?$select=number,website`;
 
   const rows = await fetchBcApiV2Collection<{ number?: string; website?: string }>(
@@ -239,7 +262,7 @@ async function enrichVendorHomePages(ctx: BrandVendorSyncContext): Promise<numbe
 
   const pool = await getErpDataPool();
   const existing = await pool.request()
-    .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+    .input("environment", sql.NVarChar, ctx.environment)
     .input("brand", sql.NVarChar, ctx.brandCode)
     .query(`
       SELECT VendorNo, Website FROM [dbo].[ErpVendors]
@@ -259,7 +282,7 @@ async function enrichVendorHomePages(ctx: BrandVendorSyncContext): Promise<numbe
     // Only vendors this sync actually wrote, and only when the value moved.
     if (!current.has(key) || current.get(key) === website) continue;
     const res = await pool.request()
-      .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+      .input("environment", sql.NVarChar, ctx.environment)
       .input("brand", sql.NVarChar, ctx.brandCode)
       .input("no", sql.NVarChar, vendorNo)
       .input("website", sql.NVarChar, website)
@@ -290,7 +313,7 @@ export async function syncBrandErpVendors(
     await transaction.begin(sql.ISOLATION_LEVEL.READ_COMMITTED);
     transactionOpen = true;
     const lock = await new sql.Request(transaction)
-      .input("resource", sql.NVarChar, `erp-vendors:${ERP_VENDOR_SOURCE_ENVIRONMENT}:${ctx.brandCode}`)
+      .input("resource", sql.NVarChar, `erp-vendors:${ctx.environment}:${ctx.brandCode}`)
       .query(`
         DECLARE @lockResult INT;
         EXEC @lockResult = sys.sp_getapplock
@@ -308,14 +331,14 @@ export async function syncBrandErpVendors(
     const rawRows = await postBcCodexStoreRpc<CodexVendorRow>(
       ctx.bcConnectionId,
       ctx.bcCompanyId,
-      ERP_VENDOR_SOURCE_ENVIRONMENT,
+      ctx.environment,
       ctx.baseUrl,
       "RPCCodexStore_CodexGetVendors",
       [],
     );
     const vendors = normalizeCodexVendors(rawRows);
     const active = await new sql.Request(transaction)
-      .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+      .input("environment", sql.NVarChar, ctx.environment)
       .input("brand", sql.NVarChar, ctx.brandCode)
       .query(`
         SELECT COUNT_BIG(1) AS ActiveRows
@@ -332,7 +355,7 @@ export async function syncBrandErpVendors(
     vendorRows = vendors.length;
 
     await new sql.Request(transaction)
-      .input("environment", sql.NVarChar, ERP_VENDOR_SOURCE_ENVIRONMENT)
+      .input("environment", sql.NVarChar, ctx.environment)
       .input("brand", sql.NVarChar, ctx.brandCode)
       .input("snapshotAt", sql.DateTime2, snapshotAt)
       .query(`
@@ -366,12 +389,12 @@ export async function syncBrandErpVendors(
   } catch (error) {
     if (transactionOpen) await transaction.rollback().catch(() => undefined);
     const message = error instanceof Error ? error.message : "Vendor sync failed";
-    await insertVendorSyncLog(ctx.brandCode, "failed", vendorRows, message, triggeredBy, startedAt)
+    await insertVendorSyncLog(ctx.brandCode, ctx.environment, "failed", vendorRows, message, triggeredBy, startedAt)
       .catch(() => undefined);
     throw error;
   }
 
-  await insertVendorSyncLog(ctx.brandCode, "success", vendorRows, homePageNote, triggeredBy, startedAt)
+  await insertVendorSyncLog(ctx.brandCode, ctx.environment, "success", vendorRows, homePageNote, triggeredBy, startedAt)
     .catch(() => undefined);
   return { brandCode: ctx.brandCode, vendorRows, syncedAt: snapshotAt.toISOString() };
 }
@@ -382,7 +405,7 @@ export async function syncAllBrandErpVendors(triggeredBy: number | null): Promis
 }> {
   const results: VendorSyncResult[] = [];
   const errors: { brandCode: string; error: string }[] = [];
-  for (const brand of ERP_INTERFACE_BRANDS) {
+  for (const brand of await listErpInterfaceBrands()) {
     try {
       results.push(await syncBrandErpVendors(brand.id, triggeredBy));
     } catch (error) {

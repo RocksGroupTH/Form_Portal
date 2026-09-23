@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import type { BuSpreadEntry } from "@/lib/erp/location-admin-core";
 import { EmptyRow, LoadingRow, fmtDateTime } from "./shared";
 
@@ -50,7 +50,16 @@ function BuSpread({ spread }: { spread: BuSpreadEntry[] }) {
 }
 
 export function ClrLocationSyncPanel() {
-  const [brand, setBrand] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
+  /* The Company list is fetched now rather than imported — it is whichever
+     brands have a complete Config BC. So the initial value cannot name one:
+     it starts empty and the effect below adopts the first brand the moment the
+     list lands, which is also what re-seeds the screen if an admin completes a
+     brand's Config BC in another tab and the list comes back longer. */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const [brand, setBrand] = useState("");
+  useEffect(() => {
+    if (!brand && ifaceBrands.length > 0) setBrand(ifaceBrands[0].id);
+  }, [brand, ifaceBrands]);
   const [busy, setBusy] = useState(false);
 
   const { data, isLoading, mutate } = useSWR<{ ok: boolean; error?: string; data?: Payload }>(
@@ -93,7 +102,7 @@ export function ClrLocationSyncPanel() {
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1">
-          {ERP_INTERFACE_BRANDS.map((b) => {
+          {ifaceBrands.map((b) => {
             const active = b.id === brand;
             return (
               <button

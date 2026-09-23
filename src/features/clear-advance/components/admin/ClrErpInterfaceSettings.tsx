@@ -7,7 +7,7 @@ import { AlertTriangle, CheckCircle2, Circle, Pencil, Save } from "lucide-react"
 import { Button } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import { Dialog } from "@/components/ui/Dialog";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import {
   groupByTargetIncludingEmpty,
   groupValue,
@@ -407,7 +407,8 @@ function GroupCard({
     setOpen(true);
   }
 
-  const iface = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const iface = ifaceBrands.find((b) => b.id === target);
   const bcLine = [first?.bcName, first?.bcConnectionName, first?.environment]
     .map((v) => v?.trim())
     .filter(Boolean)
@@ -421,10 +422,10 @@ function GroupCard({
       }}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {iface && (
+          {iface?.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={iface.logo} alt="" className="h-6 w-auto object-contain" />
-          )}
+          ) : null}
           <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{target}</span>
           <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
             {members.length} แบรนด์เบิก
@@ -655,16 +656,17 @@ export function ClrErpInterfaceSettings() {
    * thing — somebody mapped it somewhere unexpected — and keeps its group,
    * because that is precisely what needs to be seen.
    */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const { groups, unassigned } = useMemo(() => {
-    const known = new Set(ERP_INTERFACE_BRANDS.map((b) => b.id));
+    const known = new Set(ifaceBrands.map((b) => b.id));
     const targetByClaim: Record<string, string> = {};
     for (const r of rows) {
       const t = (r.interfaceTarget ?? "").trim().toUpperCase();
       const unmapped = !known.has(t) && t === r.brandCode.trim().toUpperCase();
       targetByClaim[r.brandCode] = unmapped ? "" : t;
     }
-    return groupByTargetIncludingEmpty(rows, targetByClaim, ERP_INTERFACE_BRANDS.map((b) => b.id));
-  }, [rows]);
+    return groupByTargetIncludingEmpty(rows, targetByClaim, ifaceBrands.map((b) => b.id));
+  }, [rows, ifaceBrands]);
 
   return (
     <div className="flex flex-col gap-4">

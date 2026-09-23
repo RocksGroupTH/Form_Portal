@@ -1,4 +1,3 @@
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 import type { ErpPrepStatus } from "@/features/accounting/constants";
 import type { ErpPrepRow } from "@/lib/acc/erp-prep-service";
 import {
@@ -611,8 +610,13 @@ export function buildErpJournalSections(
 
   const sections: ErpInterfaceTargetSection[] = [];
 
-  for (const iface of ERP_INTERFACE_BRANDS) {
-    const code = iface.id.toUpperCase();
+  /* Over the context's own `targetMeta` rather than a fresh brand read, which
+     is what keeps this builder pure and synchronous — it turns prepared rows
+     into journal sections and must stay testable with no database. `targetMeta`
+     is built from `listErpInterfaceBrands()` one layer up
+     (`erp-journal-context.ts`) and carries the same set in the same order. */
+  for (const iface of ctx.targetMeta) {
+    const code = iface.targetBrandCode.toUpperCase();
     const targetRows = rowsByTarget.get(code) ?? [];
     if (targetRows.length === 0) continue;
 
@@ -629,7 +633,7 @@ export function buildErpJournalSections(
 
     sections.push({
       targetBrandCode: code,
-      targetBrandName: meta?.targetBrandName ?? iface.name,
+      targetBrandName: meta?.targetBrandName ?? iface.targetBrandName,
       targetBrandLogo: meta?.targetBrandLogo ?? `/brandlogo/${code.toLowerCase()}-200.png`,
       claimBrands: meta?.claimBrands ?? [],
       journalBatchName: meta?.journalBatchName ?? null,

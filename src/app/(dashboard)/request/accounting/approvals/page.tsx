@@ -13,6 +13,7 @@ import { AccountApproverGuard } from "@/features/accounting/components/AccountAp
 import { useApproverInterfaceAccess } from "@/features/accounting/hooks/useApproverInterfaceAccess";
 import { parseInterfaceTargetForAccess } from "@/features/accounting/lib/erp-interface-target";
 import { filterInterfaceBrandCodes } from "@/lib/acc/approver-interface-access-shared";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { ClipboardCheck, Upload } from "lucide-react";
 
 type TabKey = "approve" | "interface";
@@ -56,22 +57,31 @@ function AccountingApprovalsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { access, ready: accessReady } = useApproverInterfaceAccess();
-  const visibleCodes = useMemo(() => filterInterfaceBrandCodes(access), [access]);
+  /* The interface brand list is fetched rather than imported since
+     2026-09-23. `allAccess` resolves to WHATEVER IS IN THIS LIST, so an
+     approver with no scope rows sees no tabs until it lands — which is what
+     the strip already did while its own counts loaded. */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const ifaceCodes = useMemo(() => ifaceBrands.map((b) => b.id), [ifaceBrands]);
+  const visibleCodes = useMemo(
+    () => filterInterfaceBrandCodes(access, ifaceCodes),
+    [access, ifaceCodes],
+  );
   const activeTab = useMemo(() => parseTab(searchParams.get("tab")), [searchParams]);
   const interfaceTarget = useMemo(
-    () => parseInterfaceTargetForAccess(searchParams.get("iface"), access),
-    [searchParams, access],
+    () => parseInterfaceTargetForAccess(searchParams.get("iface"), access, ifaceCodes),
+    [searchParams, access, ifaceCodes],
   );
 
   useEffect(() => {
     if (!accessReady) return;
     const raw = searchParams.get("iface")?.trim().toUpperCase();
     if (raw && raw === interfaceTarget) return;
-    if (!raw && interfaceTarget === parseInterfaceTargetForAccess(null, access)) return;
+    if (!raw && interfaceTarget === parseInterfaceTargetForAccess(null, access, ifaceCodes)) return;
     const q = new URLSearchParams(searchParams.toString());
     q.set("iface", interfaceTarget);
     router.replace(`/request/accounting/approvals?${q.toString()}`, { scroll: false });
-  }, [interfaceTarget, searchParams, router, access, accessReady]);
+  }, [interfaceTarget, searchParams, router, access, accessReady, ifaceCodes]);
 
   const setTab = useCallback(
     (tab: TabKey) => {

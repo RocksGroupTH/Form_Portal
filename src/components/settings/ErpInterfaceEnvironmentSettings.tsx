@@ -12,7 +12,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 
 const API_URL = "/api/settings/erp-interface";
@@ -358,7 +357,7 @@ export function ErpInterfaceEnvironmentSettings() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              UAT พร้อมใช้ {uatCompleteCount}/{ERP_INTERFACE_BRANDS.length} กลุ่ม
+              UAT พร้อมใช้ {uatCompleteCount}/{settings.prodTargets.length} กลุ่ม
             </span>
             <Link
               href="/settings/brand-config"
@@ -439,8 +438,8 @@ export function ErpInterfaceEnvironmentSettings() {
               </tr>
             </thead>
             <tbody>
-              {ERP_INTERFACE_BRANDS.map((b) => {
-                const code = b.id.toUpperCase();
+              {settings.prodTargets.map((b) => {
+                const code = b.brandCode.toUpperCase();
                 const row = uatByCode.get(code) ?? {
                   brandCode: code,
                   descriptionPrefix: null,
@@ -452,7 +451,7 @@ export function ErpInterfaceEnvironmentSettings() {
                   <UatBrandRow
                     key={code}
                     brandCode={code}
-                    brandName={b.name}
+                    brandName={b.brandName}
                     prodTarget={prodByCode.get(code)}
                     row={row}
                     connections={settings.bcConnections}

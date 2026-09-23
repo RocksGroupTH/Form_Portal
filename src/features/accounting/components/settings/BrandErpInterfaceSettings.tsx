@@ -7,7 +7,7 @@ import { ExternalLink, CheckCircle2, ChevronRight, Circle, GitBranch, Pencil, Pl
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
 import { Dialog } from "@/components/ui/Dialog";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import {
   ErpAccountSyncPopup,
@@ -1698,6 +1698,8 @@ export interface BrandErpInterfaceSettingsProps {
 }
 
 export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettingsProps) {
+  // Which brands the ERP sync sweeps — whichever have a complete Config BC.
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: PageData; error?: string }>(
     "/api/request/accounting/settings/erp-config",
     fetcher,
@@ -1870,7 +1872,7 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
       return;
     }
 
-    const totalSteps = ERP_INTERFACE_BRANDS.length * activeSyncPhases.length;
+    const totalSteps = ifaceBrands.length * activeSyncPhases.length;
     let doneSteps = 0;
     let totalRows = 0;
     const errors: string[] = [];
@@ -1896,7 +1898,7 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
     };
 
     try {
-      for (const brand of ERP_INTERFACE_BRANDS) {
+      for (const brand of ifaceBrands) {
         for (const { phase, label } of activeSyncPhases) {
           updateProgress(brand.id, label);
           try {

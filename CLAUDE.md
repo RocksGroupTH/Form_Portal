@@ -1545,6 +1545,89 @@ component calls is not reachable from a behavioural test.
 
 Accounting requests can be pushed into Dynamics 365 Business Central. Configuration lives under **Settings**: Database Connections, Business Central (OAuth2 connection), Brand Configuration (per-brand BC + ERP SQL target), ERP Interface Environment (per-brand Sandbox company and connection, System Admin only — which forms use it is set at Settings → Form Environment). Sync logic in `src/lib/erp/account-sync.ts` and `src/lib/erp/dimension-sync.ts` (both query `Rocks_ERP_Data`, not `Fast_Data` — migrations 101/102, see "The ERP sync tables moved out of Fast_Data" above), OData client in `src/lib/bc/`. Data **synced from** Business Central lives in `Rocks_ERP_Data`; the per-brand and per-form **choices this app makes** about where money posts — `AccBrandGlAccount`, `AccBrandJournalBatch`, `AccBrandBankAccount`, `AccBrandBranchCode`, `AccBrandErpInterface` — stay in the form database.
 
+##### Which brands can be interfaced into — derived, not listed (2026-09-23)
+
+**A brand is an ERP interface target when its Config BC is complete**, meaning
+its `Fast_Core.dbo.BrandConfig` row carries both a `BcId` and a
+`BcConnectionId`. `listErpInterfaceBrands()` (`src/lib/acc/erp-interface-brands.ts`)
+is that query, joined against the company master so a `BrandConfig` row for a
+code the master does not carry is inert — measured that day, `BrandConfig` holds
+`PAL`, `PL`, `SAN` and `SM`, none of which the master has.
+
+**It replaced `ERP_INTERFACE_BRANDS`, a literal of four**, which was
+`BRANDS.filter(b => b.enabled)` from `@/lib/brand`. That list was right by
+coincidence: the master holds **seven** active brands (ROCKS, PCTH, PCMY, KSI,
+UNO, PLM, SMR) and exactly four carry a `BcId`. The coincidence ended when an
+admin filled in SANMAI's Config BC — Settings → Brand Configuration refused the
+Save outright (see the brand-config fix the same day), and even once that was
+fixed the brand had no row on Settings → ERP Interface Environment to give it a
+UAT company, no column on any approver brand-scope grid, and no tab on any
+Interface ERP screen.
+
+**Thirty-four files consumed the constant** — AP-1's, AP-4's and AP-17's
+approver brand scopes, the journal builder and context, three ERP syncs, the
+department map, and fourteen client components.
+
+- **Server code calls `listErpInterfaceBrands()`** directly.
+- **Client components read `useErpInterfaceBrands()`** over
+  `GET /api/brands/erp-interface` (`requireAuth`; it lists company codes and
+  names that every one of those screens already renders, and the settings
+  routes behind them keep their own gates). One hook, one SWR key, one cache
+  entry rather than fourteen. **It never falls back to the old four** — a stale
+  literal behind a failed fetch would invite somebody to save a mapping against
+  a company this app can no longer see.
+- **Pure modules TAKE the list rather than importing it**, which is the shape
+  that mattered most: `erp-interface-target.ts`, `brand-erp-interface-groups.ts`,
+  `approver-interface-access-shared.ts`, `erp-journal-builder.ts` and
+  `reimburse/brand-scope.ts` all stay synchronous, import-free and testable with
+  no database. An async pure module is neither. Where a caller already held the
+  set — `erpPage.targetBrands`, `ctx.targetMeta` — it is read from there rather
+  than fetched twice, so the two cannot disagree.
+
+**`isErpInterfaceBrandCode` was RENAMED to `isErpInterfaceBrand`, and the
+rename is load-bearing.** Three call sites used the synchronous result as a bare
+boolean — `.filter((c) => isErpInterfaceBrandCode(c))` in the AP-1 approvers
+route, `if (isErpInterfaceBrandCode(c)) set.add(c)` in
+`approver-interface-access.ts`, and `if (isErpInterfaceBrandCode(code)) return;`
+in `brand-journal-batch-service.ts`. **A promise is always truthy**, so making
+it async under the same name would have left all three compiling, green, and
+silently admitting every code — on the rows that scope an approver and on the
+guard deciding whether a journal batch's brand is checked at all. TypeScript
+does not catch it: `Array.filter` takes a predicate returning `unknown`, and an
+`if` takes anything. Renaming turned all nine call sites into compile errors,
+which is the only thing that made the conversion safe to do at once.
+`erp-interface-brand-source-guard.test.ts` reads every source file and asserts
+the old name is gone, the literal is gone, and **every call is awaited** —
+mutation-verified by dropping one `await` on a posted Company code.
+
+**AP-4's `SCOPE_BRAND_CODES` is deleted with it.** `reimburse/brand-scope.ts`
+inlined `["PCTH","KSI","PCMY","UNO"]` to stay import-free, with a test asserting
+it could not drift from `ERP_INTERFACE_BRANDS`. That test was right up to the
+moment the other list stopped being a literal — *a mirror of a database read
+cannot be a literal at all*. Left alone it was the same defect one level down:
+ticking a newly configured brand for an AP-4 approver would be dropped on save
+as "not one of the four", silently. `normalizeScopeTargets` now takes the live
+codes (its three callers all have a pool), and `canActOnTarget` and
+`isApproverScope` no longer test membership at all — the entries reaching them
+are narrowed on **both** sides of the table, by `brand-scope-load.ts` on the way
+out and the settings service on the way in. What protects the CHECK-less column
+is equality with the document's own resolved target, not an allow-list a pure
+module cannot hold.
+
+**What did NOT change, and must not**: the list is still not keyed on
+`BrandSetting.IsEnabled`. `brand.ts` names that hazard — a brand would become a
+posting target the moment somebody made it visible, with no BC configuration
+behind it — and measured 2026-09-23 every `BrandSetting` row in production reads
+`IsEnabled = 0`, so keying on the switch would have emptied every Interface ERP
+screen in the app.
+
+**One behaviour moved as a consequence, on AP-1's approver grid.**
+`ApproverInterfaceBrandTable` collapses an all-ticked set to `null`, which AP-1
+reads as unrestricted. With a fifth brand configured, four-of-five now stores
+those four explicitly instead. That is the more faithful record and the safer
+direction — an explicit four scopes them to four, where `null` would silently
+widen them to whatever is configured next.
+
 ##### Per-form ERP configuration — the default and override rule
 
 Seven brand-keyed configuration tables carry a `FormCode NVARCHAR(20) NULL`

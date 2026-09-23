@@ -4,15 +4,26 @@
  * **This is no longer the list of brands.** `src/lib/brand-registry.ts` is —
  * the company brand master joined with `BrandSetting` — and `/api/brands` is
  * what `BrandProvider`, `BrandGate` and `BrandSwitcher` read. `BRANDS` below
- * survives for two things only:
+ * survives for ONE thing:
  *
- * - `erp-interface-brands.ts`, whose meaning is "brands with a complete BC
- *   profile", **not** "brands this app offers". Those are different questions
- *   and only look alike because the answer was the same four. Wiring it to the
- *   switch would make a brand an ERP posting target the moment somebody enabled
- *   it, with no BC configuration behind it.
  * - `getBrandDashboardReadiness` in `brand-config.ts`, which is dead code kept
- *   for the Rocks Fast sibling.
+ *   for the Rocks Fast sibling. It is the **only** importer left, and
+ *   `brand-source-guard.test.ts` pins that by exact path.
+ *
+ * **`erp-interface-brands.ts` was the second and is not any more** (2026-09-23).
+ * It meant "brands with a complete BC profile" — never "brands this app
+ * offers", and the two only looked alike because the answer was the same four.
+ * That coincidence ended the day somebody configured a fifth: the master holds
+ * seven active brands, four carry a `BcId`, and an admin completing SANMAI's
+ * Config BC had no way to make it an interface target. It now answers the
+ * question from `BrandConfig` instead of mirroring this list.
+ *
+ * **The hazard that paragraph named is unchanged and still governs**: do not
+ * wire the interface brands to the enabled switch. A brand becomes an ERP
+ * posting target by having BC configuration behind it, not by being visible in
+ * a picker — and measured 2026-09-23, every `BrandSetting` row in production
+ * reads `IsEnabled = 0`, so keying on the switch would empty every Interface
+ * ERP screen in the app.
  *
  * Adding a brand here does **not** put it in the picker, and a brand in the
  * picker need not be here.

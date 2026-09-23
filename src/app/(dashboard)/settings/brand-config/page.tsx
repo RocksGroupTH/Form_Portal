@@ -31,6 +31,9 @@ interface BrandConfigRow {
   bcName: string | null;
   bcConnectionId: number | null;
   bcConnectionName: string | null;
+  bcUatId: string | null;
+  bcUatName: string | null;
+  bcUatConnectionId: number | null;
   dbConnectionId: number | null;
   dbConnectionCode: string | null;
   dbConnectionName: string | null;
@@ -59,6 +62,9 @@ type FormState = {
   bcId: string;
   bcName: string;
   bcConnectionId: string;
+  bcUatId: string;
+  bcUatName: string;
+  bcUatConnectionId: string;
   dbConnectionId: string;
   databaseName: string;
   dashboardDbConnectionId: string;
@@ -77,6 +83,9 @@ function formFromRow(c: BrandConfigRow): FormState {
     bcId: c.bcId ?? "",
     bcName: c.bcName ?? "",
     bcConnectionId: c.bcConnectionId != null ? String(c.bcConnectionId) : "",
+    bcUatId: c.bcUatId ?? "",
+    bcUatName: c.bcUatName ?? "",
+    bcUatConnectionId: c.bcUatConnectionId != null ? String(c.bcUatConnectionId) : "",
     dbConnectionId: c.dbConnectionId != null ? String(c.dbConnectionId) : "",
     databaseName: c.databaseName ?? "",
     dashboardDbConnectionId:
@@ -187,10 +196,10 @@ function BrandConfigCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div
-          className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+          className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
           style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
         >
-          <BrandMark src={config.brandLogo} alt={config.brandName} code={config.brandCode} size={36} rounded="rounded" />
+          <BrandMark src={config.brandLogo} alt={config.brandName} code={config.brandCode} size={48} rounded="rounded-xl" />
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           {st.groups.map((g) => (
@@ -412,6 +421,19 @@ function BrandConfigModal({
   onLogoChanged: () => Promise<unknown>;
 }) {
   const set = (key: keyof FormState, value: string) => onChange({ ...form, [key]: value });
+  /**
+   * Which half of Config BC is on screen (the user, 2026-09-23).
+   *
+   * **It is a view switch, not a mode the save honours.** Both halves are kept
+   * in one `form` and both are sent on Save, so filling in UAT and switching
+   * back to PRO before saving does not lose the UAT values — which is what a
+   * toggle that only saved its visible half would do, silently, to somebody who
+   * had just typed into it.
+   *
+   * It always opens on PRO: that is the half almost every visit is about, and
+   * it is the half whose completeness the header badge describes.
+   */
+  const [bcEnv, setBcEnv] = useState<"PRO" | "UAT">("PRO");
   const [bcStatus, erpStatus] = getGroupStatusesFromForm(form);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const [logoBusy, setLogoBusy] = useState(false);
@@ -491,15 +513,15 @@ function BrandConfigModal({
             </p>
             <div className="flex items-center gap-3">
               <div
-                className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
+                className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0 overflow-hidden"
                 style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
               >
                 <BrandMark
                   src={brand.brandLogo}
                   alt={brand.brandName}
                   code={brand.brandCode}
-                  size={40}
-                  rounded="rounded"
+                  size={56}
+                  rounded="rounded-xl"
                 />
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-1.5">
@@ -546,21 +568,89 @@ function BrandConfigModal({
           </div>
 
           <div>
-            <SectionHeader status={bcStatus} />
+            {/* The badge describes the PRODUCTION half only, and deliberately:
+                it is what "this brand is configured" has always meant, it is
+                what the card on the page behind shows, and a Sandbox company
+                is optional — most brands have never had one. Making it
+                conditional on both would mark every working brand Incomplete
+                the day this shipped. */}
+            <SectionHeader
+              status={
+                bcEnv === "PRO"
+                  ? bcStatus
+                  : { ...getBcGroupStatus(form.bcUatId, form.bcUatName), label: "Config BC (UAT)" }
+              }
+            />
+
+            {/* PRO / UAT — the user, 2026-09-23: one Config BC section, two
+                environments, "เพื่อที่จะเอาไว้ใช้ในการ sync data or Send data
+                to ERP". The two halves live in different tables and neither
+                moved: PRO is BrandConfig, UAT is AccBrandErpTargetSetting, the
+                same rows Settings → ERP Interface Environment edits. */}
+            {/* A segmented control rather than two chips. The selected half is
+                FILLED — the primary button colour, white text — against a plain
+                track, so which one is showing is readable at a glance rather
+                than a shade apart; the first version tinted the active one and
+                the two were hard to tell apart on screen (the user, 2026-09-23).
+                `aria-pressed` carries the same fact to a screen reader, which a
+                colour difference alone does not. */}
+            <div
+              className="inline-flex gap-1 p-1 rounded-xl mb-3"
+              style={{ background: "var(--bg-badge)" }}
+              role="group"
+              aria-label="Config BC environment"
+            >
+              {(["PRO", "UAT"] as const).map((e) => {
+                const active = bcEnv === e;
+                return (
+                  <button
+                    key={e}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setBcEnv(e)}
+                    className="px-4 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border-none transition-colors"
+                    style={{
+                      /* The SOLID action colour, not `--btn-primary-bg`. That
+                         token is a 14% wash against the card (globals.css
+                         explains why, for buttons that must not shout), which
+                         is precisely the near-invisible selection the user
+                         reported. A segmented control has to say which segment
+                         is live, so this one is filled. White is safe on it in
+                         both themes: `--color-action` is single-valued by
+                         design — only the washes built from it move. */
+                      background: active ? "var(--color-action)" : "transparent",
+                      color: active ? "#fff" : "var(--text-muted)",
+                      boxShadow: active ? "var(--shadow-card)" : "none",
+                    }}
+                  >
+                    {e}
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Id</span>
-                <input value={form.bcId} onChange={(e) => set("bcId", e.target.value)} className={inputCls} style={inputStyle} placeholder="BC Company Id" />
+                {bcEnv === "PRO" ? (
+                  <input value={form.bcId} onChange={(e) => set("bcId", e.target.value)} className={inputCls} style={inputStyle} placeholder="BC Company Id" />
+                ) : (
+                  <input value={form.bcUatId} onChange={(e) => set("bcUatId", e.target.value)} className={inputCls} style={inputStyle} placeholder="BC Company Id (Sandbox)" />
+                )}
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>Name</span>
-                <input value={form.bcName} onChange={(e) => set("bcName", e.target.value)} className={inputCls} style={inputStyle} placeholder="BC Company Name" />
+                {bcEnv === "PRO" ? (
+                  <input value={form.bcName} onChange={(e) => set("bcName", e.target.value)} className={inputCls} style={inputStyle} placeholder="BC Company Name" />
+                ) : (
+                  <input value={form.bcUatName} onChange={(e) => set("bcUatName", e.target.value)} className={inputCls} style={inputStyle} placeholder="BC Company Name (Sandbox)" />
+                )}
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>BC Connection</span>
                 <SearchableSelect
-                  value={form.bcConnectionId}
-                  onChange={(v) => set("bcConnectionId", v)}
+                  value={bcEnv === "PRO" ? form.bcConnectionId : form.bcUatConnectionId}
+                  onChange={(v) => set(bcEnv === "PRO" ? "bcConnectionId" : "bcUatConnectionId", v)}
                   options={connectionOptions(bcConnections)}
                   placeholder="— Select BC connection —"
                   emptyLabel="— Select BC connection —"
@@ -568,6 +658,11 @@ function BrandConfigModal({
                   triggerBackground="var(--bg-input)"
                 />
               </label>
+              <p className="text-[10px] m-0 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                {bcEnv === "PRO"
+                  ? "ใช้ตอน sync ข้อมูลจาก BC และส่ง Journal สำหรับผู้ใช้ทั่วไป"
+                  : "ใช้ตอน sync และส่ง Journal สำหรับผู้ที่เปิด UAT — ถ้าไม่ตั้งค่า ผู้ทดสอบจะ sync ไม่ได้ (ระบบจะไม่ไปใช้ของ PRO แทน)"}
+              </p>
             </div>
           </div>
 
@@ -652,6 +747,9 @@ export default function BrandConfigPage() {
     bcId: "",
     bcName: "",
     bcConnectionId: "",
+    bcUatId: "",
+    bcUatName: "",
+    bcUatConnectionId: "",
     dbConnectionId: "",
     databaseName: "",
     dashboardDbConnectionId: "",
@@ -717,6 +815,13 @@ export default function BrandConfigPage() {
           bcId: form.bcId || null,
           bcName: form.bcName || null,
           bcConnectionId: form.bcConnectionId ? Number(form.bcConnectionId) : null,
+          /* BOTH halves, always — never just the one the toggle is showing.
+             The toggle switches a view, not what is saved: sending only the
+             visible half would clear the other one, because `updateBrandConfig`
+             treats an explicit null as "clear" and these are always present. */
+          bcUatId: form.bcUatId || null,
+          bcUatName: form.bcUatName || null,
+          bcUatConnectionId: form.bcUatConnectionId ? Number(form.bcUatConnectionId) : null,
           dbConnectionId: hasDbServerSelected(form.dbConnectionId) ? Number(form.dbConnectionId) : null,
           databaseName: hasDbServerSelected(form.dbConnectionId) ? form.databaseName || null : null,
           // Not editable here — echoed back exactly as the API returned them so

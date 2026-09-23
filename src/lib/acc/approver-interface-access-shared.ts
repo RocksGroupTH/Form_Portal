@@ -1,4 +1,18 @@
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+/**
+ * What an approver may act on, expressed over interface brand codes.
+ *
+ * **Pure and import-free since 2026-09-23**, and that is a property worth
+ * naming: this module answers authorization questions — `canActOnInterfaceTarget`,
+ * `canActOnClaimBrand`, `canRetargetClaimBrand` — on paths that move money, and
+ * it is unit-tested with no database precisely because it reaches nothing.
+ *
+ * It used to import `ERP_INTERFACE_BRANDS` for one function,
+ * `allInterfaceBrandCodes()`. That constant became a database read
+ * (`listErpInterfaceBrands`), and importing the async version would have made
+ * this module async and un-pure for the sake of a default. The codes are passed
+ * in instead — every caller already has them, from `listErpInterfaceBrands()`
+ * server-side or `useErpInterfaceBrands()` in the browser.
+ */
 
 export interface ApproverInterfaceAccess {
   /** true = no rows in AccApproverInterfaceBrand (or IT Admin) */
@@ -7,14 +21,22 @@ export interface ApproverInterfaceAccess {
   allowedCodes: string[];
 }
 
-export function allInterfaceBrandCodes(): string[] {
-  return ERP_INTERFACE_BRANDS.map((b) => b.id);
-}
-
+/**
+ * The codes this access resolves to.
+ *
+ * `allAccess` means every interface brand, so the caller's list IS the answer —
+ * which is why it has to be supplied rather than looked up here. An empty
+ * `allCodes` under `allAccess` therefore answers empty, and that is correct
+ * rather than a fail-open: it means the caller does not yet know what the
+ * brands are, and a list filtered to nothing shows nothing. **It is never used
+ * to decide whether somebody MAY act** — `canActOnInterfaceTarget` below is,
+ * and it short-circuits on `allAccess` without consulting any list at all.
+ */
 export function filterInterfaceBrandCodes(
   access: ApproverInterfaceAccess,
+  allCodes: readonly string[],
 ): string[] {
-  if (access.allAccess) return allInterfaceBrandCodes();
+  if (access.allAccess) return Array.from(allCodes);
   return access.allowedCodes;
 }
 

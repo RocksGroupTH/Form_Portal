@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import {
   listErpAccountOptions,
   listErpAccountsForBrands,
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, data });
     }
 
-    const codes = ERP_INTERFACE_BRANDS.map((b) => b.id);
+    const codes = (await listErpInterfaceBrands()).map((b) => b.id);
     const [accounts, branches, departments] = await Promise.all([
       listErpAccountsForBrands(codes),
       listErpBranchesForBrands(codes),

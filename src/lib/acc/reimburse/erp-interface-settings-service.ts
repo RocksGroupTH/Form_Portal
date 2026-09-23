@@ -2,7 +2,7 @@ import { listAllBrands } from "@/lib/acc/brand-options";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { resolveAllErpTargetProfiles } from "@/lib/acc/erp-target-profile";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import {
   listBrandErpInterfaceMaps,
   upsertFormBrandErpInterfaceMap,
@@ -135,7 +135,8 @@ export interface ReimburseErpGroupsView {
 }
 
 /**
- * One group per entry of `ERP_INTERFACE_BRANDS` (PCTH, KSI, PCMY, UNO),
+ * One group per interface brand — every brand whose Config BC is complete,
+ * which was the four literals PCTH / KSI / PCMY / UNO until 2026-09-23 —
  * empty groups included, plus an `unassigned` bucket for every claim brand
  * AP-4 may claim against that has no `AccBrandErpInterface` row at all.
  *
@@ -225,7 +226,7 @@ export async function loadReimburseErpGroups(): Promise<ReimburseErpGroupsView> 
     targetByCode.set(code, ifaceRow?.interfaceBrandCode?.trim().toUpperCase() || null);
   }
 
-  const groups: ReimburseErpGroup[] = ERP_INTERFACE_BRANDS.map((iface) => {
+  const groups: ReimburseErpGroup[] = (await listErpInterfaceBrands()).map((iface) => {
     const targetCode = iface.id.toUpperCase();
     const memberCodes = codes.filter((code) => targetByCode.get(code) === targetCode);
     const members = memberCodes.map((code) => memberByCode.get(code)!);

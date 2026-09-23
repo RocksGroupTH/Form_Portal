@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import {
   defaultsOnly,
   perFormOrderBy,
@@ -82,7 +82,7 @@ export async function listErpTargetSettings(
     : defaultsOnly(rows);
 
   const byCode = new Map(resolved.map((row) => [row.brandCode, row]));
-  return ERP_INTERFACE_BRANDS.map((b) => {
+  return (await listErpInterfaceBrands()).map((b) => {
     const code = b.id.toUpperCase();
     return (
       byCode.get(code) ?? {

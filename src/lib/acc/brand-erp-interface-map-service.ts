@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import {
   defaultsOnly,
   perFormOrderBy,
@@ -91,7 +91,7 @@ export async function upsertBrandErpInterfaceMap(
   const target = interfaceBrandCode.trim().toUpperCase();
   if (!claim) throw new Error("กรุณาระบุแบรนด์เบิก");
   if (!target) throw new Error("กรุณาเลือกแบรนด์ปลายทาง");
-  if (!isErpInterfaceBrandCode(target)) {
+  if (!(await isErpInterfaceBrand(target))) {
     throw new Error(`แบรนด์ปลายทาง "${target}" ไม่มีใน Brand Config`);
   }
 
@@ -183,7 +183,7 @@ export async function upsertFormBrandErpInterfaceMap(
   if (!claim) throw new Error("กรุณาระบุแบรนด์เบิก");
   if (!target) throw new Error("กรุณาเลือกแบรนด์ปลายทาง");
   if (!form) throw new Error("กรุณาระบุ FormCode");
-  if (!isErpInterfaceBrandCode(target)) {
+  if (!(await isErpInterfaceBrand(target))) {
     throw new Error(`แบรนด์ปลายทาง "${target}" ไม่มีใน Brand Config`);
   }
   await writeBothPools(async (tx) => {

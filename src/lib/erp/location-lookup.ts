@@ -8,6 +8,7 @@
  * what the journal builder consults instead.
  */
 
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getErpDataPool, sql } from "@/lib/db/mssql";
 import { buildBranchLookup, type BranchLookupEntry, type LocationRow } from "./location-lookup-core";
 
@@ -32,6 +33,7 @@ export async function loadBranchLookup(brandCode: string | null | undefined): Pr
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, code)
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT
         l.BranchCode,
@@ -48,11 +50,12 @@ export async function loadBranchLookup(brandCode: string | null | undefined): Pr
         CAST(ISNULL(d.IsBlocked, 0) AS BIT) AS IsBranchBlocked
       FROM [dbo].[ErpLocation] l
       LEFT JOIN [dbo].[ErpDimensionValue] d
-        ON d.BrandCode = l.BrandCode
+        ON d.SourceEnvironment = l.SourceEnvironment
+       AND d.BrandCode = l.BrandCode
        AND d.DimensionCode = 'BRANCH'
        AND d.Code = l.BranchCode
        AND d.IsActive = 1
-      WHERE l.BrandCode = @brand AND l.IsActive = 1 AND l.BranchCode IS NOT NULL
+      WHERE l.SourceEnvironment = @env AND l.BrandCode = @brand AND l.IsActive = 1 AND l.BranchCode IS NOT NULL
     `);
 
   // Map the columns across explicitly. `recordset` carries the SELECT's own

@@ -3,7 +3,6 @@ import type {
   AccBrandJournalBatchRow,
   AccErpTargetBrandOption,
 } from "@/features/accounting/types";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
 
 export interface TargetErpGroup {
   targetBrandCode: string;
@@ -46,7 +45,12 @@ export function buildTargetErpGroups(
     };
   });
 
-  const order = ERP_INTERFACE_BRANDS.map((b) => b.id);
+  /* The order comes from `targetBrands`, the caller's own list, which IS the
+     interface brand set — `getBrandErpConfigPage` builds it from
+     `listErpInterfaceBrands()`. Taking it from here rather than from a module
+     constant is what keeps this file pure: it is rendered by client
+     components, and the replacement constant reaches a pool. */
+  const order = targetBrands.map((b) => b.brandCode.toUpperCase());
   groups.sort((a, b) => {
     const ai = order.indexOf(a.targetBrandCode);
     const bi = order.indexOf(b.targetBrandCode);
@@ -59,7 +63,7 @@ export function buildTargetErpGroups(
   return { groups, unassigned };
 }
 
-/** All ERP interface targets (PCTH, KSI, PCMY, UNO) — empty groups included. */
+/** Every ERP interface target the caller was given — empty groups included. */
 export function buildAllTargetErpGroups(
   brands: AccBrandErpConfigRow[],
   targetByClaim: Record<string, string>,
@@ -68,14 +72,14 @@ export function buildAllTargetErpGroups(
   const { groups, unassigned } = buildTargetErpGroups(brands, targetByClaim, targetBrands);
   const byCode = new Map(groups.map((g) => [g.targetBrandCode.toUpperCase(), g]));
 
-  const allGroups: TargetErpGroup[] = ERP_INTERFACE_BRANDS.map((iface) => {
-    const code = iface.id.toUpperCase();
+  const allGroups: TargetErpGroup[] = targetBrands.map((iface) => {
+    const code = iface.brandCode.toUpperCase();
     const existing = byCode.get(code);
     if (existing) return existing;
     const t = targetBrands.find((x) => x.brandCode.toUpperCase() === code);
     return {
       targetBrandCode: code,
-      targetBrandName: t?.brandName ?? iface.name,
+      targetBrandName: t?.brandName ?? iface.brandName,
       targetBrandLogo: `/brandlogo/${code.toLowerCase()}-200.png`,
       claimRows: [],
     };

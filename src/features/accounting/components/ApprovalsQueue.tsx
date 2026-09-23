@@ -41,6 +41,7 @@ import { fmtReportTravelDate, fmtYmdDisplay } from "@/features/accounting/lib/fo
 import { fmtReportVehicleNames, reportVehicleNames } from "@/features/accounting/lib/travel-sections";
 import type { ReportRow, ReportTravelDayLine, ReportTravelVehicleLine } from "@/lib/acc/report-service";
 import type { AccRequest, TravelExpenseItem } from "@/features/accounting/types";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { ErpInterfaceBrandTabs } from "@/features/accounting/components/ErpInterfaceBrandTabs";
 import type { ErpJournalBuildContext } from "@/lib/acc/erp-journal-builder";
 import {
@@ -462,9 +463,15 @@ export function ApprovalsQueue({
     [rows, filters],
   );
 
+  /* The zero-seeded tabs come from the fetched interface brand list — the
+     counts themselves are derived from the rows either way, so a group whose
+     brand has not arrived yet is simply not given a tab, exactly as an
+     unconfigured one is not. */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const ifaceCodes = useMemo(() => ifaceBrands.map((b) => b.id), [ifaceBrands]);
   const ifaceCounts = useMemo(
-    () => countRowsByInterfaceTarget(rows, interfaceByClaim),
-    [rows, interfaceByClaim],
+    () => countRowsByInterfaceTarget(rows, interfaceByClaim, ifaceCodes),
+    [rows, interfaceByClaim, ifaceCodes],
   );
 
   const ifaceFilteredRows = useMemo(

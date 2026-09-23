@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { ERP_INTERFACE_UNASSIGNED } from "@/features/accounting/lib/erp-interface-target";
 
 export interface ErpInterfaceBrandTabsProps {
@@ -25,9 +25,14 @@ export function ErpInterfaceBrandTabs({
   const active = activeCode.trim().toUpperCase();
   const unassignedCount = counts[ERP_INTERFACE_UNASSIGNED] ?? 0;
 
+  /* Fetched rather than imported since 2026-09-23 — the tabs are whichever
+     brands have a complete Config BC. The strip renders only the unassigned
+     tab until the list lands, which is a frame or two and is what it already
+     did while its own counts were loading. */
+  const { brands: allIfaceBrands } = useErpInterfaceBrands();
   const brands = visibleCodes && visibleCodes.length > 0
-    ? ERP_INTERFACE_BRANDS.filter((iface) => visibleCodes.includes(iface.id))
-    : ERP_INTERFACE_BRANDS;
+    ? allIfaceBrands.filter((iface) => visibleCodes.includes(iface.id))
+    : allIfaceBrands;
 
   return (
     <div

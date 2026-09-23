@@ -53,7 +53,7 @@ import {
 } from "@/features/accounting/lib/erp-interface-target";
 import { useApproverInterfaceAccess } from "@/features/accounting/hooks/useApproverInterfaceAccess";
 import { filterInterfaceBrandCodes } from "@/lib/acc/approver-interface-access-shared";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { computeReportKpi } from "@/features/accounting/lib/report-kpi";
 
 type DateBasis = "travel" | "submit" | "payment";
@@ -351,10 +351,13 @@ function buildFilterChips(f: ReportFilters): FilterChip[] {
   return chips;
 }
 
-function interfaceTargetLabel(code: string): string {
+/* Takes the list rather than importing it. An unknown code answers with the
+   code itself, which is also what it did for an unmapped target before — so a
+   label rendered before the list lands is the code, not a wrong name. */
+function interfaceTargetLabel(code: string, brands: { id: string; name: string }[]): string {
   const upper = code.trim().toUpperCase();
   if (upper === ERP_INTERFACE_UNASSIGNED) return "ยังไม่กำหนดปลายทาง";
-  const brand = ERP_INTERFACE_BRANDS.find((b) => b.id === upper);
+  const brand = brands.find((b) => b.id === upper);
   return brand?.name ?? upper;
 }
 
@@ -378,9 +381,11 @@ function formatLoadError(raw: string): string {
 
 export function AccountingReport() {
   const { access, ready: accessReady } = useApproverInterfaceAccess();
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const ifaceCodes = useMemo(() => ifaceBrands.map((b) => b.id), [ifaceBrands]);
   const visibleInterfaceCodes = useMemo(
-    () => (access.allAccess ? null : filterInterfaceBrandCodes(access)),
-    [access],
+    () => (access.allAccess ? null : filterInterfaceBrandCodes(access, ifaceCodes)),
+    [access, ifaceCodes],
   );
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -396,12 +401,15 @@ export function AccountingReport() {
   const [interfaceTarget, setInterfaceTarget] = useState(() => parseInterfaceTargetForAccess(null, {
     allAccess: true,
     allowedCodes: [],
-  }));
+  }, []));
 
+  /* `ifaceCodes` is a dependency because the initial state above is taken with
+     an empty list — it resolves to the unassigned bucket, and the real first
+     tab can only be chosen once the brands have arrived. */
   useEffect(() => {
     if (!accessReady) return;
-    setInterfaceTarget((prev) => parseInterfaceTargetForAccess(prev, access));
-  }, [access, accessReady]);
+    setInterfaceTarget((prev) => parseInterfaceTargetForAccess(prev, access, ifaceCodes));
+  }, [access, accessReady, ifaceCodes]);
   const [filtersOpen, setFiltersOpen] = useState(true);
   const [drawerId, setDrawerId] = useState<number | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<AccRequest | null>(null);
@@ -539,8 +547,8 @@ export function AccountingReport() {
   );
 
   const interfaceCounts = useMemo(
-    () => countRowsByInterfaceTarget(allFilteredRows, interfaceByClaim),
-    [allFilteredRows, interfaceByClaim],
+    () => countRowsByInterfaceTarget(allFilteredRows, interfaceByClaim, ifaceCodes),
+    [allFilteredRows, interfaceByClaim, ifaceCodes],
   );
 
   const filteredRows = useMemo(
@@ -672,7 +680,7 @@ export function AccountingReport() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <ReportKpiSection title="สรุปทั้งหมด" items={overallKpiItems} />
             <ReportKpiSection
-              title={`สรุปกลุ่ม ${interfaceTargetLabel(interfaceTarget)}`}
+              title={`สรุปกลุ่ม ${interfaceTargetLabel(interfaceTarget, ifaceBrands)}`}
               items={tabKpiItems}
               highlighted
             />
@@ -882,7 +890,7 @@ export function AccountingReport() {
                 ? "ยังไม่มีข้อมูลรายงาน"
                 : allFilteredRows.length === 0
                   ? "ไม่พบข้อมูลตามเงื่อนไขที่ระบุ"
-                  : `ไม่มีรายการในกลุ่ม ${interfaceTargetLabel(interfaceTarget)}`}
+                  : `ไม่มีรายการในกลุ่ม ${interfaceTargetLabel(interfaceTarget, ifaceBrands)}`}
             </p>
             {hasActiveFilters && allFilteredRows.length === 0 && (
               <Button

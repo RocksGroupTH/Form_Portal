@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
@@ -7,7 +8,7 @@ import {
   claimCodesForInterfaceTarget,
   legacyClaimPurgeError,
 } from "@/lib/acc/department-map-guard";
-import { ERP_INTERFACE_BRANDS, isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands, isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import {
   defaultsOnly,
   perFormOrderBy,
@@ -440,11 +441,13 @@ export async function saveDepartmentMappings(
   const brandCode = targetBrandCode.trim().toUpperCase();
   if (!brandCode) throw new DepartmentMapBoundsError("กรุณาระบุแบรนด์ปลายทาง");
   // The target names which brand's rows this whole call writes and deletes, so
-  // it is bounded to the four brands that can actually be an ERP interface
-  // target — the same test `upsertBrandErpInterfaceMap` applies when the
-  // claim → target map is written, so every real target already passes.
-  if (!isErpInterfaceBrandCode(brandCode)) {
-    throw new DepartmentMapBoundsError("แบรนด์ปลายทางต้องเป็น PCTH, KSI, PCMY หรือ UNO");
+  // it is bounded to the brands that can actually be an ERP interface target —
+  // the same test `upsertBrandErpInterfaceMap` applies when the claim → target
+  // map is written, so every real target already passes. **Awaited**: unawaited
+  // this is `if (!promise)`, which is never true, and the bound disappears on a
+  // call that goes on to DELETE every row of the named brand.
+  if (!(await isErpInterfaceBrand(brandCode))) {
+    throw new DepartmentMapBoundsError("แบรนด์ปลายทางต้องเป็นแบรนด์ที่ตั้งค่า Config BC ครบแล้ว");
   }
 
   // Bound the purge *before* the first upsert. `legacyClaimCodes` is
@@ -586,7 +589,7 @@ export async function syncAllBrandDepartmentDimensions(
   const errors: { brandCode: string; error: string }[] = [];
   let totalRows = 0;
 
-  for (const brand of ERP_INTERFACE_BRANDS) {
+  for (const brand of await listErpInterfaceBrands()) {
     try {
       const r = await syncBrandDimensionValues(
         brand.id,
@@ -843,7 +846,10 @@ export async function loadAllDepartmentErpMaps(): Promise<Map<string, Map<string
 /** ERP dept display names keyed by target (interface) brand. */
 export async function loadErpDeptDisplayNamesByTargetBrand(): Promise<Map<string, Map<string, string>>> {
   const pool = await getErpDataPool();
-  const targetBrands = ERP_INTERFACE_BRANDS.map((b) => b.id);
+  const targetBrands = (await listErpInterfaceBrands()).map((b) => b.id);
+  // Resolved once, outside the fan-out — every brand in one call is being read
+  // for the same viewer, so they must all come from the same environment.
+  const environment = await resolveErpSourceEnvironment();
   const out = new Map<string, Map<string, string>>();
 
   await Promise.all(
@@ -851,11 +857,13 @@ export async function loadErpDeptDisplayNamesByTargetBrand(): Promise<Map<string
       const res = await pool
         .request()
         .input("brand", sql.NVarChar, target)
+        .input("env", sql.NVarChar, environment)
         .input("dim", sql.NVarChar, HR_DEPARTMENT_DIMENSION_CODE)
         .query(`
           SELECT Code, DisplayName
           FROM [dbo].[ErpDimensionValue]
-          WHERE BrandCode = @brand AND DimensionCode = @dim AND IsActive = 1
+          WHERE SourceEnvironment = @env
+            AND BrandCode = @brand AND DimensionCode = @dim AND IsActive = 1
         `);
 
       const map = new Map<string, string>();

@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getAppPool, sql } from "@/lib/db/mssql";
 import { env } from "@/env";
 
@@ -31,10 +32,12 @@ export async function listTaxVendors(company: string): Promise<TaxVendorCandidat
   const res = await pool
     .request()
     .input("co", sql.NVarChar, co)
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT VendorNo, DisplayName, TaxRegistrationNumber
       FROM [dbo].[ErpVendors]
-      WHERE BrandCode = @co
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @co
         AND IsActive = 1
         AND (IsBlocked = 0 OR IsBlocked IS NULL)
       ORDER BY DisplayName, VendorNo

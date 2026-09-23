@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { isDimensionType, type DimensionType } from "./gl-dimension";
 import { getAppPool } from "@/lib/db/mssql";
@@ -46,9 +47,9 @@ export async function listClrErpGlOptionsForCompany(company: string): Promise<Er
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("company", sql.NVarChar, c)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
       SELECT AccountNo, DisplayName FROM [dbo].[ErpAccounts]
-      WHERE AccountCategory = 'GL' AND BrandCode = @company
+      WHERE SourceEnvironment = @env AND AccountCategory = 'GL' AND BrandCode = @company
         AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       ORDER BY AccountNo
     `);
@@ -85,9 +86,9 @@ export async function listClrErpJournalBatchesForCompany(company: string): Promi
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("company", sql.NVarChar, c)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
       SELECT BatchName, DisplayName, TemplateName FROM [dbo].[ErpGeneralJournalBatch]
-      WHERE BrandCode = @company AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
+      WHERE SourceEnvironment = @env AND BrandCode = @company AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       ORDER BY BatchName
     `);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
@@ -135,9 +136,9 @@ export async function listClrErpBranchesForCompany(company: string): Promise<Erp
   const pool = await getAppPool(ERP_DATA_DB);
   const r = await pool.request()
     .input("company", sql.NVarChar, c)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
       SELECT Code, DisplayName FROM [dbo].[ErpDimensionValue]
-      WHERE BrandCode = @company AND DimensionCode = 'BRANCH'
+      WHERE SourceEnvironment = @env AND BrandCode = @company AND DimensionCode = 'BRANCH'
         AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       ORDER BY Code
     `);
@@ -235,10 +236,10 @@ export async function listGlAccountsForCompany(company: string): Promise<GlCompa
   const [erp, form] = await Promise.all([
     (async () => {
       const pool = await getAppPool(ERP_DATA_DB);
-      const r = await pool.request().input("co", sql.NVarChar, co).query(`
+      const r = await pool.request().input("co", sql.NVarChar, co).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
         SELECT AccountNo, DisplayName
         FROM [dbo].[ErpAccounts]
-        WHERE BrandCode = @co
+        WHERE SourceEnvironment = @env AND BrandCode = @co
           AND AccountCategory = 'GL'
           AND IsActive = 1
           AND (IsBlocked = 0 OR IsBlocked IS NULL)

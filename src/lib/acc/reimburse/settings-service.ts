@@ -9,6 +9,7 @@ import { writeBothPools } from "@/lib/acc/dual-write";
 import { RULE_TEXT_MAX } from "@/features/reimburse/constants";
 import type { ReimburseApprover, ReimburseRule } from "@/features/reimburse/types";
 import { isApproverScope, normalizeScopeTargets } from "./brand-scope";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 
 /** Every currently-active rule a requester must tick before submitting (spec §5.2 field 6), in display order. */
 export async function listActiveRules(): Promise<ReimburseRule[]> {
@@ -307,7 +308,10 @@ export async function setReimburseApproverBrands(
   userId: number,
   identity: { email: string; displayName: string },
 ): Promise<void> {
-  const normalized = normalizeScopeTargets(targets);
+  const normalized = normalizeScopeTargets(
+    targets,
+    (await listErpInterfaceBrands()).map((b) => b.id),
+  );
   const active = isApproverScope(normalized);
 
   // A blank identity is refused rather than written. Both columns are NOT NULL

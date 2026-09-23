@@ -1,8 +1,8 @@
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import {
-  ERP_INTERFACE_BRANDS,
-  isErpInterfaceBrandCode,
+  listErpInterfaceBrands,
+  isErpInterfaceBrand,
 } from "@/lib/acc/erp-interface-brands";
 import {
   deleteBrandErpInterfaceMap,
@@ -143,7 +143,15 @@ export async function getBrandErpConfigPage(
   const configByCode = new Map(
     configs.map((c) => [c.brandCode.toUpperCase(), c]),
   );
-  const targetBrands = ERP_INTERFACE_BRANDS.map((b) => {
+  /* `listErpInterfaceBrands()` rather than a literal since 2026-09-23: the
+     targets are the brands whose Config BC is complete. `bcProfileComplete`
+     below is still derived per row from the config — it answers the same
+     question one layer down, and keeping it means this shape does not start
+     asserting completeness it has not itself checked. In practice the `cfg`
+     branch always wins now, because a brand only reaches this list by having
+     that config; the fallback stays for a row the master has and
+     `listBrandConfigs` has not yet seeded. */
+  const targetBrands = (await listErpInterfaceBrands()).map((b) => {
     const cfg = configByCode.get(b.id.toUpperCase());
     if (cfg) return targetFromConfig(cfg, connById);
     return {
@@ -180,8 +188,12 @@ export async function updateBrandErpInterfaceTarget(
 ): Promise<BrandErpConfigRow | null> {
   const claim = claimBrandCode.trim().toUpperCase();
   const target = interfaceBrandCode.trim().toUpperCase();
-  if (!isErpInterfaceBrandCode(target)) {
-    throw new Error("แบรนด์ปลายทางต้องเป็น PCTH, KSI, PCMY หรือ UNO");
+  /* Awaited. The message no longer names four brands, because the set is now
+     whatever has a complete Config BC — naming them would go stale the first
+     time somebody configured a fifth, which is exactly how this whole change
+     started. */
+  if (!(await isErpInterfaceBrand(target))) {
+    throw new Error("แบรนด์ปลายทางต้องเป็นแบรนด์ที่ตั้งค่า Config BC ครบแล้ว");
   }
 
   const allowed = await getAllowedBrands(AP1_FORM_CODE);

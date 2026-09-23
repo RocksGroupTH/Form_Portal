@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, Search } from "lucide-react";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import {
   dimensionChecks,
   nextDimension,
@@ -129,7 +129,16 @@ export function ClrGlAccountSettings({
 } = {}) {
   // PCTH by default, as asked — it is the company nearly every AP-3 clearing
   // posts into, ROCKS claims included.
-  const [company, setCompany] = useState(ERP_INTERFACE_BRANDS[0]?.id ?? "PCTH");
+  /* The Company list is fetched now rather than imported — it is whichever
+     brands have a complete Config BC. So the initial value cannot name one:
+     it starts empty and the effect below adopts the first brand the moment the
+     list lands, which is also what re-seeds the screen if an admin completes a
+     brand's Config BC in another tab and the list comes back longer. */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const [company, setCompany] = useState("");
+  useEffect(() => {
+    if (!company && ifaceBrands.length > 0) setCompany(ifaceBrands[0].id);
+  }, [company, ifaceBrands]);
   const [rows, setRows] = useState<GlCompanyRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
@@ -303,7 +312,7 @@ export function ClrGlAccountSettings({
           Company (ปลายทางที่ลง Journal)
         </span>
         <div className="flex flex-wrap gap-2">
-          {ERP_INTERFACE_BRANDS.map((b) => {
+          {ifaceBrands.map((b) => {
             const on = b.id === company;
             return (
               <button
@@ -317,7 +326,9 @@ export function ClrGlAccountSettings({
                   color: on ? "var(--nav-active-text)" : "var(--text-secondary)",
                 }}
               >
-                <img src={b.logo} alt="" className="h-5 w-auto object-contain" />
+                {b.logo ? (
+                  <img src={b.logo} alt="" className="h-5 w-auto object-contain" />
+                ) : null}
                 <span className="text-[13px] font-bold">{b.id}</span>
               </button>
             );
