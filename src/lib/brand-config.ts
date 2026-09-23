@@ -109,10 +109,21 @@ export async function listBrandConfigLookups(): Promise<BrandConfigLookups> {
  * showed seven. Two lists of "which brands exist" is the bug; the master is the
  * one that gains a brand when the business does.
  *
- * `BRANDS` still drives `BrandGate`, the navbar switcher and `isValidBrand`, so
- * a brand that appears here is **not** thereby selectable by users. That is
- * deliberate: this page is where an admin configures a brand's BC and ERP SQL,
- * which has to be possible *before* anybody can pick it.
+ * **This paragraph named `BRANDS` as the thing that gates the picker, and it
+ * is out of date** (corrected 2026-09-23). `BrandGate` and the navbar switcher
+ * read `/api/brands`, which is `listBrandRegistry()` — the master joined with
+ * `BrandSetting` — and `isValidBrand` is a SHAPE check that decides nothing;
+ * both are written up in `brand.ts`'s own docblock. What survives of the old
+ * sentence is its point, and that point still holds: a brand appearing on this
+ * page is **not** thereby offered to users, because `BrandSetting.IsEnabled` is
+ * what decides that. This page is where an admin configures a brand's BC and
+ * ERP SQL, which has to be possible *before* anybody can pick it.
+ *
+ * **The Save had the opposite bug until 2026-09-23**: this function listed the
+ * master's brands while `PATCH /api/settings/brand-config/[brandCode]`
+ * validated against the four in `BRANDS`, so three of the seven could be
+ * filled in here and answered "Invalid brand". `brand-source-guard.test.ts`
+ * is what stops that pair drifting apart again.
  *
  * Seeding extra rows is safe for the sibling applications. RocksFast's own
  * `listBrandConfigs` maps over *its* `BRANDS` at the end, so a row for a brand
