@@ -299,9 +299,17 @@ import path from "node:path";
  *     keeps its own → **red**. An index-only "anywhere after the first
  *     `<Dialog`" arm passes this, which is why the slice exists.
  * 36. a second dialog carrying an agreement line inserted **before** the
- *     picker → **red**, twice (the picker-identity check and the
- *     dialog-count check). That is the hazard in the shape it actually
- *     arrived in once already.
+ *     picker → **red**. That is the hazard in the shape it actually arrived
+ *     in once already.
+ *
+ *     **Two arms catch it, and only one of them reports** — `node:test`
+ *     aborts the test at the first failing assertion, so the dialog COUNT is
+ *     what a reader sees. Measured rather than assumed: with the count then
+ *     raised to 2 — a later change deciding a second dialog is legitimate —
+ *     the picker-identity arm reds on its own ("the file's first <Dialog> is
+ *     no longer the host picker"). So the identity check is not made
+ *     redundant by the count sitting in front of it; it is what still bites
+ *     once somebody has argued the count up.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
