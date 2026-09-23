@@ -683,16 +683,13 @@ export function RoomShareControl({
         setFrom(range.from);
         setTo(range.to);
       } else {
-        // "filed on" is a window in the PAST, so this one reaches BACKWARDS —
-        // same thirty days, opposite direction. It used to be cleared, on the
-        // reasoning that a forward default "would be a range nothing can fall
-        // in" and that a backwards one "would be policy nobody asked for". The
-        // first half was right and the second was overtaken: the user asked on
-        // 2026-09-23 for this mode to carry a default เหมือนกัน with the travel
-        // one. Taking that literally would seed today … today + 30 and match
-        // only requests filed TODAY — a default that empties the list is worse
-        // than the blank field it replaces, because a blank field at least
-        // reads as a question. See `defaultFiledOnFilterRange`.
+        // The SAME window as the travel mode — today … today + 30 — and not by
+        // accident: the user named the dates on 2026-09-23 after this had
+        // opened blank, then reached backwards. Keeping the separate call is
+        // what lets the two diverge again without a hunt; see
+        // `defaultFiledOnFilterRange` for the trade it carries (untouched, it
+        // matches requests filed today and nothing else, because nothing is
+        // ever filed in the future).
         const range = defaultFiledOnFilterRange(new Date());
         setFrom(range.from);
         setTo(range.to);

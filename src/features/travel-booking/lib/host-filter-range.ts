@@ -56,25 +56,32 @@ export function defaultHostFilterRange(now: Date): { from: string; to: string } 
 }
 
 /**
- * The **filed-on** window the same picker opens on: **today − 30 … today**.
+ * The **filed-on** window the same picker opens on: **today … today + 30** —
+ * the same range as the travel one above, deliberately.
  *
- * The user asked for this mode to carry a default "เหมือนกัน" with the travel
- * one (2026-09-23), which it did not — it opened blank, because an earlier
- * pass cleared it deliberately rather than seed a window nothing could fall in.
+ * ## It took two corrections, and the second one is the binding instruction
  *
- * **The span is the same thirty days; the DIRECTION is flipped, and that is a
- * deliberate reading of the request rather than a literal one.** A request's
- * filed-on date is when somebody pressed ส่งคำขอ, so it is always in the past.
- * Seeding `today … today + 30` literally would have matched only requests filed
- * *today* — a default that empties the list is worse than the blank field it
- * replaced, because a blank field at least looks like a question.
+ * This opened blank at first. Asked for a default "เหมือนกัน" with the travel
+ * one (2026-09-22), it became `today − 30 … today`: the same span with the
+ * direction flipped, reasoning that a filed-on date is always in the past, so a
+ * forward window could only ever match requests filed *today*. The user
+ * corrected that on 2026-09-23 by naming the dates outright — *"วันนี้เป็นวันที่
+ * 23 ต้องเป็น 23 Sep 2026 - 23 Oct 2026"*. เหมือนกัน meant the same **range**,
+ * not the same span mirrored.
  *
- * Both ends are still editable, and the requester can clear them; this only
- * decides what is there before anybody touches it.
+ * ## The cost is real, was stated, and is the user's call
+ *
+ * A request is filed when somebody presses ส่งคำขอ, so nothing is ever filed in
+ * the future: untouched, this window matches requests filed **today** and
+ * nothing else. What makes that a trade rather than a trap is that both ends are
+ * editable and clearable, so widening it is one edit away. **Do not flip it back
+ * on this reasoning** — it has been raised and ruled on; get the instruction
+ * changed first.
  */
 export function defaultFiledOnFilterRange(now: Date): { from: string; to: string } {
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  start.setDate(start.getDate() - HOST_FILTER_DEFAULT_DAYS);
-  return { from: ymd(start), to: ymd(end) };
+  // The same window, kept behind its own name rather than de-duplicated away:
+  // the two modes answer different questions and have already carried different
+  // ranges twice. The seam is what stops the next change to one silently moving
+  // the other.
+  return defaultHostFilterRange(now);
 }
