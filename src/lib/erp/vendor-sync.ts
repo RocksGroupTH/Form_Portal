@@ -199,6 +199,8 @@ async function writeVendor(
 
 async function insertVendorSyncLog(
   brandCode: string,
+  /** Which BC the run read — one answer per sync, decided where it starts. */
+  environment: ErpBcEnvironment,
   status: "success" | "failed",
   rows: number,
   errorMessage: string | null,
@@ -209,6 +211,7 @@ async function insertVendorSyncLog(
   await pool.request()
     .input("syncType", sql.NVarChar, ERP_VENDOR_SYNC_TYPE)
     .input("brand", sql.NVarChar, brandCode)
+    .input("env", sql.NVarChar, environment)
     .input("status", sql.NVarChar, status)
     .input("rows", sql.Int, rows)
     .input("error", sql.NVarChar, errorMessage?.slice(0, 1500) ?? null)
@@ -216,9 +219,9 @@ async function insertVendorSyncLog(
     .input("triggeredBy", sql.Int, triggeredBy)
     .query(`
       INSERT INTO [dbo].[ErpSyncLog]
-        (SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
+        (SourceEnvironment, SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
       VALUES
-        (@syncType, @brand, @status, @rows, @error, @started, SYSDATETIME(), @triggeredBy)
+        (@env, @syncType, @brand, @status, @rows, @error, @started, SYSDATETIME(), @triggeredBy)
     `);
 }
 
@@ -386,12 +389,12 @@ export async function syncBrandErpVendors(
   } catch (error) {
     if (transactionOpen) await transaction.rollback().catch(() => undefined);
     const message = error instanceof Error ? error.message : "Vendor sync failed";
-    await insertVendorSyncLog(ctx.brandCode, "failed", vendorRows, message, triggeredBy, startedAt)
+    await insertVendorSyncLog(ctx.brandCode, ctx.environment, "failed", vendorRows, message, triggeredBy, startedAt)
       .catch(() => undefined);
     throw error;
   }
 
-  await insertVendorSyncLog(ctx.brandCode, "success", vendorRows, homePageNote, triggeredBy, startedAt)
+  await insertVendorSyncLog(ctx.brandCode, ctx.environment, "success", vendorRows, homePageNote, triggeredBy, startedAt)
     .catch(() => undefined);
   return { brandCode: ctx.brandCode, vendorRows, syncedAt: snapshotAt.toISOString() };
 }

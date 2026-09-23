@@ -4,6 +4,15 @@
 
 import { getErpDataPool, sql } from "@/lib/db/mssql";
 import { getBrandConfig } from "@/lib/brand-config";
+import {
+  resolveErpSourceEnvironment,
+  type ErpBcEnvironment,
+} from "@/lib/erp/source-environment";
+import {
+  missingBcProfileMessage,
+  resolveBrandBcProfile,
+} from "@/lib/erp/brand-bc-profile";
+
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import {
   buildBcODataEntityUrl,
@@ -92,37 +101,29 @@ export async function resolveBrandBcDimensionContext(
   companyName: string;
   odataUrl: string;
   dimensionCode: string;
+  /** Which BC this read, and what every row it writes is stamped with. */
+  environment: ErpBcEnvironment;
 }> {
   const code = brandCode.trim().toUpperCase();
   const dim = dimensionCode.trim().toUpperCase();
-  const brand = await getBrandConfig(code);
-  if (!brand) {
-    throw new Error(`ไม่พบการตั้งค่าแบรนด์ ${code}`);
-  }
-  if (!brand.bcConnectionId) {
-    throw new Error(`แบรนด์ ${code} ยังไม่ได้เลือก BC Connection`);
-  }
-  if (!brand.bcName?.trim()) {
-    throw new Error(`แบรนด์ ${code} ยังไม่ได้ตั้งค่า BC Company (BcName)`);
-  }
-
-  const conn = await getBcConnectionById(brand.bcConnectionId);
-  if (!conn || !conn.IsActive) {
-    throw new Error("BC Connection ไม่พร้อมใช้งาน");
-  }
+  const environment = await resolveErpSourceEnvironment();
+  // No fallback between environments — see `brand-bc-profile.ts`.
+  const profile = await resolveBrandBcProfile(code, environment);
+  if (!profile) throw new Error(missingBcProfileMessage(code, environment));
 
   const odataUrl = `${buildBcODataEntityUrl(
-    conn.BaseUrl,
-    brand.bcName.trim(),
+    profile.baseUrl,
+    profile.bcCompanyName,
     BC_DIMENSION_ENTITY,
   )}?$filter=Dimension_Code eq '${dim}'`;
 
   return {
     brandCode: code,
-    bcConnectionId: brand.bcConnectionId,
-    companyName: brand.bcName.trim(),
+    bcConnectionId: profile.bcConnectionId,
+    companyName: profile.bcCompanyName,
     odataUrl,
     dimensionCode: dim,
+    environment,
   };
 }
 
@@ -146,6 +147,8 @@ export async function resolvePcthBcSyncContext(): Promise<{
 
 async function insertSyncLog(
   brandCode: string,
+  /** Which BC the run read — one answer per sync, decided where it starts. */
+  environment: ErpBcEnvironment,
   status: "success" | "failed",
   rowsUpserted: number,
   errorMessage: string | null,
@@ -160,6 +163,7 @@ async function insertSyncLog(
     .request()
     .input("syncType", sql.NVarChar, "DIMENSION_VALUES")
     .input("brand", sql.NVarChar, brandCode)
+    .input("env", sql.NVarChar, environment)
     .input("status", sql.NVarChar, status)
     .input("rows", sql.Int, rowsUpserted)
     .input("err", sql.NVarChar, errorMessage)
@@ -167,9 +171,9 @@ async function insertSyncLog(
     .input("by", sql.Int, triggeredBy ?? null)
     .query(`
       INSERT INTO [dbo].[ErpSyncLog]
-        (SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
+        (SourceEnvironment, SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
       VALUES
-        (@syncType, @brand, @status, @rows, @err, @started, SYSDATETIME(), @by)
+        (@env, @syncType, @brand, @status, @rows, @err, @started, SYSDATETIME(), @by)
     `);
 }
 
@@ -199,6 +203,7 @@ export async function syncBrandDimensionValues(
       await pool
         .request()
         .input("brand", sql.NVarChar, ctx.brandCode)
+        .input("env", sql.NVarChar, ctx.environment)
         .input("dim", sql.NVarChar, norm.dimensionCode)
         .input("code", sql.NVarChar, norm.code)
         .input("name", sql.NVarChar, norm.displayName)
@@ -206,8 +211,9 @@ export async function syncBrandDimensionValues(
         .input("raw", sql.NVarChar, norm.rawJson)
         .query(`
           MERGE [dbo].[ErpDimensionValue] AS t
-          USING (SELECT @brand AS BrandCode, @dim AS DimensionCode, @code AS Code) AS s
-          ON t.BrandCode = s.BrandCode AND t.DimensionCode = s.DimensionCode AND t.Code = s.Code
+          USING (SELECT @env AS SourceEnvironment, @brand AS BrandCode, @dim AS DimensionCode, @code AS Code) AS s
+          ON t.SourceEnvironment = s.SourceEnvironment
+            AND t.BrandCode = s.BrandCode AND t.DimensionCode = s.DimensionCode AND t.Code = s.Code
           WHEN MATCHED THEN
             UPDATE SET
               DisplayName = @name,
@@ -216,8 +222,8 @@ export async function syncBrandDimensionValues(
               SyncedAt = SYSDATETIME(),
               RawJson = @raw
           WHEN NOT MATCHED THEN
-            INSERT (BrandCode, DimensionCode, Code, DisplayName, IsBlocked, IsActive, SyncedAt, RawJson)
-            VALUES (@brand, @dim, @code, @name, @blocked, 1, SYSDATETIME(), @raw);
+            INSERT (SourceEnvironment, BrandCode, DimensionCode, Code, DisplayName, IsBlocked, IsActive, SyncedAt, RawJson)
+            VALUES (@env, @brand, @dim, @code, @name, @blocked, 1, SYSDATETIME(), @raw);
         `);
       rowsUpserted++;
     }
@@ -225,16 +231,17 @@ export async function syncBrandDimensionValues(
     await pool
       .request()
       .input("brand", sql.NVarChar, ctx.brandCode)
+      .input("env", sql.NVarChar, ctx.environment)
       .input("dim", sql.NVarChar, dim)
       .input("cutoff", sql.DateTime2, startedAt)
       .query(`
         UPDATE [dbo].[ErpDimensionValue]
         SET IsActive = 0
-        WHERE BrandCode = @brand AND DimensionCode = @dim AND SyncedAt < @cutoff
+        WHERE SourceEnvironment = @env AND BrandCode = @brand AND DimensionCode = @dim AND SyncedAt < @cutoff
       `);
 
     if (!options?.skipLog) {
-      await insertSyncLog(ctx.brandCode, "success", rowsUpserted, null, triggeredBy, startedAt);
+      await insertSyncLog(ctx.brandCode, ctx.environment, "success", rowsUpserted, null, triggeredBy, startedAt);
     }
 
     return {
@@ -245,7 +252,7 @@ export async function syncBrandDimensionValues(
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Sync failed";
     if (!options?.skipLog) {
-      await insertSyncLog(ctx.brandCode, "failed", rowsUpserted, msg, triggeredBy, startedAt);
+      await insertSyncLog(ctx.brandCode, ctx.environment, "failed", rowsUpserted, msg, triggeredBy, startedAt);
     }
     throw e;
   }
@@ -275,11 +282,13 @@ export async function listErpDimensionOptions(
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .input("dim", sql.NVarChar, dimensionCode.trim().toUpperCase())
     .query(`
       SELECT DimensionCode, Code, DisplayName
       FROM [dbo].[ErpDimensionValue]
-      WHERE BrandCode = @brand AND DimensionCode = @dim AND IsActive = 1 AND IsBlocked = 0
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @brand AND DimensionCode = @dim AND IsActive = 1 AND IsBlocked = 0
       ORDER BY DisplayName, Code
     `);
 
@@ -344,10 +353,11 @@ export async function getLastDimensionSync(
     .request()
     .input("brand", sql.NVarChar, brandCode)
     .input("type", sql.NVarChar, "DIMENSION_VALUES")
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT TOP 1 Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt
       FROM [dbo].[ErpSyncLog]
-      WHERE BrandCode = @brand AND SyncType = @type
+      WHERE SourceEnvironment = @env AND BrandCode = @brand AND SyncType = @type
       ORDER BY StartedAt DESC
     `);
 

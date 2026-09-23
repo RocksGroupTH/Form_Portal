@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { getAppPool } from "@/lib/db/mssql";
 import { env } from "@/env";
@@ -120,10 +121,12 @@ export async function listCompanyBus(
   const res = await pool
     .request()
     .input("co", sql.NVarChar, co)
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT BuCode, COUNT(*) AS Locations
       FROM [dbo].[ErpLocation]
-      WHERE BrandCode = @co AND NULLIF(LTRIM(RTRIM(ISNULL(BuCode,''))),'') IS NOT NULL
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @co AND NULLIF(LTRIM(RTRIM(ISNULL(BuCode,''))),'') IS NOT NULL
       GROUP BY BuCode
       ORDER BY COUNT(*) DESC
     `);

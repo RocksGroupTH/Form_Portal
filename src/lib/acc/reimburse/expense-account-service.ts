@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getErpDataPool, sql } from "@/lib/db/mssql";
 import { getAccPool, sql as accSql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
@@ -56,10 +57,12 @@ export async function listExpenseAccounts(brandCode: string): Promise<ExpenseAcc
   const r = await pool
     .request()
     .input("brand", sql.NVarChar(20), brand)
+    .input("env", sql.NVarChar(20), await resolveErpSourceEnvironment())
     .query(
       `SELECT AccountNo, DisplayName
        FROM [dbo].[ErpAccounts]
-       WHERE BrandCode = @brand
+       WHERE SourceEnvironment = @env
+         AND BrandCode = @brand
          AND AccountCategory = 'GL'
          AND IsActive = 1
          AND IsBlocked = 0

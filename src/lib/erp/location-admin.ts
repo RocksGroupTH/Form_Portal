@@ -4,6 +4,7 @@
  * one narrow question the journal builder asks.
  */
 
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getErpDataPool, sql } from "@/lib/db/mssql";
 
 export interface AdminLocationRow {
@@ -33,6 +34,7 @@ export async function listBrandLocations(brandCode: string): Promise<AdminLocati
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, code)
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT
         l.Code, l.DisplayName, l.BranchCode, l.BuCode, l.DepartmentCode, l.SyncedAt,
@@ -43,11 +45,12 @@ export async function listBrandLocations(brandCode: string): Promise<AdminLocati
         CAST(ISNULL(d.IsBlocked, 0) AS BIT) AS IsBranchBlocked
       FROM [dbo].[ErpLocation] l
       LEFT JOIN [dbo].[ErpDimensionValue] d
-        ON d.BrandCode = l.BrandCode
+        ON d.SourceEnvironment = l.SourceEnvironment
+       AND d.BrandCode = l.BrandCode
        AND d.DimensionCode = 'BRANCH'
        AND d.Code = l.BranchCode
        AND d.IsActive = 1
-      WHERE l.BrandCode = @brand AND l.IsActive = 1
+      WHERE l.SourceEnvironment = @env AND l.BrandCode = @brand AND l.IsActive = 1
       ORDER BY l.Code
     `);
 
@@ -80,10 +83,11 @@ export async function getLastLocationSync(brandCode: string): Promise<LocationSy
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, code)
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT TOP 1 Status, RowsUpserted, FinishedAt, ErrorMessage
       FROM [dbo].[ErpSyncLog]
-      WHERE SyncType = 'LOCATIONS' AND BrandCode = @brand
+      WHERE SourceEnvironment = @env AND SyncType = 'LOCATIONS' AND BrandCode = @brand
       ORDER BY Id DESC
     `);
 

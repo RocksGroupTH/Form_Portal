@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { getAppPool, sql } from "@/lib/db/mssql";
 import { ADVANCE_JOURNAL_TEMPLATE } from "@/lib/adv/advance-batch-service";
 import type { EmployeeCodeLookup } from "@/lib/adv/vendor-match-core";
@@ -34,9 +35,9 @@ export interface AdvErpCompanyMaster {
 
 async function listGl(company: string): Promise<AdvErpAcctOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, company).query(`
+  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT AccountNo, DisplayName FROM [dbo].[ErpAccounts]
-    WHERE BrandCode = @c AND AccountCategory = 'GL'
+    WHERE SourceEnvironment = @env AND BrandCode = @c AND AccountCategory = 'GL'
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
     ORDER BY AccountNo`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
@@ -51,9 +52,9 @@ async function listGl(company: string): Promise<AdvErpAcctOption[]> {
  */
 export async function listBank(company: string): Promise<AdvErpAcctOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, company).query(`
+  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT AccountNo, DisplayName FROM [dbo].[ErpBankAccountCard]
-    WHERE BrandCode = @c
+    WHERE SourceEnvironment = @env AND BrandCode = @c
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
     ORDER BY AccountNo`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
@@ -64,9 +65,9 @@ export async function listBank(company: string): Promise<AdvErpAcctOption[]> {
 
 async function listBranch(company: string): Promise<AdvErpBranchOption[]> {
   const pool = await getAppPool(ERP_DATA_DB);
-  const r = await pool.request().input("c", sql.NVarChar, company).query(`
+  const r = await pool.request().input("c", sql.NVarChar, company).input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT Code, DisplayName FROM [dbo].[ErpDimensionValue]
-    WHERE BrandCode = @c AND DimensionCode = 'BRANCH'
+    WHERE SourceEnvironment = @env AND BrandCode = @c AND DimensionCode = 'BRANCH'
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
     ORDER BY Code`);
   return (r.recordset as Record<string, unknown>[]).map((x) => ({
@@ -82,9 +83,9 @@ async function listBatch(company: string): Promise<AdvErpBatchOption[]> {
   const r = await pool.request()
     .input("c", sql.NVarChar, company)
     .input("tpl", sql.NVarChar, ADVANCE_JOURNAL_TEMPLATE)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT BatchName, DisplayName, TemplateName FROM [dbo].[ErpGeneralJournalBatch]
-    WHERE BrandCode = @c
+    WHERE SourceEnvironment = @env AND BrandCode = @c
       AND UPPER(LTRIM(RTRIM(TemplateName))) = @tpl
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
     ORDER BY BatchName`);
@@ -102,9 +103,9 @@ export async function listVendors(company: string): Promise<AdvErpVendorOption[]
   const r = await pool.request()
     .input("c", sql.NVarChar, c)
     .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT VendorNo, DisplayName FROM [dbo].[ErpVendors]
-    WHERE BrandCode = @c
+    WHERE SourceEnvironment = @env AND BrandCode = @c
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       AND VendorPostingGroup = @pg
     ORDER BY DisplayName`);
@@ -136,9 +137,9 @@ export async function findVendorByEmployeeCode(
     .input("c", sql.NVarChar, c)
     .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
     .input("code", sql.NVarChar, String(staffId))
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT TOP 2 VendorNo, DisplayName FROM [dbo].[ErpVendors]
-    WHERE BrandCode = @c
+    WHERE SourceEnvironment = @env AND BrandCode = @c
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       AND VendorPostingGroup = @pg
       AND LTRIM(RTRIM(COALESCE(Website, ''))) = @code
@@ -175,9 +176,9 @@ export async function isBranchSelectable(company: string, branchCode: string): P
   const r = await pool.request()
     .input("c", sql.NVarChar, c)
     .input("b", sql.NVarChar, b)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT TOP 1 1 AS Ok FROM [dbo].[ErpDimensionValue]
-    WHERE BrandCode = @c AND DimensionCode = 'BRANCH' AND Code = @b
+    WHERE SourceEnvironment = @env AND BrandCode = @c AND DimensionCode = 'BRANCH' AND Code = @b
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)`);
   return r.recordset.length > 0;
 }
@@ -192,9 +193,9 @@ export async function isVendorSelectable(company: string, vendorNo: string): Pro
     .input("c", sql.NVarChar, c)
     .input("v", sql.NVarChar, v)
     .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT TOP 1 1 AS Ok FROM [dbo].[ErpVendors]
-    WHERE BrandCode = @c AND VendorNo = @v
+    WHERE SourceEnvironment = @env AND BrandCode = @c AND VendorNo = @v
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       AND VendorPostingGroup = @pg`);
   return r.recordset.length > 0;
@@ -211,9 +212,9 @@ export async function findSelectableVendor(company: string, vendorNo: string): P
     .input("c", sql.NVarChar, c)
     .input("v", sql.NVarChar, v)
     .input("pg", sql.NVarChar, ADVANCE_VENDOR_POSTING_GROUP)
-    .query(`
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment()).query(`
     SELECT TOP 1 VendorNo, DisplayName FROM [dbo].[ErpVendors]
-    WHERE BrandCode = @c AND VendorNo = @v
+    WHERE SourceEnvironment = @env AND BrandCode = @c AND VendorNo = @v
       AND IsActive = 1 AND (IsBlocked = 0 OR IsBlocked IS NULL)
       AND VendorPostingGroup = @pg`);
   const row = (r.recordset as Record<string, unknown>[])[0];

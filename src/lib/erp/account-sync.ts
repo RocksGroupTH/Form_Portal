@@ -12,6 +12,14 @@ import {
 } from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
+import {
+  resolveErpSourceEnvironment,
+  type ErpBcEnvironment,
+} from "@/lib/erp/source-environment";
+import {
+  missingBcProfileMessage,
+  resolveBrandBcProfile,
+} from "@/lib/erp/brand-bc-profile";
 import { getErpDataPool, sql } from "@/lib/db/mssql";
 
 export const ERP_ACCOUNT_SYNC_TYPE = "ACCOUNTS";
@@ -177,39 +185,37 @@ export interface BrandAccountSyncContext {
   glUrl: string;
   bankCardUrl: string;
   journalBatchUrl: string;
+  /**
+   * Which BC this sync read, and the value every row it writes is stamped
+   * with (migration 159). Resolved ONCE per brand, so the company called and
+   * the rows stored cannot be from different environments.
+   */
+  environment: ErpBcEnvironment;
 }
 
 export async function resolveBrandAccountSyncContext(
   brandCode: string,
 ): Promise<BrandAccountSyncContext> {
   const code = brandCode.trim().toUpperCase();
-  const brand = await getBrandConfig(code);
-  if (!brand) {
-    throw new Error(`ไม่พบการตั้งค่าแบรนด์ ${code}`);
-  }
-  if (!brand.bcId?.trim()) {
-    throw new Error(`แบรนด์ ${code} ยังไม่ได้ตั้งค่า BC Id`);
-  }
-  if (!brand.bcName?.trim()) {
-    throw new Error(`แบรนด์ ${code} ยังไม่ได้ตั้งค่า BC Name (Company)`);
-  }
-  if (!brand.bcConnectionId) {
-    throw new Error(`แบรนด์ ${code} ยังไม่ได้เลือก BC Connection`);
-  }
+  const environment = await resolveErpSourceEnvironment();
+  /* One resolver for both environments, and it does NOT fall back — see
+     `brand-bc-profile.ts`. The per-field messages this replaced said which
+     field was missing; the one message says which ENVIRONMENT and where to set
+     it, which is the question an admin actually has when a brand syncs in
+     production and fails in UAT. */
+  const profile = await resolveBrandBcProfile(code, environment);
+  if (!profile) throw new Error(missingBcProfileMessage(code, environment));
 
-  const conn = await getBcConnectionById(brand.bcConnectionId);
-  if (!conn || !conn.IsActive) {
-    throw new Error(`BC Connection ของ ${code} ไม่พร้อมใช้งาน`);
-  }
-
-  const bcCompanyId = brand.bcId.trim();
-  const bcCompanyName = brand.bcName.trim();
+  const conn = { BaseUrl: profile.baseUrl };
+  const bcCompanyId = profile.bcCompanyId;
+  const bcCompanyName = profile.bcCompanyName;
 
   return {
     brandCode: code,
     bcCompanyId,
     bcCompanyName,
-    bcConnectionId: brand.bcConnectionId,
+    bcConnectionId: profile.bcConnectionId,
+    environment,
     glUrl: buildBcApiV2CompanyEntityUrl(conn.BaseUrl, bcCompanyId, "accounts"),
     bankCardUrl: buildBcODataEntityUrl(
       conn.BaseUrl,
@@ -226,6 +232,13 @@ export async function resolveBrandAccountSyncContext(
 
 async function insertSyncLog(
   brandCode: string,
+  /**
+   * Which BC the run read. Taken as a parameter rather than resolved here, so
+   * the log row says the same thing the data rows say even if this is ever
+   * called from somewhere with a different request scope — one answer per
+   * sync, decided where the sync starts.
+   */
+  environment: ErpBcEnvironment,
   status: "success" | "failed",
   rowsUpserted: number,
   errorMessage: string | null,
@@ -240,6 +253,7 @@ async function insertSyncLog(
     .request()
     .input("syncType", sql.NVarChar, ERP_ACCOUNT_SYNC_TYPE)
     .input("brand", sql.NVarChar, brandCode)
+    .input("env", sql.NVarChar, environment)
     .input("status", sql.NVarChar, status)
     .input("rows", sql.Int, rowsUpserted)
     .input("err", sql.NVarChar, errorMessage)
@@ -247,9 +261,9 @@ async function insertSyncLog(
     .input("by", sql.Int, triggeredBy ?? null)
     .query(`
       INSERT INTO [dbo].[ErpSyncLog]
-        (SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
+        (SourceEnvironment, SyncType, BrandCode, Status, RowsUpserted, ErrorMessage, StartedAt, FinishedAt, TriggeredBy)
       VALUES
-        (@syncType, @brand, @status, @rows, @err, @started, SYSDATETIME(), @by)
+        (@env, @syncType, @brand, @status, @rows, @err, @started, SYSDATETIME(), @by)
     `);
 }
 
@@ -268,6 +282,7 @@ async function upsertGlAccounts(
     await pool
       .request()
       .input("brand", sql.NVarChar, ctx.brandCode)
+      .input("env", sql.NVarChar, ctx.environment)
       .input("companyId", sql.NVarChar, ctx.bcCompanyId)
       .input("connId", sql.Int, ctx.bcConnectionId)
       .input("accountNo", sql.NVarChar, norm.accountNo)
@@ -278,9 +293,11 @@ async function upsertGlAccounts(
       .query(`
         MERGE [dbo].[ErpAccounts] AS t
         USING (
-          SELECT @brand AS BrandCode, 'GL' AS AccountCategory, @accountNo AS AccountNo
+          SELECT @env AS SourceEnvironment, @brand AS BrandCode,
+                 'GL' AS AccountCategory, @accountNo AS AccountNo
         ) AS s
-        ON t.BrandCode = s.BrandCode
+        ON t.SourceEnvironment = s.SourceEnvironment
+          AND t.BrandCode = s.BrandCode
           AND t.AccountCategory = s.AccountCategory
           AND t.AccountNo = s.AccountNo
         WHEN MATCHED THEN
@@ -295,11 +312,12 @@ async function upsertGlAccounts(
             RawJson = @raw
         WHEN NOT MATCHED THEN
           INSERT (
-            BrandCode, BcCompanyId, BcConnectionId, AccountCategory, AccountNo,
+            SourceEnvironment, BrandCode, BcCompanyId, BcConnectionId,
+            AccountCategory, AccountNo,
             DisplayName, BcCategory, IsBlocked, IsActive, SyncedAt, RawJson
           )
           VALUES (
-            @brand, @companyId, @connId, 'GL', @accountNo,
+            @env, @brand, @companyId, @connId, 'GL', @accountNo,
             @displayName, @bcCategory, @blocked, 1, SYSDATETIME(), @raw
           );
       `);
@@ -309,11 +327,13 @@ async function upsertGlAccounts(
   await pool
     .request()
     .input("brand", sql.NVarChar, ctx.brandCode)
+    .input("env", sql.NVarChar, ctx.environment)
     .input("cutoff", sql.DateTime2, startedAt)
     .query(`
       UPDATE [dbo].[ErpAccounts]
       SET IsActive = 0
-      WHERE BrandCode = @brand AND AccountCategory = 'GL' AND SyncedAt < @cutoff
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @brand AND AccountCategory = 'GL' AND SyncedAt < @cutoff
     `);
 
   return count;
@@ -334,6 +354,7 @@ async function upsertBankAccountCards(
     await pool
       .request()
       .input("brand", sql.NVarChar, ctx.brandCode)
+      .input("env", sql.NVarChar, ctx.environment)
       .input("companyId", sql.NVarChar, ctx.bcCompanyId)
       .input("companyName", sql.NVarChar, ctx.bcCompanyName)
       .input("connId", sql.Int, ctx.bcConnectionId)
@@ -346,9 +367,10 @@ async function upsertBankAccountCards(
       .query(`
         MERGE [dbo].[ErpBankAccountCard] AS t
         USING (
-          SELECT @brand AS BrandCode, @accountNo AS AccountNo
+          SELECT @env AS SourceEnvironment, @brand AS BrandCode, @accountNo AS AccountNo
         ) AS s
-        ON t.BrandCode = s.BrandCode AND t.AccountNo = s.AccountNo
+        ON t.SourceEnvironment = s.SourceEnvironment
+          AND t.BrandCode = s.BrandCode AND t.AccountNo = s.AccountNo
         WHEN MATCHED THEN
           UPDATE SET
             BcCompanyId = @companyId,
@@ -363,11 +385,12 @@ async function upsertBankAccountCards(
             RawJson = @raw
         WHEN NOT MATCHED THEN
           INSERT (
-            BrandCode, BcCompanyId, BcCompanyName, BcConnectionId, AccountNo,
+            SourceEnvironment, BrandCode, BcCompanyId, BcCompanyName,
+            BcConnectionId, AccountNo,
             DisplayName, BankName, CurrencyCode, IsBlocked, IsActive, SyncedAt, RawJson
           )
           VALUES (
-            @brand, @companyId, @companyName, @connId, @accountNo,
+            @env, @brand, @companyId, @companyName, @connId, @accountNo,
             @displayName, @bankName, @currency, @blocked, 1, SYSDATETIME(), @raw
           );
       `);
@@ -377,11 +400,12 @@ async function upsertBankAccountCards(
   await pool
     .request()
     .input("brand", sql.NVarChar, ctx.brandCode)
+    .input("env", sql.NVarChar, ctx.environment)
     .input("cutoff", sql.DateTime2, startedAt)
     .query(`
       UPDATE [dbo].[ErpBankAccountCard]
       SET IsActive = 0
-      WHERE BrandCode = @brand AND SyncedAt < @cutoff
+      WHERE SourceEnvironment = @env AND BrandCode = @brand AND SyncedAt < @cutoff
     `);
 
   return count;
@@ -402,6 +426,7 @@ async function upsertGeneralJournalBatches(
     await pool
       .request()
       .input("brand", sql.NVarChar, ctx.brandCode)
+      .input("env", sql.NVarChar, ctx.environment)
       .input("companyId", sql.NVarChar, ctx.bcCompanyId)
       .input("companyName", sql.NVarChar, ctx.bcCompanyName)
       .input("connId", sql.Int, ctx.bcConnectionId)
@@ -413,9 +438,10 @@ async function upsertGeneralJournalBatches(
       .query(`
         MERGE [dbo].[ErpGeneralJournalBatch] AS t
         USING (
-          SELECT @brand AS BrandCode, @batchName AS BatchName
+          SELECT @env AS SourceEnvironment, @brand AS BrandCode, @batchName AS BatchName
         ) AS s
-        ON t.BrandCode = s.BrandCode AND t.BatchName = s.BatchName
+        ON t.SourceEnvironment = s.SourceEnvironment
+          AND t.BrandCode = s.BrandCode AND t.BatchName = s.BatchName
         WHEN MATCHED THEN
           UPDATE SET
             BcCompanyId = @companyId,
@@ -429,11 +455,12 @@ async function upsertGeneralJournalBatches(
             RawJson = @raw
         WHEN NOT MATCHED THEN
           INSERT (
-            BrandCode, BcCompanyId, BcCompanyName, BcConnectionId, BatchName,
+            SourceEnvironment, BrandCode, BcCompanyId, BcCompanyName,
+            BcConnectionId, BatchName,
             DisplayName, TemplateName, IsBlocked, IsActive, SyncedAt, RawJson
           )
           VALUES (
-            @brand, @companyId, @companyName, @connId, @batchName,
+            @env, @brand, @companyId, @companyName, @connId, @batchName,
             @displayName, @templateName, @blocked, 1, SYSDATETIME(), @raw
           );
       `);
@@ -443,11 +470,12 @@ async function upsertGeneralJournalBatches(
   await pool
     .request()
     .input("brand", sql.NVarChar, ctx.brandCode)
+    .input("env", sql.NVarChar, ctx.environment)
     .input("cutoff", sql.DateTime2, startedAt)
     .query(`
       UPDATE [dbo].[ErpGeneralJournalBatch]
       SET IsActive = 0
-      WHERE BrandCode = @brand AND SyncedAt < @cutoff
+      WHERE SourceEnvironment = @env AND BrandCode = @brand AND SyncedAt < @cutoff
     `);
 
   return count;
@@ -511,6 +539,7 @@ export async function syncBrandErpAccounts(
 
     await insertSyncLog(
       ctx.brandCode,
+      ctx.environment,
       "success",
       glRows + bankRows + journalBatchRows,
       null,
@@ -529,6 +558,7 @@ export async function syncBrandErpAccounts(
     const msg = e instanceof Error ? e.message : "Sync failed";
     await insertSyncLog(
       ctx.brandCode,
+      ctx.environment,
       "failed",
       glRows + bankRows + journalBatchRows,
       msg,
@@ -575,10 +605,12 @@ export async function listErpGlAccountOptions(
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT AccountNo, DisplayName, BcCategory
       FROM [dbo].[ErpAccounts]
-      WHERE BrandCode = @brand
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @brand
         AND AccountCategory = 'GL'
         AND IsActive = 1
         AND IsBlocked = 0
@@ -599,10 +631,12 @@ export async function listErpJournalBatchOptions(
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT BatchName, DisplayName, TemplateName
       FROM [dbo].[ErpGeneralJournalBatch]
-      WHERE BrandCode = @brand
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @brand
         AND IsActive = 1
         AND IsBlocked = 0
       ORDER BY DisplayName, BatchName
@@ -622,10 +656,12 @@ export async function listErpBankAccountCardOptions(
   const res = await pool
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT AccountNo, DisplayName, BankName
       FROM [dbo].[ErpBankAccountCard]
-      WHERE BrandCode = @brand
+      WHERE SourceEnvironment = @env
+        AND BrandCode = @brand
         AND IsActive = 1
         AND IsBlocked = 0
       ORDER BY DisplayName, AccountNo
@@ -681,10 +717,11 @@ export async function getLastAccountSync(
     .request()
     .input("brand", sql.NVarChar, brandCode.trim().toUpperCase())
     .input("syncType", sql.NVarChar, ERP_ACCOUNT_SYNC_TYPE)
+    .input("env", sql.NVarChar, await resolveErpSourceEnvironment())
     .query(`
       SELECT TOP 1 Status, RowsUpserted, FinishedAt
       FROM [dbo].[ErpSyncLog]
-      WHERE BrandCode = @brand AND SyncType = @syncType
+      WHERE SourceEnvironment = @env AND BrandCode = @brand AND SyncType = @syncType
       ORDER BY FinishedAt DESC
     `);
   const row = res.recordset[0] as Record<string, unknown> | undefined;

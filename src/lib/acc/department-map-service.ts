@@ -1,3 +1,4 @@
+import { resolveErpSourceEnvironment } from "@/lib/erp/source-environment";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
@@ -846,6 +847,9 @@ export async function loadAllDepartmentErpMaps(): Promise<Map<string, Map<string
 export async function loadErpDeptDisplayNamesByTargetBrand(): Promise<Map<string, Map<string, string>>> {
   const pool = await getErpDataPool();
   const targetBrands = (await listErpInterfaceBrands()).map((b) => b.id);
+  // Resolved once, outside the fan-out — every brand in one call is being read
+  // for the same viewer, so they must all come from the same environment.
+  const environment = await resolveErpSourceEnvironment();
   const out = new Map<string, Map<string, string>>();
 
   await Promise.all(
@@ -853,11 +857,13 @@ export async function loadErpDeptDisplayNamesByTargetBrand(): Promise<Map<string
       const res = await pool
         .request()
         .input("brand", sql.NVarChar, target)
+        .input("env", sql.NVarChar, environment)
         .input("dim", sql.NVarChar, HR_DEPARTMENT_DIMENSION_CODE)
         .query(`
           SELECT Code, DisplayName
           FROM [dbo].[ErpDimensionValue]
-          WHERE BrandCode = @brand AND DimensionCode = @dim AND IsActive = 1
+          WHERE SourceEnvironment = @env
+            AND BrandCode = @brand AND DimensionCode = @dim AND IsActive = 1
         `);
 
       const map = new Map<string, string>();
