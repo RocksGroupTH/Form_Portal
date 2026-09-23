@@ -46,16 +46,19 @@ test("both environments parse, trimmed and case-insensitively", () => {
 
 test("anything else is null — refused, never defaulted to Production", () => {
   /* This is the whole reason the function has three answers rather than two.
-     Defaulting an unrecognised value to Production would answer the Production
-     half to a screen that asked for Sandbox, with a 200 and a real list of
-     rows — the silent wrong-environment read the column exists to end. */
-  for (const bad of ["UAT", "PRO", "prod", "Sandbox ", 1, true, {}, []]) {
-    if (bad === "Sandbox ") continue; // trimmed above; kept to show it is NOT in this list
+     Defaulting an unrecognised value to Production would write one
+     environment's bank account over the other's — a real row, no error — which
+     is the silent wrong-environment write the column exists to end. */
+  for (const bad of ["UAT", "PRO", "prod", 1, true, {}, []]) {
     assert.equal(parseErpBcEnvironment(bad), null, `${JSON.stringify(bad)} should be refused`);
   }
-  // "UAT" is the trap: it is what the SCREEN calls this half, and it is not
-  // what the column holds. A silent fallback would make the toggle a no-op.
+  // "UAT" is the trap: it is what the NAVBAR calls this half, and it is not
+  // what the column holds. `resolveSettingsErpEnvironment()` is what translates
+  // between the two, and it is the only thing that should.
   assert.equal(parseErpBcEnvironment("UAT"), null);
+  // Whitespace is trimmed rather than refused, so this one is NOT in the list
+  // above — a stray space is a typing accident, not a different environment.
+  assert.equal(parseErpBcEnvironment("Sandbox "), "Sandbox");
 });
 
 test("rows narrow to one environment, tolerating how a row was written", () => {

@@ -62,24 +62,32 @@ export function brandErpEnvPredicate(alias?: string): string {
 }
 
 /**
- * Read an environment off a query parameter or a request body.
+ * Read an environment off an untyped value.
+ *
+ * **No route calls this, and none should.** Since 2026-09-24 the settings
+ * screens take their half from the navbar's PRO/UAT switch, resolved
+ * server-side by `resolveSettingsErpEnvironment()`, and nothing reads an
+ * environment off the wire — `brand-erp-environment-guard.test.ts` fails if one
+ * starts. Its caller is `clear-advance-bank-account.ts`, whose test seam types
+ * the parameter as a plain `string` so the fakes in its tests need no import of
+ * `ErpBcEnvironment`; this is what stops a value that is neither environment
+ * reaching the column.
  *
  * Three answers, and the third is the point: `undefined` for a caller that did
  * not name one — the service then resolves the request's own environment, which
  * is what every money path does — and **`null` for a value that is not one of
- * the two**, which the routes turn into a 400.
+ * the two**, which a caller must refuse rather than substitute.
  *
  * Refusing rather than defaulting matters here more than it usually does.
- * Falling back to Production for an unrecognised value would answer the
- * Production half to a screen that asked for Sandbox, with a 200 and a real
- * list of rows: exactly the silent wrong-environment read this column was added
- * to end. The same argument `fx-cache-policy` makes about a date it cannot
- * parse — answering a question about one thing with another thing's answer is
- * worse than answering nothing.
+ * Falling back to Production for an unrecognised value would write one
+ * environment's bank account over the other's — a real row, no error: exactly
+ * the silent wrong-environment write this column was added to end. The same
+ * argument `fx-cache-policy` makes about a date it cannot parse — answering a
+ * question about one thing with another thing's answer is worse than answering
+ * nothing.
  *
  * Trimmed and case-insensitive on the way in, then returned in the canonical
- * spelling, so `?environment=sandbox` works and what reaches the column does
- * not depend on how the caller typed it.
+ * spelling, so what reaches the column does not depend on how it was typed.
  */
 export function parseErpBcEnvironment(value: unknown): ErpBcEnvironment | null | undefined {
   if (value === undefined || value === null || value === "") return undefined;
@@ -89,10 +97,6 @@ export function parseErpBcEnvironment(value: unknown): ErpBcEnvironment | null |
   if (v === "sandbox") return "Sandbox";
   return null;
 }
-
-/** The Thai refusal every route answers for a value `parseErpBcEnvironment` rejects. */
-export const INVALID_ERP_ENVIRONMENT_ERROR =
-  "environment ต้องเป็น Production หรือ Sandbox เท่านั้น";
 
 /**
  * Narrow already-loaded rows to one environment.

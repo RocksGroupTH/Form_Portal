@@ -136,8 +136,6 @@ export async function POST(req: NextRequest) {
         deptAsBranch?: boolean;
         fixedErpDeptCode?: string | null;
       }[];
-      /** Validated by parseErpBcEnvironment below, never trusted as typed. */
-      environment?: unknown;
     };
 
     const targetCode = (body.targetCode ?? "").trim().toUpperCase();

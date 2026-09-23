@@ -61,8 +61,6 @@ export async function POST(req: NextRequest) {
       vatInputGlAccountNo?: string | null;
       whtPayableGlAccountNo?: string | null;
       bankAccountNo?: string;
-      /** Validated by parseErpBcEnvironment below, never trusted as typed. */
-      environment?: unknown;
     };
     const brandCode = (body.brandCode ?? "").trim();
     if (!brandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือกแบรนด์" }, { status: 400 });
