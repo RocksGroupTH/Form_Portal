@@ -36,7 +36,7 @@ import path from "node:path";
  * single literal — and is closed below; two more probes were added in the
  * same round. Full results are in this branch's Task 8 report.
  *
- * ## Mutation-verified again, 2026-09-23 — 19 mutations, one found green and closed
+ * ## Mutation-verified again, 2026-09-23 — 18 mutations, two found green and closed
  *
  * The round that moved the attach notice from the tab save to the submit. Each
  * of the new assertions was defeated on purpose before it was trusted: the
@@ -52,11 +52,11 @@ import path from "node:path";
  * allocation, and duplicated into `saveTravelBookingDraft`; and a new export
  * added to the service.
  *
- * **One came back green**, and it was not in either of the functions this round
- * touched: the whole 2441-test suite passed against a narrowed `unchanged`
- * early return in `applyRoomShareSelection`, and against its delete-then-insert
- * rewritten as an in-place `UPDATE`. Both defeat once-per-binding from the
- * other end — see "the binding's write shape…" below, which closes them.
+ * **Two came back green**, and neither was in the functions this round touched:
+ * the whole 2441-test suite passed against a narrowed `unchanged` early return
+ * in `applyRoomShareSelection`, and against its delete-then-insert rewritten as
+ * an in-place `UPDATE`. Both defeat once-per-binding from the other end — see
+ * "the binding's write shape…" below, which closes them.
  *
  * **What this file deliberately cannot catch**, stated so it is not mistaken
  * for coverage: a body gutted with an early `return`. Every call, argument
