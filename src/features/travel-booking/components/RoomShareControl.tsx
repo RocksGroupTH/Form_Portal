@@ -19,7 +19,10 @@ import { Dialog } from "@/components/ui/Dialog";
 import { RequesterPickerBody, type RequesterOption } from "@/components/RequesterPickerBody";
 import { fmtYmdDisplay } from "@/features/accounting/lib/format-travel-dates";
 import { ROOM_SHARE_AGREEMENT_LINE, RUNNING_PREFIX } from "@/features/travel-booking/constants";
-import { defaultHostFilterRange } from "@/features/travel-booking/lib/host-filter-range";
+import {
+  defaultFiledOnFilterRange,
+  defaultHostFilterRange,
+} from "@/features/travel-booking/lib/host-filter-range";
 import {
   exampleRequestNo,
   isCompleteRequestNo,
@@ -680,12 +683,19 @@ export function RoomShareControl({
         setFrom(range.from);
         setTo(range.to);
       } else {
-        // "filed on" is a window in the PAST — a default reaching thirty days
-        // forward would be a range nothing can fall in. Cleared rather than
-        // guessed: inventing a backwards window here would be policy nobody
-        // asked for.
-        setFrom("");
-        setTo("");
+        // "filed on" is a window in the PAST, so this one reaches BACKWARDS —
+        // same thirty days, opposite direction. It used to be cleared, on the
+        // reasoning that a forward default "would be a range nothing can fall
+        // in" and that a backwards one "would be policy nobody asked for". The
+        // first half was right and the second was overtaken: the user asked on
+        // 2026-09-23 for this mode to carry a default เหมือนกัน with the travel
+        // one. Taking that literally would seed today … today + 30 and match
+        // only requests filed TODAY — a default that empties the list is worse
+        // than the blank field it replaces, because a blank field at least
+        // reads as a question. See `defaultFiledOnFilterRange`.
+        const range = defaultFiledOnFilterRange(new Date());
+        setFrom(range.from);
+        setTo(range.to);
       }
     },
     [mode],

@@ -54,3 +54,27 @@ export function defaultHostFilterRange(now: Date): { from: string; to: string } 
   end.setDate(end.getDate() + HOST_FILTER_DEFAULT_DAYS);
   return { from: ymd(start), to: ymd(end) };
 }
+
+/**
+ * The **filed-on** window the same picker opens on: **today − 30 … today**.
+ *
+ * The user asked for this mode to carry a default "เหมือนกัน" with the travel
+ * one (2026-09-23), which it did not — it opened blank, because an earlier
+ * pass cleared it deliberately rather than seed a window nothing could fall in.
+ *
+ * **The span is the same thirty days; the DIRECTION is flipped, and that is a
+ * deliberate reading of the request rather than a literal one.** A request's
+ * filed-on date is when somebody pressed ส่งคำขอ, so it is always in the past.
+ * Seeding `today … today + 30` literally would have matched only requests filed
+ * *today* — a default that empties the list is worse than the blank field it
+ * replaced, because a blank field at least looks like a question.
+ *
+ * Both ends are still editable, and the requester can clear them; this only
+ * decides what is there before anybody touches it.
+ */
+export function defaultFiledOnFilterRange(now: Date): { from: string; to: string } {
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  start.setDate(start.getDate() - HOST_FILTER_DEFAULT_DAYS);
+  return { from: ymd(start), to: ymd(end) };
+}
