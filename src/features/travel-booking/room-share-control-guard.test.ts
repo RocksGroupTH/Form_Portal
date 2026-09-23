@@ -273,49 +273,49 @@ import path from "node:path";
  *     this is why the arm matches `(host, tab)` rather than the call alone.
  * 34. the import deleted → **red**.
  *
- * **Point 4 — the opening prompt**
- * 35. `useState(() => shouldAskRoomShare(initial))` → `useState(true)`, i.e.
- *     asked on every resumed draft → **red**.
- * 36. a second `setAskRoomShare(true)` added, so the question comes back →
- *     **red** (the call-count arm; the "turned off" arm still passes, which
- *     is why they are separate).
- * 37. the form stops handing the prompt and its answer to the tab → **red**.
- * 38. the one write turned the prompt ON instead of off → **red**.
- * 39. the prompt's `onOpenChange` made a no-op, so Escape and the backdrop
- *     leave it unanswered → **red**.
- * 40. `askYes` stops answering the prompt → **red**; 41. `askYes` stops
- *     opening the picker → **red**; 42. `askNo` opens the picker too →
- *     **red**. Three arms because all three are different lies to the
- *     requester.
- * 43. a latch of its own reintroduced inside `RoomShareControl` → **red**.
- * 44. **`open={askRoomShare && hostRequestId == null}` — MEASURED GREEN, and
- *     deliberately left green.** The arm read `/open=\{askRoomShare\}/`, an
- *     exact spelling, and this narrowing is not a regression: the attached
- *     branch returns before this JSX, so the extra condition is redundant
- *     rather than wrong. A guard that reds on a harmless refinement is one
- *     the next reader deletes, so the arm was **loosened** to require
- *     `askRoomShare` *within* the open expression, and 46 below was added to
- *     prove the loosened form still bites.
- * 45. the prompt dialog deleted outright → **red**.
- * 46. the latch dropped out of the open expression (`open={true}`) → **red**.
+ * **Point 4 — the opening prompt — REMOVED 2026-09-23, the same day it shipped**
  *
- * **The agreement line, now that there are two dialogs**
- * 47. the agreement line removed from the PICKER while the prompt and the
- *     attached card keep theirs → **red**. This is the trial the slice exists
- *     for: the old arm was "an agreement line anywhere after the first
- *     `<Dialog`", which the prompt's own copy would have satisfied.
- * 48. a third dialog carrying an agreement line inserted **before** the
- *     picker → **red**, twice (the picker-identity check and the
- *     dialog-count check). That is the reordering hazard in the form it would
- *     actually arrive in.
+ * The user asked for the "พักห้องเดียวกับเพื่อนร่วมงานหรือไม่" modal to come
+ * off: *"AP-17 ให้ตัด popup พักห้องเดียวกับเพื่อนร่วมงานหรือไม่ ออก"*. Twelve
+ * arms went with it — they pinned `shouldAskRoomShare`, the form-held latch,
+ * `askYes`/`askNo`, and the prompt dialog's own open and dismiss wiring, none
+ * of which exists any more. They are deliberately NOT listed here one by one:
+ * a roll-call of trials against deleted code reads as coverage this file no
+ * longer has. `git show 17f723a` carries them if the prompt ever returns.
+ *
+ * **What survived the removal, and why it is not dead weight.** The
+ * agreement-line arms below still slice the picker's own `<Dialog>` region
+ * rather than searching the whole file, and still count the dialogs. That
+ * machinery arrived when the prompt became the second dialog, but it was
+ * never *about* the prompt: it is about the warning being inside the dialog
+ * where the choice is actually made. Loosened back to "an agreement line
+ * anywhere in the file" it is satisfied by the attached card's copy while the
+ * picker's has gone, which is the regression it exists for — and the count is
+ * what keeps the slice naming the picker rather than whatever is written
+ * above it.
+ *
+ * **The agreement line, sliced to the picker's own dialog**
+ * 35. the agreement line removed from the PICKER while the attached card
+ *     keeps its own → **red**. An index-only "anywhere after the first
+ *     `<Dialog`" arm passes this, which is why the slice exists.
+ * 36. a second dialog carrying an agreement line inserted **before** the
+ *     picker → **red**. That is the hazard in the shape it actually arrived
+ *     in once already.
+ *
+ *     **Two arms catch it, and only one of them reports** — `node:test`
+ *     aborts the test at the first failing assertion, so the dialog COUNT is
+ *     what a reader sees. Measured rather than assumed: with the count then
+ *     raised to 2 — a later change deciding a second dialog is legitimate —
+ *     the picker-identity arm reds on its own ("the file's first <Dialog> is
+ *     no longer the host picker"). So the identity check is not made
+ *     redundant by the count sitting in front of it; it is what still bites
+ *     once somebody has argued the count up.
  */
 
 const SRC = path.resolve(process.cwd(), "src");
 
 const TAB = "features/travel-booking/components/TravelBookingTab.tsx";
 const CONTROL = "features/travel-booking/components/RoomShareControl.tsx";
-/** Where the opening prompt's latch lives — see the point-4 section below. */
-const FORM = "features/travel-booking/components/TravelBookingForm.tsx";
 /** The on-behalf frame around the same shared search body — see the inline-search test. */
 const PERSON_MODAL = "components/RequesterPickerModal.tsx";
 const HOOK = "features/travel-booking/hooks/useTravelBookingForm.ts";
@@ -626,14 +626,14 @@ test("the agreement line is the shared constant, shown before the choice and aft
       "in advance (spec §2); and on the attached card, so the state stays self-describing",
   );
   /* **Sliced to the PICKER's own dialog, not "anywhere after the first
-     `<Dialog`".** A second dialog joined this file on 2026-09-23 — the
-     opening พักห้องเดียวกับเพื่อนร่วมงานหรือไม่ prompt — and it carries an
-     agreement line of its own, quite rightly, because it is now the first
-     place the choice is offered. An index-only check would let that one
-     satisfy this assertion while the picker's had been deleted, which is
-     precisely the regression the arm exists for. The two dialogs are
-     siblings, so the first `</Dialog>` after the first `<Dialog` closes the
-     picker; that is asserted rather than assumed. */
+     `<Dialog`".** This arrived on 2026-09-23, when the opening
+     พักห้องเดียวกับเพื่อนร่วมงานหรือไม่ prompt briefly made this file's second
+     dialog and carried an agreement line of its own: an index-only check let
+     THAT one satisfy this assertion while the picker's could be deleted. The
+     prompt came off the same day (the user: *"ให้ตัด popup ... ออก"*), so there
+     is one dialog again — and the slice stays, because the next second dialog
+     reopens the hole immediately and this is the arm that notices. The count
+     below is asserted rather than assumed, and so is the identity. */
   const dialogAt = src.indexOf("<Dialog");
   assert.notEqual(dialogAt, -1, "the host picker dialog has gone");
   const dialogEnd = src.indexOf("</Dialog>", dialogAt);
@@ -644,6 +644,20 @@ test("the agreement line is the shared constant, shown before the choice and aft
     "a <Dialog> is nested inside the picker dialog, so the slice below no longer names the " +
       "picker's own region and every assertion over it is about something else",
   );
+  /* ONE dialog, since the opening prompt was removed on 2026-09-23. Not a
+     ban on ever having two — it is what keeps the identity check below
+     meaningful, by making a second one a deliberate decision somebody has to
+     re-argue here rather than something that slides in and silently shadows
+     the picker. A third is also how the stacked person picker (the old
+     `personOpen` arrangement) would come back. */
+  const dialogs = src.match(/<Dialog\b/g) ?? [];
+  assert.equal(
+    dialogs.length,
+    1,
+    `RoomShareControl renders ${dialogs.length} dialog(s), not just the host picker. If that is ` +
+      "deliberate, check the picker is still the FIRST of them before raising this number — " +
+      "every assertion below slices the first one's region",
+  );
   const picker = src.slice(dialogAt, dialogEnd);
   /* The slice has to IDENTIFY itself as the picker, or reordering the two
      dialogs would silently point this assertion at the prompt — whose own
@@ -652,15 +666,15 @@ test("the agreement line is the shared constant, shown before the choice and aft
   assert.ok(
     picker.indexOf("PICK_MODES.map(") !== -1,
     "the file's first <Dialog> is no longer the host picker. Every assertion below slices that " +
-      "region; pointed at the opening prompt instead, the warning arm is satisfied by the " +
-      "prompt's own copy and the picker could lose its agreement line entirely",
+      "region; pointed at some other dialog, the warning arm is satisfied by that one's copy " +
+      "and the picker could lose its agreement line entirely",
   );
   assert.ok(
     picker.indexOf("<AgreementLine />") !== -1,
     "no agreement line inside the PICKER dialog — the warning would then reach the requester " +
-      "only in the opening prompt or after they had already attached, and the prompt is not a " +
-      "substitute: somebody who reaches the picker from the พักห้องเดียวกับเพื่อนร่วมงาน button " +
-      "never sees the prompt at all",
+      "only AFTER they had already attached, on the card describing what they have just done. " +
+      "The host has no veto, so the guest is the only person who can be warned in advance, and " +
+      "the picker is where the choice is actually made",
   );
 });
 
@@ -1095,125 +1109,3 @@ test("picking a host fills the tab in through the shared prefill module", () => 
   );
 });
 
-/**
- * **The opening question** (the user's point 4): "พักห้องเดียวกับเพื่อน
- * ร่วมงานหรือไม่", asked before the requester starts filling the form.
- *
- * Three properties the user named, one arm each, because each fails
- * differently:
- *
- * - **not on a resumed draft.** `shouldAskRoomShare` reads the resumed group.
- *   Replaced by `useState(true)` it asks a requester every time they reopen
- *   their own saved draft.
- * - **"No" is final for the session.** The latch is the FORM's and is taken
- *   once, in a `useState` initialiser. Moved into `RoomShareControl`, or
- *   re-derived in an effect, it comes back on the next tab switch or SWR
- *   revalidation — a modal that will not stay shut.
- * - **it blocks nothing.** Escape and the backdrop answer it, exactly as
- *   ไม่ใช่ does. Without `onOpenChange` the prompt is a modal with only one
- *   way out, in front of somebody who came to fill a form.
- */
-test("the opening prompt is asked once per form session, and never on a resumed draft", () => {
-  const form = code(FORM);
-  assert.match(
-    form,
-    /import\s*\{\s*shouldAskRoomShare\s*\}\s*from\s*["']@\/features\/travel-booking\/lib\/room-share-prompt["']/,
-    "TravelBookingForm no longer imports shouldAskRoomShare",
-  );
-  assert.match(
-    form,
-    /useState\(\(\)\s*=>\s*shouldAskRoomShare\(initial\)\)/,
-    "the prompt is no longer decided ONCE from the resumed group. A literal here asks a " +
-      "requester who saved yesterday every time they reopen their own draft; anything " +
-      "recomputed on render can put the question back after it has been answered",
-  );
-  const sets = form.match(/setAskRoomShare\(/g) ?? [];
-  assert.equal(
-    sets.length,
-    1,
-    `setAskRoomShare is called ${sets.length} times in TravelBookingForm. Exactly one call, ` +
-      "turning it off, is what makes `ไม่ใช่` final — a second one is the question coming back",
-  );
-  assert.match(form, /setAskRoomShare\(false\)/, "the one write no longer turns the prompt OFF");
-  assert.ok(
-    form.indexOf("askRoomShare={askRoomShare}") !== -1 &&
-      form.indexOf("onAskAnswered={answerRoomSharePrompt}") !== -1,
-    "the form no longer hands the prompt and its answer to the tab, so the question is either " +
-      "never asked or can never be answered",
-  );
-});
-
-test("the prompt's latch is not re-created below the form", () => {
-  for (const [rel, file] of [
-    [CONTROL, "RoomShareControl"],
-    [TAB, "TravelBookingTab"],
-  ] as const) {
-    const src = code(rel);
-    assert.ok(
-      src.indexOf("setAskRoomShare") === -1 && src.indexOf("shouldAskRoomShare") === -1,
-      `${file} decides the opening prompt for itself. Both of these are re-rendered with ` +
-        "whichever tab is active, so a latch here is re-taken on every tab switch — the " +
-        "requester answers ไม่ใช่ and is asked again on the next trip, which is the " +
-        "four-modals-for-one-group defect the per-session rule exists to prevent",
-    );
-    assert.ok(
-      src.indexOf("askRoomShare") !== -1 && src.indexOf("onAskAnswered") !== -1,
-      `${file} no longer carries the prompt through, so it never reaches the control`,
-    );
-  }
-});
-
-test("the prompt blocks nothing, and ใช่ opens the picker", () => {
-  const src = code(CONTROL);
-
-  // Exactly two dialogs: the picker and the prompt. The count is what keeps
-  // the agreement-line slice above naming the picker's own region.
-  const dialogs = src.match(/<Dialog\b/g) ?? [];
-  assert.equal(
-    dialogs.length,
-    2,
-    `RoomShareControl renders ${dialogs.length} dialogs, not the picker plus the opening ` +
-      "prompt. A third is either a stacked person picker coming back (the arrangement " +
-      "`personOpen` existed for) or a second prompt",
-  );
-
-  const titleAt = src.indexOf('title="พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"');
-  assert.notEqual(titleAt, -1, "the opening prompt has gone");
-  const promptAt = src.lastIndexOf("<Dialog", titleAt);
-  const prompt = src.slice(promptAt, titleAt);
-  /* `askRoomShare` must be IN the open expression, not be the whole of it.
-     Pinning the exact spelling reds on a narrowing somebody might legitimately
-     add — `askRoomShare && hostRequestId == null`, say — and a guard that
-     reds on non-regressions is one the next reader deletes. What must not
-     happen is the latch dropping out of it altogether. */
-  assert.match(
-    prompt,
-    /open=\{[^}]*\baskRoomShare\b[^}]*\}/,
-    "the prompt is no longer opened by the form's own latch, so it is shown on a resumed " +
-      "draft, or after it has been answered, or never",
-  );
-  assert.match(
-    prompt,
-    /onOpenChange=\{\(next\) => \{\s*if \(!next\) askNo\(\);\s*\}\}/,
-    "Escape and the backdrop no longer answer the prompt. A modal in front of somebody who " +
-      "came to fill a form has to be dismissable every way a modal normally is — and every " +
-      "dismissal has to LATCH, or the question returns on the next render",
-  );
-
-  const yes = balancedAfter(src, "const askYes = useCallback", "(");
-  assert.ok(
-    yes.indexOf("onAskAnswered()") !== -1,
-    "ใช่ no longer answers the prompt, so the question can come back over the open picker",
-  );
-  assert.ok(
-    yes.indexOf("openPicker()") !== -1,
-    "ใช่ no longer opens the picker, so the only answer that does anything does nothing",
-  );
-  const no = balancedAfter(src, "const askNo = useCallback", "(");
-  assert.ok(no.indexOf("onAskAnswered()") !== -1, "ไม่ใช่ no longer answers the prompt");
-  assert.ok(
-    no.indexOf("openPicker") === -1 && no.indexOf("setPickerOpen") === -1,
-    "ไม่ใช่ opens the picker. `No` must land the requester exactly where they are today — at " +
-      "the ที่พักค้างคืน grid, with the button still there if they change their mind",
-  );
-});
