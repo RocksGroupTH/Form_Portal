@@ -45,6 +45,19 @@ import path from "node:path";
  * `brand.ts`'s docblock for why wiring it to the brand switch would make a
  * brand an ERP posting target with no BC configuration behind it.
  *
+ * ## Mutation-tested 2026-09-23, and one of the arms was born broken
+ *
+ * - the fixed route reverted to the hardcoded list → **red**, 2 arms.
+ * - a sibling route's `await listBrandRegistry()` deleted while its import
+ *   stays → **GREEN at first.** The arm read `/listBrandRegistry/`, which the
+ *   surviving import satisfies, and an unused import is a lint warning at
+ *   most — so nothing anywhere would have noticed. It now tests for
+ *   `await listBrandRegistry(` and reds. This is the third time this
+ *   repository has written down that a guard must pin the CALL; it is worth
+ *   assuming the first spelling of any new arm has this shape until a
+ *   mutation says otherwise.
+ * - a third importer of `BRANDS` added → **red** (the exact-list arm).
+ *
  * If this goes red, move the route onto the registry. Do not add the brand to
  * `BRANDS`: that list is read by `erp-interface-brands` and an entry there is
  * a claim about Business Central, not about whether a brand exists.
@@ -91,11 +104,18 @@ test("the three settings routes resolve brands from the registry", () => {
   // renders a picture on every page showing a brand.
   for (const rel of BRAND_CODE_ROUTES.slice(0, 3)) {
     const src = code(rel);
-    assert.match(
-      src,
-      /listBrandRegistry/,
-      `${rel} no longer resolves the brand from listBrandRegistry(), so it is deciding what a ` +
-        "brand is from somewhere other than the company master",
+    /* **The CALL, not the mention.** `/listBrandRegistry/` was the first
+       spelling and it was measured GREEN against deleting the call and
+       leaving the import — the exact hole `settings-route-gates.test.ts`
+       already records ("it searches for `await <gate>(` rather than a bare
+       mention, because a route's comments name the gate it used to carry").
+       An unused import is a lint warning at most, so nothing else would have
+       noticed. */
+    assert.ok(
+      src.indexOf("await listBrandRegistry(") !== -1,
+      `${rel} no longer CALLS listBrandRegistry(), so it is deciding what a brand is from ` +
+        "somewhere other than the company master — an import that survives a deleted call is " +
+        "not evidence of anything",
     );
   }
 });
