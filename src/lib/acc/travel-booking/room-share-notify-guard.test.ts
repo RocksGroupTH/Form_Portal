@@ -306,6 +306,19 @@ test("submitTravelBookingGroup is the one site, and it is inside the transaction
       "the commit the host is told about a submission that may have rolled back, and the stamp " +
       "saying they were told commits separately from the mail saying it",
   );
+
+  /* And AFTER the running number, which is the half of this change that is a
+     repair rather than a move: the mail renders the guest's number and its
+     per-diem figures, both minted by statements in this same loop. Called
+     ahead of them it prints `เลขที่คำขอของผู้พักร่วม: -` — exactly what the
+     old save-time send did, the guest being an unnumbered draft. */
+  const allocate = indexOfMatch(body, /allocateRequestNo\s*\(/, "the running-number allocation");
+  assert.ok(
+    allocate < notice,
+    "claimRoomShareHostNotice now runs before the tab's running number is allocated, so the " +
+      "host's mail names `-` where the guest's number belongs. Spec §5 asks for the guest to be " +
+      "identifiable immediately; an unnumbered one is not",
+  );
 });
 
 /* ─────────────────── how the notifier queues, and on what ─────────────────── */
