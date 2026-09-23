@@ -150,8 +150,6 @@ import type {
  * - **Picking fills the rest of the trip in** — the parent applies
  *   `roomSharePrefillPatch` beside `roomShareChoicePatch`; this component
  *   still only hands over a host.
- * - **The form can open by ASKING**, `askRoomShare` / `onAskAnswered`, with
- *   the latch held by the form. See `room-share-prompt.ts`.
  */
 
 /* ─────────────────────────── display helpers ─────────────────────────── */
@@ -279,21 +277,6 @@ export interface RoomShareControlProps {
   onChoose: (host: HostCandidateRow) => void;
   /** The choice is withdrawn. The parent clears the flag; the accommodation stays unchosen. */
   onClear: () => void;
-  /**
-   * Open by asking **"พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"** (the user's point
-   * 4, 2026-09-23).
-   *
-   * **The latch is the FORM's, not this component's**, and that is the whole
-   * design: `shouldAskRoomShare` (`lib/room-share-prompt.ts`) answers it once
-   * in a `useState` initialiser from the resumed group, and `onAskAnswered`
-   * turns it off for the rest of the session. Held here it would reset every
-   * time the requester switched tab — this component is re-rendered, not
-   * remounted, but a tab switch changes `hostRequestId` and a great deal
-   * besides — and "No" has to be final.
-   */
-  askRoomShare: boolean;
-  /** The prompt was answered, either way. The form latches it off for the session. */
-  onAskAnswered: () => void;
 }
 
 export function RoomShareControl({
@@ -302,8 +285,6 @@ export function RoomShareControl({
   colleagues,
   onChoose,
   onClear,
-  askRoomShare,
-  onAskAnswered,
 }: RoomShareControlProps) {
   const [share, setShare] = useState<ShareState>({ kind: "idle" });
   /**
@@ -731,33 +712,6 @@ export function RoomShareControl({
     setResolved(null);
     onClear();
   }, [onClear]);
-
-  /* ── the opening question (point 4) ── */
-
-  /**
-   * ใช่ — answer the prompt and go straight into the picker.
-   *
-   * `onAskAnswered()` first, so the question is latched off even if something
-   * in `openPicker` were ever to throw: a prompt that can re-ask is the one
-   * failure the user named, and it would be reached by exactly that ordering.
-   */
-  const askYes = useCallback(() => {
-    onAskAnswered();
-    openPicker();
-  }, [onAskAnswered, openPicker]);
-
-  /**
-   * ไม่ใช่, Escape and the backdrop are **the same answer**, on purpose.
-   *
-   * A modal in front of somebody who came to fill a form has to be dismissable
-   * in every way a modal normally is, and every one of them must land them
-   * exactly where they are today — at the ที่พักค้างคืน grid, with the
-   * พักห้องเดียวกับเพื่อนร่วมงาน button still there if they change their mind.
-   * "No" being final for the session is the form's latch, not this handler.
-   */
-  const askNo = useCallback(() => {
-    onAskAnswered();
-  }, [onAskAnswered]);
 
   /* ─────────────────────────── attached ─────────────────────────── */
 
@@ -1229,64 +1183,6 @@ export function RoomShareControl({
           <Button type="button" variant="secondary" size="sm" onClick={closePicker}>
             ปิด
           </Button>
-        </div>
-      </Dialog>
-
-      {/* ── The opening question (the user's point 4, 2026-09-23) ──
-          "พักห้องเดียวกับเพื่อนร่วมงานหรือไม่", asked before the requester
-          starts filling the form rather than left to be discovered at the
-          bottom of it. Attaching now fills the trip in as well as replacing
-          ที่พักค้างคืน (`room-share-prefill.ts`), so somebody who fills the
-          whole form first has done the work twice.
-
-          **Written AFTER the picker on purpose.** Two guard arms in
-          `room-share-control-guard.test.ts` reach for this file's FIRST
-          `<Dialog`, meaning the picker — the one the agreement line has to be
-          inside, because that is where the choice is made. Putting this one
-          above would hand those arms the wrong dialog, and the arm about the
-          warning would then be satisfied by this prompt's copy while the
-          picker's had gone.
-
-          **Three properties, each load-bearing**, and `room-share-prompt.ts`
-          carries the argument for all three: it is asked once per FORM
-          SESSION rather than per tab; "ไม่ใช่" is final for that session,
-          because the latch is the form's and not this component's; and it
-          blocks nothing — Escape, the backdrop, the close button and ไม่ใช่
-          are one answer, leaving the requester exactly where they were. */}
-      <Dialog
-        open={askRoomShare}
-        onOpenChange={(next) => {
-          if (!next) askNo();
-        }}
-        title="พักห้องเดียวกับเพื่อนร่วมงานหรือไม่"
-        contentClassName="max-w-md"
-      >
-        <div className="flex flex-col gap-3">
-          <p className="text-[13px] m-0 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-            ถ้าคุณจะพักห้องเดียวกับเพื่อนร่วมงานที่จองห้องพักไว้แล้ว
-            ระบบจะดึงข้อมูลการเดินทางจากคำขอของเพื่อนมาเติมให้ (เฉพาะช่องที่คุณยังไม่ได้กรอก)
-            และคุณไม่ต้องเลือกที่พักค้างคืนเอง
-          </p>
-
-          {/* The terms before the choice — the host has no veto, so this is
-              the only warning anybody gets, and this prompt is now the first
-              place the choice is offered. */}
-          <AgreementLine />
-
-          <div className="flex items-center justify-end gap-2 flex-wrap">
-            <Button type="button" variant="secondary" size="sm" onClick={askNo}>
-              ไม่ใช่ จองห้องพักเอง
-            </Button>
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={askYes}
-              icon={<Users size={14} />}
-            >
-              ใช่ เลือกคำขอของเพื่อน
-            </Button>
-          </div>
         </div>
       </Dialog>
     </div>
