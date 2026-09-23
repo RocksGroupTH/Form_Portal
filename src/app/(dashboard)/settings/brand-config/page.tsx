@@ -210,6 +210,19 @@ function BrandConfigCard({
         <p className="text-[11px] font-mono mt-0.5" style={{ color: "var(--text-muted)" }}>{config.brandCode}</p>
       </div>
 
+
+      {!st.complete && (
+        <div className="flex flex-col gap-1">
+          {st.groups
+            .filter((g) => !g.complete)
+            .map((g) => (
+              <p key={g.key} className="text-[10px] leading-snug" style={{ color: "var(--text-muted)" }}>
+                <span className="font-medium">{g.label}:</span> {g.missing.join(", ")}
+              </p>
+            ))}
+        </div>
+      )}
+
       {/* A bare pill switch — a label and a track, no box, no border, no tinted
           row (the user, 2026-09-23: minimal). It is deliberately NOT the shared
           `Toggle`: that one is a full-row bordered control built for a settings
@@ -237,7 +250,7 @@ function BrandConfigCard({
         aria-label={`เปิดใช้งานแบรนด์ ${config.brandName}`}
         disabled={toggling}
         onClick={() => onToggleEnabled(!config.isEnabled)}
-        className="flex items-center justify-between gap-2 bg-transparent border-none p-0 text-left w-full select-none"
+        className="flex items-center justify-between gap-2 bg-transparent border-none p-0 text-left w-full select-none mt-auto"
         style={{ cursor: toggling ? "not-allowed" : "pointer", opacity: toggling ? 0.6 : 1 }}
       >
         <span
@@ -268,23 +281,10 @@ function BrandConfigCard({
           />
         </span>
       </button>
-
-      {!st.complete && (
-        <div className="flex flex-col gap-1">
-          {st.groups
-            .filter((g) => !g.complete)
-            .map((g) => (
-              <p key={g.key} className="text-[10px] leading-snug" style={{ color: "var(--text-muted)" }}>
-                <span className="font-medium">{g.label}:</span> {g.missing.join(", ")}
-              </p>
-            ))}
-        </div>
-      )}
-
       <button
         type="button"
         onClick={onEdit}
-        className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold cursor-pointer border-none mt-auto"
+        className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold cursor-pointer border-none"
         style={{
           background: st.complete ? "var(--bg-badge)" : "var(--color-action)",
           color: st.complete ? "var(--text-secondary)" : "#fff",
