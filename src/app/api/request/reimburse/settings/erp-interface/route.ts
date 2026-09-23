@@ -9,6 +9,10 @@ import {
   type ReimburseErpGroupSaveMember,
 } from "@/lib/acc/reimburse/erp-interface-settings-service";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import {
+  INVALID_ERP_ENVIRONMENT_ERROR,
+  parseErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
 
 /**
  * AP-4's own Business Central posting configuration, grouped by interface
@@ -84,11 +88,25 @@ import { AP4_FORM_CODE } from "@/features/reimburse/constants";
  */
 
 /** GET — one card per interface target, plus the unassigned claim brands. */
-export async function GET() {
+/**
+ * `?environment=` names which BC half the screen is showing, and the POST body
+ * carries the same for the half it writes. **Absent resolves the request's own
+ * environment**, which for this route is always Production — the
+ * `/api/request/reimburse/settings` prefix is pinned there in `ROUTE_RULES` so
+ * a config-row id is not read as an AccRequest id. An unrecognised value is a
+ * 400 rather than a fallback: answering the Production half to a screen that
+ * asked for Sandbox, with a 200 and a real list, is the silent
+ * wrong-environment read migration 161 exists to end.
+ */
+export async function GET(req: NextRequest) {
   const session = await requireReimburseSettingsTab("erpInterface");
   if (session instanceof Response) return session;
   try {
-    const data = await loadReimburseErpGroups();
+    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
+    const data = await loadReimburseErpGroups(environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/reimburse/settings/erp-interface] GET", err);
@@ -116,6 +134,8 @@ export async function POST(req: NextRequest) {
         deptAsBranch?: boolean;
         fixedErpDeptCode?: string | null;
       }[];
+      /** Validated by parseErpBcEnvironment below, never trusted as typed. */
+      environment?: unknown;
     };
 
     const targetCode = (body.targetCode ?? "").trim().toUpperCase();
@@ -170,9 +190,14 @@ export async function POST(req: NextRequest) {
 
     const journalBatchName = (body.journalBatchName ?? "").trim() || null;
 
+    const environment = parseErpBcEnvironment(body?.environment);
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
     await saveReimburseErpGroup(
       { targetCode, journalBatchName, members },
       Number(session.user.id),
+      environment,
     );
     return NextResponse.json({ ok: true });
   } catch (err) {

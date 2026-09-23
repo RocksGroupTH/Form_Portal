@@ -62,6 +62,39 @@ export function brandErpEnvPredicate(alias?: string): string {
 }
 
 /**
+ * Read an environment off a query parameter or a request body.
+ *
+ * Three answers, and the third is the point: `undefined` for a caller that did
+ * not name one — the service then resolves the request's own environment, which
+ * is what every money path does — and **`null` for a value that is not one of
+ * the two**, which the routes turn into a 400.
+ *
+ * Refusing rather than defaulting matters here more than it usually does.
+ * Falling back to Production for an unrecognised value would answer the
+ * Production half to a screen that asked for Sandbox, with a 200 and a real
+ * list of rows: exactly the silent wrong-environment read this column was added
+ * to end. The same argument `fx-cache-policy` makes about a date it cannot
+ * parse — answering a question about one thing with another thing's answer is
+ * worse than answering nothing.
+ *
+ * Trimmed and case-insensitive on the way in, then returned in the canonical
+ * spelling, so `?environment=sandbox` works and what reaches the column does
+ * not depend on how the caller typed it.
+ */
+export function parseErpBcEnvironment(value: unknown): ErpBcEnvironment | null | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") return null;
+  const v = value.trim().toLowerCase();
+  if (v === "production") return "Production";
+  if (v === "sandbox") return "Sandbox";
+  return null;
+}
+
+/** The Thai refusal every route answers for a value `parseErpBcEnvironment` rejects. */
+export const INVALID_ERP_ENVIRONMENT_ERROR =
+  "environment ต้องเป็น Production หรือ Sandbox เท่านั้น";
+
+/**
  * Narrow already-loaded rows to one environment.
  *
  * For the callers that read a brand's whole set and pick in TypeScript —

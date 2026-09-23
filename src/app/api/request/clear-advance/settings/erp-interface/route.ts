@@ -3,6 +3,10 @@ import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab
 import { listClrInterfaceConfigView } from "@/lib/clr/clear-advance-interface-settings-service";
 import { saveClrBatch, saveClrErpAccounts } from "@/lib/clr/clear-advance-interface-config-service";
 import { saveClrBankAccount } from "@/lib/clr/clear-advance-bank-account";
+import {
+  INVALID_ERP_ENVIRONMENT_ERROR,
+  parseErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
 
 /**
  * **Gated on `clearErpInterface` since 2026-09-22, not `requireRole`.** The
@@ -18,11 +22,24 @@ import { saveClrBankAccount } from "@/lib/clr/clear-advance-bank-account";
  *
  * GET — per-brand AP-3 Interface ERP view (inherited target + AP-3's Journal Batch).
  */
-export async function GET() {
+/**
+ * `?environment=` names which BC half the screen is showing, and the POST body
+ * carries the same for the half it writes. **Absent resolves the request's own
+ * environment**, which for this route is always Production — the settings
+ * prefix is pinned there in `ROUTE_RULES`. An unrecognised value is a 400
+ * rather than a fallback: answering the Production half to a screen that asked
+ * for Sandbox, with a 200 and a real list, is the silent wrong-environment
+ * read migration 161 exists to end.
+ */
+export async function GET(req: NextRequest) {
   const session = await requireAdvClrSettingsTab("clearErpInterface");
   if (session instanceof Response) return session;
   try {
-    const data = await listClrInterfaceConfigView();
+    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
+    const data = await listClrInterfaceConfigView(environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/clear-advance/settings/erp-interface] GET", err);
@@ -41,10 +58,15 @@ export async function POST(req: NextRequest) {
       vatInputGlAccountNo?: string | null;
       whtPayableGlAccountNo?: string | null;
       bankAccountNo?: string;
+      /** Validated by parseErpBcEnvironment below, never trusted as typed. */
+      environment?: unknown;
     };
     const brandCode = (body.brandCode ?? "").trim();
     if (!brandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือกแบรนด์" }, { status: 400 });
     const uid = Number(session.user.id);
+    const environment = parseErpBcEnvironment(body.environment);
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
 
     // Validated up front, before any of the three writes below run. Unlike
     // the two tax accounts, blank is NOT treated as "clear the setting" here
@@ -78,7 +100,7 @@ export async function POST(req: NextRequest) {
       await saveClrErpAccounts(brandCode, body.vatInputGlAccountNo ?? null, body.whtPayableGlAccountNo ?? null, uid);
     }
     if (bankAccountNo !== undefined) {
-      await saveClrBankAccount(brandCode, bankAccountNo, uid);
+      await saveClrBankAccount(brandCode, bankAccountNo, uid, undefined, environment);
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import { listAdvanceInterfaceConfigView, saveAdvanceInterfacePerForm } from "@/lib/adv/advance-interface-settings-service";
+import {
+  INVALID_ERP_ENVIRONMENT_ERROR,
+  parseErpBcEnvironment,
+} from "@/lib/acc/brand-erp-environment";
 
 /**
  * **Gated on `advanceErpInterface` since 2026-09-22, not `requireRole`.** The
@@ -24,11 +28,24 @@ import { listAdvanceInterfaceConfigView, saveAdvanceInterfacePerForm } from "@/l
  *
  * GET — per-brand AP-2 Interface ERP config (AP-2's own + inherited display).
  */
-export async function GET() {
+/**
+ * `?environment=` names which BC half the screen is showing, and the POST body
+ * carries the same for the half it writes. **Absent resolves the request's own
+ * environment**, which for this route is always Production — the settings
+ * prefix is pinned there in `ROUTE_RULES`. An unrecognised value is a 400
+ * rather than a fallback: answering the Production half to a screen that asked
+ * for Sandbox, with a 200 and a real list, is the silent wrong-environment
+ * read migration 161 exists to end.
+ */
+export async function GET(req: NextRequest) {
   const session = await requireAdvClrSettingsTab("advanceErpInterface");
   if (session instanceof Response) return session;
   try {
-    const data = await listAdvanceInterfaceConfigView();
+    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
+    const data = await listAdvanceInterfaceConfigView(environment);
     return NextResponse.json({ ok: true, data });
   } catch (err) {
     console.error("[api/request/advance/settings/erp-interface] GET", err);
@@ -47,6 +64,8 @@ export async function POST(req: NextRequest) {
       bankAccountNo?: string;
       branchCode?: string;
       journalBatchName?: string;
+      /** Validated by parseErpBcEnvironment below, never trusted as typed. */
+      environment?: unknown;
     };
     const brandCode = (body.brandCode ?? "").trim();
     if (!brandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือกแบรนด์" }, { status: 400 });
@@ -60,10 +79,15 @@ export async function POST(req: NextRequest) {
     const journalBatchName = (body.journalBatchName ?? "").trim() || null;
     if (!bankAccountNo) return NextResponse.json({ ok: false, error: "กรุณาเลือก Bank Account" }, { status: 400 });
 
+    const environment = parseErpBcEnvironment(body.environment);
+    if (environment === null)
+      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+
     await saveAdvanceInterfacePerForm(
       brandCode,
       { interfaceBrandCode, bankAccountNo, branchCode, journalBatchName },
       Number(session.user.id),
+      environment,
     );
     return NextResponse.json({ ok: true });
   } catch (err) {
