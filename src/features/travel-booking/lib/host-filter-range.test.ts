@@ -63,37 +63,43 @@ test("single-digit months and days are zero-padded", () => {
   });
 });
 
-/* ── defaultFiledOnFilterRange — same span, opposite direction ── */
+/* ── defaultFiledOnFilterRange — the SAME range, after two corrections ── */
 
-test("the filed-on window ENDS today and reaches backwards", () => {
-  const r = defaultFiledOnFilterRange(at(2026, 9, 23));
-  assert.equal(r.to, "2026-09-23");
+test("the filed-on window STARTS today and reaches forward", () => {
+  // The user's own worked example, 2026-09-23: "วันนี้เป็นวันที่ 23 ต้องเป็น
+  // 23 Sep 2026 - 23 Oct 2026". Pinned as literal strings rather than derived,
+  // so the assertion cannot follow the implementation if somebody flips the
+  // direction back.
+  assert.deepEqual(defaultFiledOnFilterRange(at(2026, 9, 23)), {
+    from: "2026-09-23",
+    to: "2026-10-23",
+  });
+});
+
+test("it is the same range as the travel window, not the same span mirrored", () => {
+  // This is the correction itself. `today − 30 … today` also spans
+  // HOST_FILTER_DEFAULT_DAYS, so a span assertion passes on both readings and
+  // pins neither — only comparing the two windows can tell them apart.
+  for (const now of [at(2026, 9, 23), at(2026, 3, 5), at(2026, 12, 20)]) {
+    assert.deepEqual(defaultFiledOnFilterRange(now), defaultHostFilterRange(now));
+  }
   assert.equal(
-    r.from,
-    "2026-08-24",
-    "a request's filed-on date is always in the past, so a forward window would match only " +
-      "requests filed today — a default that empties the list is worse than a blank field",
+    defaultFiledOnFilterRange(at(2026, 9, 23)).from,
+    "2026-09-23",
+    "a backwards window would still equal itself — the from date is what says which way it runs",
   );
 });
 
-test("it spans the same HOST_FILTER_DEFAULT_DAYS as the travel window", () => {
-  const filed = defaultFiledOnFilterRange(at(2026, 9, 23));
-  const days =
-    (new Date(2026, 8, 23).getTime() - new Date(2026, 7, 24).getTime()) / 86_400_000;
-  assert.equal(days, HOST_FILTER_DEFAULT_DAYS);
-  assert.equal(filed.from, "2026-08-24");
+test("it rolls forward over a month boundary", () => {
+  assert.equal(defaultFiledOnFilterRange(at(2026, 3, 5)).to, "2026-04-04");
 });
 
-test("it rolls back over a month boundary", () => {
-  assert.equal(defaultFiledOnFilterRange(at(2026, 3, 5)).from, "2026-02-03");
+test("it rolls forward over a year boundary", () => {
+  const r = defaultFiledOnFilterRange(at(2026, 12, 20));
+  assert.equal(r.from, "2026-12-20");
+  assert.equal(r.to, "2027-01-19");
 });
 
-test("it rolls back over a year boundary", () => {
-  const r = defaultFiledOnFilterRange(at(2026, 1, 10));
-  assert.equal(r.from, "2025-12-11");
-  assert.equal(r.to, "2026-01-10");
-});
-
-test("late evening still names today, which toISOString would not at UTC+7", () => {
-  assert.equal(defaultFiledOnFilterRange(at(2026, 9, 23, 23)).to, "2026-09-23");
+test("late evening still starts today, which toISOString would not at UTC+7", () => {
+  assert.equal(defaultFiledOnFilterRange(at(2026, 9, 23, 23)).from, "2026-09-23");
 });
