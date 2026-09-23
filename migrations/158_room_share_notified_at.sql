@@ -60,8 +60,25 @@
 -- It does not under-notify: those hosts have the information, and nothing can
 -- un-send what they were already sent.
 --
--- `WHERE NotifiedAt IS NULL` makes it idempotent and makes it impossible for a
--- re-run to overwrite a genuine send with a CreatedAt.
+-- *** THE BACKFILL RUNS ONLY WHEN THIS MIGRATION CREATES THE COLUMN, AND THAT
+-- *** IS THE WHOLE REASON IT IS INSIDE THE `IF` AND WRITTEN AS DYNAMIC SQL.
+--
+-- `WHERE NotifiedAt IS NULL` alone would NOT be a safe idempotency guard here,
+-- which is the trap: after the code is live, a NULL stops meaning "written by
+-- the old code, host already told" and starts meaning "a guest picked a host
+-- and has not submitted yet — tell them when they do". Re-run at that point, a
+-- NULL-guarded backfill stamps exactly those rows with their CreatedAt and
+-- **silently suppresses a notice that was owed**, which is the one failure
+-- this whole change exists to prevent, arriving by the back door.
+--
+-- So the backfill is bound to the creation instead. `ALTER` and backfill sit
+-- in ONE batch inside `IF COL_LENGTH(...) IS NULL`, and the backfill goes
+-- through `sp_executesql` because SQL Server binds column names when it
+-- COMPILES a batch — a plain `UPDATE` naming NotifiedAt beside the ALTER that
+-- adds it cannot compile. Dynamic SQL compiles at execution, after the ALTER
+-- has run. One explicit transaction under XACT_ABORT wraps both, so a failed
+-- backfill takes the column with it and the migration stays re-runnable rather
+-- than leaving a created column whose backfill is now permanently skipped.
 --
 -- ---------------------------------------------------------------------------
 -- NULLABLE, NO DEFAULT, NO CHECK.
@@ -108,26 +125,37 @@ GO
 
 IF COL_LENGTH('dbo.AccTravelRoomShare', 'NotifiedAt') IS NULL
 BEGIN
+  BEGIN TRANSACTION;
+
   ALTER TABLE [dbo].[AccTravelRoomShare] ADD [NotifiedAt] DATETIME2(7) NULL;
   PRINT 'Added AccTravelRoomShare.NotifiedAt.';
+
+  -- Dynamic, and not as a flourish: the ALTER above and this UPDATE are in the
+  -- SAME batch on purpose (so the backfill can never run on a later re-run —
+  -- see the header), and a batch binds its column names at compile time, so a
+  -- plain UPDATE naming NotifiedAt here would fail to compile. sp_executesql
+  -- compiles when it executes, by which time the column exists.
+  --
+  -- @@ROWCOUNT is read INSIDE the dynamic batch, immediately after its own
+  -- UPDATE, rather than outside it after the EXEC — the only place it is
+  -- unambiguous.
+  EXEC sp_executesql N'
+    UPDATE [dbo].[AccTravelRoomShare]
+       SET [NotifiedAt] = [CreatedAt]
+     WHERE [NotifiedAt] IS NULL;
+    PRINT CONCAT(''Backfilled NotifiedAt = CreatedAt on '', @@ROWCOUNT, '' pre-existing binding(s).'');';
+
+  COMMIT TRANSACTION;
 END
 ELSE
-  PRINT 'AccTravelRoomShare.NotifiedAt already present — skipped.';
+  PRINT 'AccTravelRoomShare.NotifiedAt already present — column and backfill both skipped (see header: the backfill is creation-only by design).';
 GO
 
--- A SEPARATE BATCH, and it has to be: SQL Server binds column names when it
--- compiles a batch, so a statement naming NotifiedAt in the same batch as the
--- ALTER above would fail to compile even though the column is about to exist.
-UPDATE [dbo].[AccTravelRoomShare]
-   SET [NotifiedAt] = [CreatedAt]
- WHERE [NotifiedAt] IS NULL;
-PRINT CONCAT('Backfilled NotifiedAt = CreatedAt on ', @@ROWCOUNT, ' pre-existing binding(s).');
-GO
-
--- Post-apply, on BOTH databases: every EXISTING row stamped, no row left NULL.
--- From here on a NULL means "a binding written since this migration, whose
--- guest has not been submitted yet" — which is exactly the state that earns a
--- mail at submit.
+-- Post-apply, on a database this migration has just created the column in:
+-- every EXISTING row stamped, NotYetNotified = 0. On a re-run, or once the
+-- code has been live, NotYetNotified may legitimately be non-zero — a NULL
+-- then means "a binding written since, whose guest has not submitted yet",
+-- which is exactly the state that earns a mail at submit.
 SELECT DB_NAME()                                          AS db,
        COUNT(*)                                           AS [Rows],
        SUM(CASE WHEN [NotifiedAt] IS NULL THEN 1 ELSE 0 END) AS NotYetNotified
