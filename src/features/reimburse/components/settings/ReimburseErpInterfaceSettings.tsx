@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
-import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
-import {
-  ErpEnvironmentNote,
-  ErpEnvironmentToggle,
-} from "@/components/settings/ErpEnvironmentToggle";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -453,7 +449,6 @@ function ReimburseErpGroupModal({
   deptFailed,
   onClose,
   onSaved,
-  environment,
 }: {
   group: ReimburseErpGroup;
   unassigned: ReimburseErpMemberRow[];
@@ -470,8 +465,6 @@ function ReimburseErpGroupModal({
    *  picker reads as "couldn't load" rather than "this branch has no
    *  departments". */
   deptFailed: boolean;
-  /** Which BC half this dialog writes — see the toggle at the root. */
-  environment: ErpBcEnvironment;
   onClose: () => void;
   /** May return a promise — see `handleSave`'s own comment for why it is
    *  awaited rather than fired and forgotten. */
@@ -617,11 +610,7 @@ function ReimburseErpGroupModal({
       const res = await fetch(ERP_INTERFACE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // The environment travels beside the body rather than inside
-        // `ReimburseErpGroupSaveInput`: the service takes it as its own
-        // argument, so putting it in the input type would give one value two
-        // homes and let them disagree.
-        body: JSON.stringify({ ...body, environment }),
+        body: JSON.stringify(body),
       });
       const j = (await res.json()) as { ok: boolean; error?: string };
       if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
@@ -1006,25 +995,18 @@ function ReimburseErpGroupModal({
  * way to change the same flag.
  */
 export function ReimburseErpInterfaceSettings() {
-  /* Production by default, which is what the route resolves for a caller that
-     names nothing — so the screen opens on the same half it always showed. */
-  const [environment, setEnvironment] = useState<ErpBcEnvironment>("Production");
   const { data, error, mutate, isLoading } = useSWR<{ ok: boolean; data?: ReimburseErpGroupsView }>(
-    // The environment is IN the key, so switching refetches rather than
-    // re-rendering the half already cached under the other half's label.
-    `${ERP_INTERFACE_URL}?environment=${environment}`,
+    ERP_INTERFACE_URL,
     fetcher,
   );
   const { data: erpData, error: erpError, isLoading: erpLoading, mutate: mutateErp } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyErp> }>(
-      // The environment is in the key, so the pickers offer the SAME BC half
-      // that is being configured.
-      `/api/request/advance/settings/erp-master?environment=${environment}`,
+      "/api/request/advance/settings/erp-master",
       fetcher,
     );
   const { data: deptData, error: deptError, isLoading: deptLoading, mutate: mutateDept } =
     useSWR<{ ok: boolean; data?: Record<string, CompanyDept> }>(
-      `/api/request/accounting/settings/erp-accounts?environment=${environment}`,
+      "/api/request/accounting/settings/erp-accounts",
       fetcher,
     );
 
@@ -1141,10 +1123,7 @@ export function ReimburseErpInterfaceSettings() {
             จัดกลุ่มตาม Company ปลายทาง — Bank · Branch · Journal Batch ดึงจาก Rocks_ERP_Data —
             การตั้งค่านี้เป็นการเตรียมข้อมูลไว้ล่วงหน้า AP-4 ยังไม่มีขั้นตอนส่งเข้า Business Central
           </p>
-          <div className="flex flex-col gap-2 mt-2">
-            <ErpEnvironmentToggle value={environment} onChange={setEnvironment} />
-            <ErpEnvironmentNote value={environment} />
-          </div>
+          <ErpEnvironmentNotice />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Button
@@ -1212,10 +1191,7 @@ export function ReimburseErpInterfaceSettings() {
 
       {editGroup && (
         <ReimburseErpGroupModal
-          /* The environment is in the key so the dialog REMOUNTS on a switch:
-             its drafts are seeded from `group`, and keeping the instance
-             across halves would save one half's typed values into the other. */
-          key={`${environment}:${editGroup.targetCode}`}
+          key={editGroup.targetCode}
           group={editGroup}
           unassigned={unassigned}
           erp={erpByCompany[editGroup.targetCode]}
@@ -1224,7 +1200,6 @@ export function ReimburseErpInterfaceSettings() {
           deptFailed={deptFailed}
           onClose={() => setEditTargetCode(null)}
           onSaved={load}
-          environment={environment}
         />
       )}
     </div>

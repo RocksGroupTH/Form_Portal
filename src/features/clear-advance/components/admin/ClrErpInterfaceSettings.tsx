@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
-import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
-import {
-  ErpEnvironmentNote,
-  ErpEnvironmentToggle,
-} from "@/components/settings/ErpEnvironmentToggle";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, Circle, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui";
@@ -209,13 +205,10 @@ function GroupCard({
   target,
   members,
   onSaved,
-  environment,
 }: {
   target: string;
   members: ViewRow[];
   onSaved: () => void;
-  /** Which BC half this card reads and writes — see the toggle at the root. */
-  environment: ErpBcEnvironment;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -299,14 +292,11 @@ function GroupCard({
   /* One fetch per group, not per member: every brand in a group posts into the
      same Company, so they pick from the same batches and the same chart. */
   const { data: liveBatch, isLoading } = useSWR<{ ok: boolean; error?: string; data?: BatchOpt[] }>(
-    // The environment is in the key, so the pickers offer the SAME BC half
-    // that is being configured. Without it an admin setting up UAT chooses
-    // from Production's batch names and stores them as UAT's.
-    target ? `/api/request/clear-advance/settings/erp-journal-batches?company=${encodeURIComponent(target)}&environment=${environment}` : null,
+    target ? `/api/request/clear-advance/settings/erp-journal-batches?company=${encodeURIComponent(target)}` : null,
     fetcher,
   );
   const { data: liveGl, isLoading: glLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
-    first ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(first.brandCode)}&environment=${environment}` : null,
+    first ? `/api/request/clear-advance/settings/erp-gl-accounts?brand=${encodeURIComponent(first.brandCode)}` : null,
     fetcher,
   );
   /*
@@ -317,7 +307,7 @@ function GroupCard({
    * "fix" into matching the G/L call.
    */
   const { data: liveBank, isLoading: bankLoading } = useSWR<{ ok: boolean; data?: GlOpt[] }>(
-    target ? `/api/request/clear-advance/settings/erp-bank-accounts?company=${encodeURIComponent(target)}&environment=${environment}` : null,
+    target ? `/api/request/clear-advance/settings/erp-bank-accounts?company=${encodeURIComponent(target)}` : null,
     fetcher,
   );
   const batchErr = liveBatch && !liveBatch.ok ? (liveBatch.error ?? "ดึง batch ไม่สำเร็จ") : null;
@@ -378,7 +368,6 @@ function GroupCard({
             journalBatchName: batch.trim(),
             vatInputGlAccountNo: v.vatGl.trim() || null,
             whtPayableGlAccountNo: v.whtGl.trim() || null,
-            environment,
             // Omitted entirely when blank — never sent as "" — because the
             // route refuses a present-but-blank bank with a 400: there is no
             // "clear the bank" operation, so a blank here must not travel as
@@ -647,13 +636,8 @@ function GroupCard({
  * belonging to the company whose books it posts into.
  */
 export function ClrErpInterfaceSettings() {
-  /* Production by default, which is what the route resolves for a caller that
-     names nothing — so the screen opens on the same half it always showed. */
-  const [environment, setEnvironment] = useState<ErpBcEnvironment>("Production");
   const { data, isLoading, mutate } = useSWR<{ ok: boolean; data?: ViewRow[] }>(
-    // The environment is IN the key, so switching refetches rather than
-    // re-rendering the half already in the cache under the other half's label.
-    `/api/request/clear-advance/settings/erp-interface?environment=${environment}`, fetcher,
+    "/api/request/clear-advance/settings/erp-interface", fetcher,
   );
   const rows = useMemo(() => data?.data ?? [], [data]);
 
@@ -693,10 +677,7 @@ export function ClrErpInterfaceSettings() {
         บัญชี<b>ภาษีซื้อ (VAT input)</b> · บัญชี<b>WHT payable</b> (แยกรายแบรนด์เบิก)
       </p>
 
-      <div className="flex flex-col gap-2">
-        <ErpEnvironmentToggle value={environment} onChange={setEnvironment} />
-        <ErpEnvironmentNote value={environment} />
-      </div>
+      <ErpEnvironmentNotice />
 
       {isLoading ? (
         <p className="text-[13px] py-8 text-center" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>
@@ -704,17 +685,7 @@ export function ClrErpInterfaceSettings() {
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {groups.map((g) => (
-              /* The environment is in the key so the card REMOUNTS on a
-                 switch. Its editable state is seeded from `members`, and
-                 keeping the instance across halves would show one half's typed
-                 values over the other half's rows. */
-              <GroupCard
-                key={`${environment}:${g.target}`}
-                target={g.target}
-                members={g.members}
-                onSaved={() => mutate()}
-                environment={environment}
-              />
+              <GroupCard key={g.target} target={g.target} members={g.members} onSaved={() => mutate()} />
             ))}
           </div>
 

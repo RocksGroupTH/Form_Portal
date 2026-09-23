@@ -3,11 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import useSWR from "swr";
-import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
-import {
-  ErpEnvironmentNote,
-  ErpEnvironmentToggle,
-} from "@/components/settings/ErpEnvironmentToggle";
+import { ErpEnvironmentNotice } from "@/components/settings/ErpEnvironmentNotice";
 import { ExternalLink, CheckCircle2, ChevronRight, Circle, GitBranch, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
@@ -1703,21 +1699,6 @@ export interface BrandErpInterfaceSettingsProps {
 }
 
 export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettingsProps) {
-  /**
-   * Which Business Central half of the per-brand settings is on screen.
-   *
-   * Production by default, which is what every one of these routes resolves
-   * for a caller that names nothing — so the tab opens on exactly the half
-   * it showed before migration 161 split them.
-   *
-   * `envQuery` goes on the four SPLIT tables' READS only. The POSTs carry it
-   * in the body, and `erp-config` (AccBrandErpInterface plus the target
-   * settings) is deliberately left alone — claim brand to interface target
-   * is the same answer in both environments.
-   */
-  const [environment, setEnvironment] = useState<ErpBcEnvironment>("Production");
-  const envQuery = `?environment=${environment}`;
-
   // Which brands the ERP sync sweeps — whichever have a complete Config BC.
   const { brands: ifaceBrands } = useErpInterfaceBrands();
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data?: PageData; error?: string }>(
@@ -1725,28 +1706,25 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
     fetcher,
   );
   const { data: glData, mutate: mutateGl, isLoading: glLoading } = useSWR<{ ok: boolean; data: AccBrandAccountRow[] }>(
-    `/api/request/accounting/settings/gl-accounts${envQuery}`,
+    "/api/request/accounting/settings/gl-accounts",
     fetcher,
   );
   const { data: bankData, mutate: mutateBank, isLoading: bankLoading } = useSWR<{ ok: boolean; data: AccBrandAccountRow[] }>(
-    `/api/request/accounting/settings/bank-accounts${envQuery}`,
+    "/api/request/accounting/settings/bank-accounts",
     fetcher,
   );
   const { data: journalBatchData, mutate: mutateJournalBatch, isLoading: journalBatchLoading } = useSWR<{
     ok: boolean;
     data: AccBrandJournalBatchRow[];
-  }>(`/api/request/accounting/settings/journal-batches${envQuery}`, fetcher);
+  }>("/api/request/accounting/settings/journal-batches", fetcher);
   const { data: branchData, mutate: mutateBranch, isLoading: branchLoading } = useSWR<{
     ok: boolean;
     data: AccBrandBranchRow[];
-  }>(`/api/request/accounting/settings/branch-codes${envQuery}`, fetcher);
+  }>("/api/request/accounting/settings/branch-codes", fetcher);
   const { data: erpData, mutate: mutateErp, isLoading: erpLoading } = useSWR<{
     ok: boolean;
     data: ErpAccountsByBrand;
-    // The environment is in the key, so the pickers offer the SAME BC half
-    // that is being configured — the mirror is split by `SourceEnvironment`
-    // (migration 159) exactly as these settings are by `Environment` (161).
-  }>(`/api/request/accounting/settings/erp-accounts${envQuery}`, fetcher);
+  }>("/api/request/accounting/settings/erp-accounts", fetcher);
 
   const page = data?.data;
   const brands = useMemo(() => page?.brands ?? [], [page?.brands]);
@@ -2002,10 +1980,10 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
     await Promise.all([mutate(), mutateGl(), mutateBank(), mutateJournalBatch(), mutateBranch()]);
 
     const [glListJson, bankListJson, journalListJson, branchListJson, erpConfigJson] = await Promise.all([
-      fetch(`/api/request/accounting/settings/gl-accounts${envQuery}`).then((r) => r.json()),
-      fetch(`/api/request/accounting/settings/bank-accounts${envQuery}`).then((r) => r.json()),
-      fetch(`/api/request/accounting/settings/journal-batches${envQuery}`).then((r) => r.json()),
-      fetch(`/api/request/accounting/settings/branch-codes${envQuery}`).then((r) => r.json()),
+      fetch("/api/request/accounting/settings/gl-accounts").then((r) => r.json()),
+      fetch("/api/request/accounting/settings/bank-accounts").then((r) => r.json()),
+      fetch("/api/request/accounting/settings/journal-batches").then((r) => r.json()),
+      fetch("/api/request/accounting/settings/branch-codes").then((r) => r.json()),
       fetch("/api/request/accounting/settings/erp-config").then((r) => r.json()),
     ]);
 
@@ -2109,7 +2087,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
             displayName: journalBatchOpt?.displayName ?? null,
             isActive: true,
             sortOrder: 0,
-            environment,
           }),
         });
         const journalJson = await journalRes.json();
@@ -2132,7 +2109,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
             erpDescription: resolveGlErpDescription(draft, glItems) || null,
             isActive: true,
             sortOrder: 0,
-            environment,
           }),
         });
         const glJson = await glRes.json();
@@ -2152,7 +2128,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
             accountNo: draft.bankAccountNo.trim(),
             isActive: true,
             sortOrder: 0,
-            environment,
           }),
         });
         const bankJson = await bankRes.json();
@@ -2177,7 +2152,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
             fixedErpDeptCode: draft.deptAsBranch ? draft.fixedErpDeptCode.trim() || null : null,
             isActive: true,
             sortOrder: 0,
-            environment,
           }),
         });
         const branchJson = await branchRes.json();
@@ -2221,10 +2195,10 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
     if (!group) return;
 
     const [glListJson, bankListJson, journalListJson, branchListJson, erpConfigJson] = await Promise.all([
-      fetch(`/api/request/accounting/settings/gl-accounts${envQuery}`).then((r) => r.json()),
-      fetch(`/api/request/accounting/settings/bank-accounts${envQuery}`).then((r) => r.json()),
-      fetch(`/api/request/accounting/settings/journal-batches${envQuery}`).then((r) => r.json()),
-      fetch(`/api/request/accounting/settings/branch-codes${envQuery}`).then((r) => r.json()),
+      fetch("/api/request/accounting/settings/gl-accounts").then((r) => r.json()),
+      fetch("/api/request/accounting/settings/bank-accounts").then((r) => r.json()),
+      fetch("/api/request/accounting/settings/journal-batches").then((r) => r.json()),
+      fetch("/api/request/accounting/settings/branch-codes").then((r) => r.json()),
       fetch("/api/request/accounting/settings/erp-config").then((r) => r.json()),
     ]);
 
@@ -2375,7 +2349,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
             displayName: journalBatchOpt?.displayName ?? null,
             isActive: true,
             sortOrder: 0,
-            environment,
           }),
         });
         const journalJson = await journalRes.json();
@@ -2410,7 +2383,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
               erpDescription: resolveGlErpDescription(draft, glItems) || null,
               isActive: true,
               sortOrder: 0,
-              environment,
             }),
           });
           const glJson = await glRes.json();
@@ -2430,7 +2402,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
               accountNo: draft.bankAccountNo.trim(),
               isActive: true,
               sortOrder: 0,
-              environment,
             }),
           });
           const bankJson = await bankRes.json();
@@ -2455,7 +2426,6 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
               fixedErpDeptCode: draft.deptAsBranch ? draft.fixedErpDeptCode.trim() || null : null,
               isActive: true,
               sortOrder: 0,
-              environment,
             }),
           });
           const branchJson = await branchRes.json();
@@ -2691,14 +2661,10 @@ export function BrandErpInterfaceSettings({ isAdmin }: BrandErpInterfaceSettings
           <p className="text-[10px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
             ตั้งค่าครบ {completeCount}/{brands.length} แบรนด์เบิก · {targetGroups.length} กลุ่ม
           </p>
-          {/* The count above is counted from the half on screen, because the
-              rows it counts are read through `envQuery`. That is the point:
-              "ตั้งค่าครบ 4/4" over UAT means UAT is configured, not that
-              Production is. */}
-          <div className="flex flex-col gap-2 mt-2">
-            <ErpEnvironmentToggle value={environment} onChange={setEnvironment} />
-            <ErpEnvironmentNote value={environment} />
-          </div>
+          {/* Read-only. The counts above are counted from whichever half the
+              navbar's PRO/UAT switch selects, so "ตั้งค่าครบ 4/4" in UAT means
+              UAT is configured — this line is what makes that legible. */}
+          <ErpEnvironmentNotice />
           {canSyncErp && (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2.5">
               <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>

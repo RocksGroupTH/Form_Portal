@@ -106,7 +106,7 @@ export const resolveFormClass = cache(async (): Promise<PathClass> => {
  * The tester service is imported dynamically to keep the static module graph of
  * the resolver free of anything that could reach `getFormPool()`.
  */
-const viewerIsTesting = cache(async (): Promise<boolean> => {
+export const viewerIsTesting = cache(async (): Promise<boolean> => {
   if (!isUatModeCookieOn(await currentUatMode())) return false;
   const { getActiveUatTester } = await import("@/lib/uat-tester/service");
   return (await getActiveUatTester(await currentViewerEmail())) !== null;

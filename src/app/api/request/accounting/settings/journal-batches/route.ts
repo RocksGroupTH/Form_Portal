@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
-import {
-  INVALID_ERP_ENVIRONMENT_ERROR,
-  parseErpBcEnvironment,
-} from "@/lib/acc/brand-erp-environment";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 import {
   listBrandJournalBatches,
   upsertBrandJournalBatch,
@@ -13,12 +10,18 @@ import {
  * AP-1's Journal Batch settings, per Business Central environment since
  * migration 161.
  *
- * `?environment=` names which half the screen is editing. **Absent resolves the
- * request's own environment**, which is what every caller that predates the
- * PRO/UAT toggle does and what keeps them correct. An unrecognised value is a
- * 400 rather than a fallback: this route is pinned to Production in
- * `ROUTE_RULES`, so quietly defaulting would answer the Production half to a
- * screen that asked for Sandbox, with a 200 and a real list.
+ * **Which BC half this reads and writes follows the navbar's PRO/UAT switch**,
+ * not a query string and not this route's own path. The user's rule,
+ * 2026-09-24: *"UAT หรือ PRO ไม่ต้องเปลี่ยนตรงนี้ เพราะเปลี่ยนจากด้านบน navbar
+ * อยู่แล้ว"* — one switch, where it already is.
+ *
+ * It comes from `resolveSettingsErpEnvironment()` rather than the ordinary
+ * `resolveEffectiveErpEnvironment()`, which would answer Production however the
+ * navbar is set: the settings prefix is pinned to `null` in `ROUTE_RULES` so a
+ * config-row id is not read as an `AccRequest` id, and a `null` class resolves
+ * Production outright. That pin is about which DATABASE answers; since
+ * migration 161 the two halves are told apart by a COLUMN, so the rows can come
+ * from Production's database while the half on screen follows the person.
  */
 export async function GET(req: NextRequest) {
   const session = await requireSettingsTab("erpInterface");
@@ -26,9 +29,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const brand = req.nextUrl.searchParams.get("brand");
-    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
-    if (environment === null)
-      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
 
     const data = await listBrandJournalBatches(brand, undefined, environment);
     return NextResponse.json({ ok: true, data });
@@ -44,9 +48,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const environment = parseErpBcEnvironment(body?.environment);
-    if (environment === null)
-      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
 
     // Parsed rather than spread through: the body reaches the service as its
     // input object, so an unvalidated `environment` would be written into the

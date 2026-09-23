@@ -265,65 +265,98 @@ test("the three services resolve the environment rather than assuming one", () =
   );
 });
 
-test("no route hands a service an unparsed environment", () => {
+test("a settings route takes its environment from the viewer, not from its path", () => {
   /**
-   * The value arrives from a query string or a request body, so it is whatever
-   * the caller typed. Unparsed it reaches the column verbatim — and the unique
-   * key with it — where `'UAT'` or `'prod'` is a row belonging to an
-   * environment nothing will ever read back.
+   * **The navbar's PRO/UAT switch decides which half these screens configure**
+   * — the user's rule, 2026-09-24: *"UAT หรือ PRO ไม่ต้องเปลี่ยนตรงนี้ เพราะ
+   * เปลี่ยนจากด้านบน navbar อยู่แล้ว"*. A control on the page would be a second
+   * switch sharing the word UAT, which `erp-environment.ts` already names as
+   * how a test request ends up in the real ERP.
    *
-   * `parseErpBcEnvironment` is the one place that turns it into the two values
-   * the column holds, or `null` for the 400. A route that names `environment`
-   * without calling it has either skipped the parse or invented a second one.
+   * So these routes call `resolveSettingsErpEnvironment()`. What they must NOT
+   * call is the ordinary `resolveEffectiveErpEnvironment()`, and the failure is
+   * the quiet kind: it compiles, it returns a real `ErpBcEnvironment`, and it
+   * answers **Production however the navbar is set** — because the settings
+   * prefix is pinned to `null` in `ROUTE_RULES` (so a config-row id is not read
+   * as an `AccRequest` id) and a `null` class resolves Production outright. The
+   * screen would then show and save the PRO half to somebody who is looking at
+   * a UAT chip in the navbar.
+   *
+   * And they must not take it off the wire either. A settings route that reads
+   * `?environment=` has reintroduced the second switch through the back door,
+   * this time one the page can set without the person seeing it.
    */
-  /* Scoped to the INPUT sites rather than to the word, which is common in
-     these routes for unrelated reasons — the form environment, the ERP
-     environment resolver, the environment chip. What is pinned is: wherever a
-     route reads THIS parameter off a query string or a body, it parses it. */
-  const INPUTS = [
+  const WIRE = [
     'searchParams.get("environment")',
     "body.environment",
     "body?.environment",
   ];
+  const offenders: string[] = [];
+  for (const { rel, src: raw } of FILES) {
+    if (!rel.startsWith("app/api/") || rel.indexOf("/settings/") === -1) continue;
+    // Comment-blanked, because these routes NAME the wrong resolver in prose in
+    // order to say why they do not call it — and a text search cannot tell an
+    // explanation from a call.
+    const src = scan(raw).code;
+    // The IDENTIFIER, not the substring: `@/lib/form-environment/classify-path`
+    // is an import path and says nothing about Business Central.
+    if (!/(?<![\w/-])environment(?![\w/-])/i.test(src)) continue;
+
+    if (src.indexOf("resolveEffectiveErpEnvironment(") !== -1)
+      offenders.push(`${rel} — calls resolveEffectiveErpEnvironment, which answers Production here`);
+    const wire = WIRE.filter((needle) => src.indexOf(needle) !== -1);
+    if (wire.length > 0)
+      offenders.push(`${rel} — takes the environment off the wire (${wire.join(", ")})`);
+    /* `advanceErpEnvironment()` is the second legitimate spelling, and it
+       predates this: AP-2's live batch picker resolves through
+       `resolveFormAccess(AP-2)`, which consults the same `viewerIsTesting()`
+       and additionally requires AP-2 itself to be UAT-enabled. So it follows
+       the navbar too, just with one extra condition — a tester whose AP-2 has
+       UatEnabled off gets Production there and Sandbox on the Interface ERP
+       tab. Left alone deliberately rather than unified: that route is not part
+       of the 161 split, and changing what an existing picker resolves is a
+       decision rather than a tidy-up. */
+    if (
+      src.indexOf("resolveSettingsErpEnvironment") === -1 &&
+      src.indexOf("advanceErpEnvironment") === -1 &&
+      src.indexOf("resolveEffectiveErpEnvironment(") === -1 &&
+      wire.length === 0
+    )
+      offenders.push(`${rel} — names an environment but resolves none`);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "these settings routes do not follow the navbar's PRO/UAT switch:\n  " + offenders.join("\n  "),
+  );
+});
+
+test("the ERP send's echo is an echo, and stays one", () => {
   /**
-   * One exception, and it is a different question rather than a lapse.
+   * The one place a request body legitimately carries an environment.
    *
-   * The ERP send takes `body.environment` as an **echo**: the client sends back
-   * the environment the queue it is looking at was built in, and the route
-   * compares it with the freshly resolved one, answering 409 on drift so the
-   * page reloads instead of posting a journal into a company the operator was
-   * not looking at. The value is compared and discarded — it is never written
-   * to a column, so parsing it into the column's vocabulary would buy nothing.
+   * The send takes it as an **echo**: the client sends back the environment the
+   * queue it is looking at was built in, the route compares it with the freshly
+   * resolved one, and answers 409 on drift so the page reloads rather than
+   * posting a journal into a company the operator was not looking at. The value
+   * is compared and discarded — never stored, never used to select rows.
    *
-   * The exception is pinned to that fact: the arm below requires the route to
-   * still carry its drift refusal. Turn the echo into something stored and the
-   * comparison goes with it, and this test stops excusing the route.
+   * Pinned to that fact rather than merely excused: turn the echo into
+   * something the route acts on and the comparison goes with it, and this test
+   * says so.
    */
   const ECHO_ROUTE = "app/api/request/accounting/erp-prep/send/route.ts";
   const echo = FILES.find((f) => f.rel === ECHO_ROUTE);
   assert.ok(echo, `${ECHO_ROUTE} is missing — has it moved?`);
   assert.ok(
-    echo.src.indexOf("ENVIRONMENT_STALE_ERROR") !== -1,
-    `${ECHO_ROUTE} no longer refuses on environment drift, so its body.environment is not ` +
-      "an echo any more. Either restore the comparison or parse the value like every " +
-      "other route does",
+    echo.src.indexOf("body.environment") !== -1,
+    `${ECHO_ROUTE} no longer reads the echoed environment, so the client and the server can ` +
+      "drift apart with nothing noticing",
   );
-
-  const offenders: string[] = [];
-  for (const { rel, src } of FILES) {
-    if (!rel.startsWith("app/api/")) continue;
-    if (rel === ECHO_ROUTE) continue;
-    const reads = INPUTS.filter((needle) => src.indexOf(needle) !== -1);
-    if (reads.length === 0) continue;
-    if (src.indexOf("parseErpBcEnvironment(") !== -1) continue;
-    offenders.push(`${rel} — reads ${reads.join(" and ")}`);
-  }
-  assert.deepEqual(
-    offenders,
-    [],
-    "these routes read an environment parameter but never parse one. A value that is " +
-      "neither 'Production' nor 'Sandbox' would reach the column as typed, and the " +
-      "unique key with it:\n  " + offenders.join("\n  "),
+  assert.ok(
+    echo.src.indexOf("ENVIRONMENT_STALE_ERROR") !== -1,
+    `${ECHO_ROUTE} no longer refuses on environment drift, so its body.environment is not an ` +
+      "echo any more — it is an input, and an input must not come from the client",
   );
 });
 

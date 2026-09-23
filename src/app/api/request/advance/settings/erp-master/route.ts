@@ -5,10 +5,7 @@ import {
   listAdvErpMaster,
   listAdvErpMasterForCompanies,
 } from "@/lib/adv/advance-erp-master-service";
-import {
-  INVALID_ERP_ENVIRONMENT_ERROR,
-  parseErpBcEnvironment,
-} from "@/lib/acc/brand-erp-environment";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 
 /**
  * GET /api/request/advance/settings/erp-master
@@ -34,22 +31,23 @@ import {
  * routes to AP-4's roster or minting AP-4-pathed twins, and BOTH are policy
  * about another form's access model — not something to slip in here.
  *
- * **`?environment=` names which Business Central these lists come FROM** — the
- * mirror half in `Rocks_ERP_Data`, split by `SourceEnvironment` since migration
- * 159. The Interface ERP settings screens pass it because their own routes are
- * pinned to Production in `ROUTE_RULES`, so without it an admin configuring the
- * UAT half would pick PRODUCTION's batch names and account numbers and store
- * them as UAT's — the wrong-company value migration 161 exists to keep out.
- * Absent resolves the request's own environment; an unrecognised value is a 400.
+ * **Which Business Central these lists come FROM follows the navbar's PRO/UAT
+ * switch** — the mirror half in `Rocks_ERP_Data`, split by `SourceEnvironment`
+ * since migration 159. It has to, or an admin configuring the UAT half would be
+ * choosing from PRODUCTION's batch names and account numbers and storing them
+ * as UAT's: the wrong-company value migration 161 exists to keep out. See
+ * `resolveSettingsErpEnvironment()` for why this route cannot use the ordinary
+ * resolver.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAdvClrSettingsTab("advanceErpInterface");
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();
-    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
-    if (environment === null)
-      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
 
     if (company) {
       const data = await listAdvErpMaster(company, environment);

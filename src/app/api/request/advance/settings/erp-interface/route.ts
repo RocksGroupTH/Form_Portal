@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import { listAdvanceInterfaceConfigView, saveAdvanceInterfacePerForm } from "@/lib/adv/advance-interface-settings-service";
-import {
-  INVALID_ERP_ENVIRONMENT_ERROR,
-  parseErpBcEnvironment,
-} from "@/lib/acc/brand-erp-environment";
+import { resolveSettingsErpEnvironment } from "@/lib/acc/erp-environment";
 
 /**
  * **Gated on `advanceErpInterface` since 2026-09-22, not `requireRole`.** The
@@ -29,21 +26,27 @@ import {
  * GET — per-brand AP-2 Interface ERP config (AP-2's own + inherited display).
  */
 /**
- * `?environment=` names which BC half the screen is showing, and the POST body
- * carries the same for the half it writes. **Absent resolves the request's own
- * environment**, which for this route is always Production — the settings
- * prefix is pinned there in `ROUTE_RULES`. An unrecognised value is a 400
- * rather than a fallback: answering the Production half to a screen that asked
- * for Sandbox, with a 200 and a real list, is the silent wrong-environment
- * read migration 161 exists to end.
+ * **Which BC half this reads and writes follows the navbar's PRO/UAT switch**,
+ * not a query string and not this route's own path. The user's rule,
+ * 2026-09-24: *"UAT หรือ PRO ไม่ต้องเปลี่ยนตรงนี้ เพราะเปลี่ยนจากด้านบน navbar
+ * อยู่แล้ว"* — one switch, where it already is.
+ *
+ * It comes from `resolveSettingsErpEnvironment()` rather than the ordinary
+ * `resolveEffectiveErpEnvironment()`, which would answer Production however the
+ * navbar is set: the settings prefix is pinned to `null` in `ROUTE_RULES` so a
+ * config-row id is not read as an `AccRequest` id, and a `null` class resolves
+ * Production outright. That pin is about which DATABASE answers; since
+ * migration 161 the two halves are told apart by a COLUMN, so the rows can come
+ * from Production's database while the half on screen follows the person.
  */
 export async function GET(req: NextRequest) {
   const session = await requireAdvClrSettingsTab("advanceErpInterface");
   if (session instanceof Response) return session;
   try {
-    const environment = parseErpBcEnvironment(req.nextUrl.searchParams.get("environment"));
-    if (environment === null)
-      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
 
     const data = await listAdvanceInterfaceConfigView(environment);
     return NextResponse.json({ ok: true, data });
@@ -79,9 +82,10 @@ export async function POST(req: NextRequest) {
     const journalBatchName = (body.journalBatchName ?? "").trim() || null;
     if (!bankAccountNo) return NextResponse.json({ ok: false, error: "กรุณาเลือก Bank Account" }, { status: 400 });
 
-    const environment = parseErpBcEnvironment(body.environment);
-    if (environment === null)
-      return NextResponse.json({ ok: false, error: INVALID_ERP_ENVIRONMENT_ERROR }, { status: 400 });
+    // Which BC half this touches follows the navbar's PRO/UAT switch, never a
+    // query string — see resolveSettingsErpEnvironment for why this route
+    // cannot use the ordinary resolver.
+    const environment = await resolveSettingsErpEnvironment();
 
     await saveAdvanceInterfacePerForm(
       brandCode,
