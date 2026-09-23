@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import {
   ErpAccountSyncPopup,
   type ErpSyncPopupState,
@@ -296,8 +296,9 @@ export function DepartmentMappingSettings({ isAdmin }: DepartmentMappingSettings
   );
   const totalClaimBrands = groups.reduce((sum, g) => sum + g.claimBrands.length, 0) + unassignedClaims.length;
 
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const sortedGroups = useMemo(() => {
-    const order = ERP_INTERFACE_BRANDS.map((b) => b.id);
+    const order = ifaceBrands.map((b) => b.id);
     return [...groups].sort((a, b) => {
       const ai = order.indexOf(a.targetBrandCode);
       const bi = order.indexOf(b.targetBrandCode);
@@ -309,7 +310,7 @@ export function DepartmentMappingSettings({ isAdmin }: DepartmentMappingSettings
   }, [groups]);
 
   const handleSync = async () => {
-    const totalSteps = ERP_INTERFACE_BRANDS.length;
+    const totalSteps = ifaceBrands.length;
     let doneSteps = 0;
     let totalRows = 0;
     const errors: string[] = [];
@@ -325,7 +326,7 @@ export function DepartmentMappingSettings({ isAdmin }: DepartmentMappingSettings
     });
 
     try {
-      for (const brand of ERP_INTERFACE_BRANDS) {
+      for (const brand of ifaceBrands) {
         setSyncPopup({
           open: true,
           brandCode: brand.id,
@@ -382,9 +383,9 @@ export function DepartmentMappingSettings({ isAdmin }: DepartmentMappingSettings
           part: "",
           percent: 100,
           status: "done",
-          detail: `ดึงข้อมูลสำเร็จ ${totalRows} รายการ — ${ERP_INTERFACE_BRANDS.length} แบรนด์`,
+          detail: `ดึงข้อมูลสำเร็จ ${totalRows} รายการ — ${ifaceBrands.length} แบรนด์`,
         });
-        toast.success(`Sync ERP สำเร็จ — ${totalRows} รายการ (${ERP_INTERFACE_BRANDS.length} แบรนด์)`);
+        toast.success(`Sync ERP สำเร็จ — ${totalRows} รายการ (${ifaceBrands.length} แบรนด์)`);
       }
 
       window.setTimeout(() => {

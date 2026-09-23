@@ -4,7 +4,7 @@ import { listBrandJournalBatches } from "@/lib/acc/brand-journal-batch-service";
 import { getBrandErpConfigPage } from "@/lib/acc/brand-erp-config-service";
 import { resolveEffectiveErpEnvironment } from "@/lib/acc/erp-environment";
 import type { ErpBcEnvironment } from "@/lib/acc/erp-environment-shared";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import { listErpDepartmentsForBrands } from "@/lib/erp/dimension-sync";
 import { loadDeptGlOverridesByTarget } from "@/lib/acc/department-map-service";
 import {
@@ -111,8 +111,13 @@ function buildTargetMeta(
   );
   const profileByCode = new Map(profiles.map((p) => [p.interfaceBrandCode, p]));
 
-  return ERP_INTERFACE_BRANDS.map((iface) => {
-    const code = iface.id.toUpperCase();
+  /* Over `erpPage.targetBrands` rather than the brand list, which keeps this
+     function SYNCHRONOUS. It is the same set — `getBrandErpConfigPage` builds
+     `targetBrands` from `listErpInterfaceBrands()` — and it is already in this
+     function's hands, so awaiting a second read here would be a second answer
+     to one question as well as making a pure mapper async. */
+  return erpPage.targetBrands.map((iface) => {
+    const code = iface.brandCode.toUpperCase();
     const target = targetByCode.get(code);
     const profile = profileByCode.get(code);
     const claimBrands: ErpInterfaceClaimChip[] = erpPage.brands
@@ -130,7 +135,7 @@ function buildTargetMeta(
 
     return {
       targetBrandCode: code,
-      targetBrandName: target?.brandName ?? iface.name,
+      targetBrandName: target?.brandName ?? iface.brandName,
       targetBrandLogo: `/brandlogo/${code.toLowerCase()}-200.png`,
       claimBrands,
       journalBatchName: journalRow?.batchName?.trim() ?? null,
@@ -205,7 +210,7 @@ export async function loadErpJournalBuildContext(
     listBrandBranches(null, formCode),
     listBrandJournalBatches(null, formCode),
     resolveAllErpTargetProfiles(formCode),
-    listErpDepartmentsForBrands(ERP_INTERFACE_BRANDS.map((b) => b.id)),
+    listErpInterfaceBrands().then((bs) => listErpDepartmentsForBrands(bs.map((b) => b.id))),
   ]);
 
   const interfaceByClaim: Record<string, string> = {};
@@ -241,8 +246,8 @@ export async function loadErpJournalBuildContext(
   for (const b of erpPage.brands) brandCodes.add(b.brandCode.toUpperCase());
 
   const erpDeptCodesByTarget: Record<string, string[]> = {};
-  for (const iface of ERP_INTERFACE_BRANDS) {
-    const key = iface.id.toUpperCase();
+  for (const iface of erpPage.targetBrands) {
+    const key = iface.brandCode.toUpperCase();
     erpDeptCodesByTarget[key] = (erpDepartmentsByTarget[key] ?? []).map((d) => d.code);
   }
 

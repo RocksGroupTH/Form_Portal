@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { AlertCircle, ExternalLink } from "lucide-react";
 import { fmtMoney } from "@/features/accounting/components/ApprovalQueueFilters";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 
 /** Where to go to fix a given preview error. Dept map is shared with AP-1. */
 function settingsHrefForError(error?: string): string {
@@ -91,6 +91,9 @@ interface Section {
 }
 
 export function AdvanceJournalPreview({ items, loading }: { items: PreviewItem[]; loading?: boolean }) {
+  // Names and logos only — a target with no matching brand still renders its
+  // own code, which is what happened before for an unmapped one.
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const sections = useMemo<Section[]>(() => {
     const byTarget = new Map<string, PreviewItem[]>();
     for (const it of items) {
@@ -102,20 +105,20 @@ export function AdvanceJournalPreview({ items, loading }: { items: PreviewItem[]
     return Array.from(byTarget.entries()).map(([target, list]) => {
       const okItems = list.filter((i) => i.ok);
       const badItems = list.filter((i) => !i.ok);
-      const brand = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
+      const brand = ifaceBrands.find((b) => b.id === target);
       const totalDebit = okItems.reduce(
         (s, i) => s + i.lines.reduce((ls, l) => ls + (l.debitAmount ?? 0), 0), 0,
       );
       return {
         target,
         name: brand?.name ?? target,
-        logo: brand ? `/brandlogo/${brand.id.toLowerCase()}-200.png` : null,
+        logo: brand?.logo ?? null,
         journalBatchName: okItems[0]?.journalBatchName ?? null,
         environment: list[0]?.environment ?? null,
         okItems, badItems, totalDebit,
       };
     });
-  }, [items]);
+  }, [items, ifaceBrands]);
 
   if (loading && items.length === 0) {
     return <p className="text-[12px] py-4 text-center" style={{ color: "var(--text-muted)" }}>กำลังคำนวณ journal...</p>;

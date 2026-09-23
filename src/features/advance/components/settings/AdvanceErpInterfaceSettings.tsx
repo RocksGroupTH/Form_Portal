@@ -8,7 +8,7 @@ import { Button } from "@/components/ui";
 import { SearchableSelect } from "@/features/accounting/components/settings/SearchableSelect";
 import { Dialog } from "@/components/ui/Dialog";
 import { ErpAccountSyncPopup, type ErpSyncPopupState } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import {
   groupByTargetIncludingEmpty,
   groupValue,
@@ -325,7 +325,8 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
   );
   const batchWouldClear = !batch.trim() && batchReplacing.length > 0;
 
-  const iface = ERP_INTERFACE_BRANDS.find((b) => b.id === target);
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const iface = ifaceBrands.find((b) => b.id === target);
   const first = members[0];
   const bcLine = [decode(first?.bcName), first?.bcConnectionName?.trim(), first?.environment ?? undefined]
     .filter((v) => v && v !== "—").join(" · ");
@@ -340,10 +341,10 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
       }}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {iface && (
+          {iface?.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={iface.logo} alt="" className="h-6 w-auto object-contain" />
-          )}
+          ) : null}
           <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-heading)" }}>{target}</span>
           <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>{members.length} แบรนด์เบิก</span>
         </div>
@@ -544,16 +545,17 @@ export function AdvanceErpInterfaceSettings() {
    * thing — somebody mapped it somewhere unexpected — and keeps its group,
    * because that is precisely what needs to be seen.
    */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const { groups, unassigned } = useMemo(() => {
-    const known = new Set(ERP_INTERFACE_BRANDS.map((b) => b.id));
+    const known = new Set(ifaceBrands.map((b) => b.id));
     const targetByClaim: Record<string, string> = {};
     for (const r of rows) {
       const t = (r.interfaceTarget ?? "").trim().toUpperCase();
       const unmapped = !known.has(t) && t === r.brandCode.trim().toUpperCase();
       targetByClaim[r.brandCode] = unmapped ? "" : t;
     }
-    return groupByTargetIncludingEmpty(rows, targetByClaim, ERP_INTERFACE_BRANDS.map((b) => b.id));
-  }, [rows]);
+    return groupByTargetIncludingEmpty(rows, targetByClaim, ifaceBrands.map((b) => b.id));
+  }, [rows, ifaceBrands]);
 
   const [refreshing, setRefreshing] = useState(false);
   async function refreshErp() {
@@ -573,7 +575,7 @@ export function AdvanceErpInterfaceSettings() {
     open: false, brandCode: "", part: "", percent: 0, status: "running",
   });
   async function syncVendor() {
-    const brands = ERP_INTERFACE_BRANDS;
+    const brands = ifaceBrands;
     const total = brands.length;
     let done = 0;
     let totalRows = 0;

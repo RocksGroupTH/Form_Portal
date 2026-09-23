@@ -40,6 +40,7 @@ import type { FormEnvironmentValue } from "@/lib/form-environment";
 import type { AccRequest } from "@/features/accounting/types";
 import type { ErpJournalBuildContext } from "@/lib/acc/erp-journal-builder";
 import { ErpJournalPreview } from "@/features/accounting/components/ErpJournalPreview";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { ErpInterfaceBrandTabs } from "@/features/accounting/components/ErpInterfaceBrandTabs";
 import { buildErpJournalSections, type ErpJournalBuildResult } from "@/lib/acc/erp-journal-builder";
 import {
@@ -411,9 +412,15 @@ export function ErpPrepQueue({
 
   const interfaceByClaim = journalContext?.interfaceByClaim ?? {};
 
+  /* The zero-seeded tabs come from the fetched interface brand list — the
+     counts themselves are derived from the rows either way, so a group whose
+     brand has not arrived yet is simply not given a tab, exactly as an
+     unconfigured one is not. */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const ifaceCodes = useMemo(() => ifaceBrands.map((b) => b.id), [ifaceBrands]);
   const ifaceCounts = useMemo(
-    () => countRowsByInterfaceTarget(rows, interfaceByClaim),
-    [rows, interfaceByClaim],
+    () => countRowsByInterfaceTarget(rows, interfaceByClaim, ifaceCodes),
+    [rows, interfaceByClaim, ifaceCodes],
   );
 
   const ifaceFilteredRows = useMemo(() => {

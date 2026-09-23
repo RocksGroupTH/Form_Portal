@@ -10,7 +10,7 @@
  * are COCO. This sync is what lets the journal builder send the real one.
  */
 
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import { postBcCodexStoreRpc } from "@/lib/bc/bc-odata";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
@@ -178,7 +178,7 @@ export async function syncAllBrandErpLocations(triggeredBy: number | null): Prom
 }> {
   const results: LocationSyncResult[] = [];
   const errors: { brandCode: string; error: string }[] = [];
-  for (const brand of ERP_INTERFACE_BRANDS) {
+  for (const brand of await listErpInterfaceBrands()) {
     try {
       results.push(await syncBrandErpLocations(brand.id, triggeredBy));
     } catch (error) {

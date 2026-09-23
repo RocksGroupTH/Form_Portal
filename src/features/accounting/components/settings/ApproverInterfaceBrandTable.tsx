@@ -1,12 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import type { AccApproverRow } from "@/features/accounting/types";
-
-const ALL_BRAND_IDS = ERP_INTERFACE_BRANDS.map((b) => b.id);
 
 function codesEqual(a: string[] | null, b: string[] | null): boolean {
   if (a === null && b === null) return true;
@@ -15,15 +13,34 @@ function codesEqual(a: string[] | null, b: string[] | null): boolean {
   return Array.from(a).sort().join(",") === Array.from(b).sort().join(",");
 }
 
-function toPayload(checked: Set<string>): string[] | null {
+/**
+ * Ticks → what is stored. **`null` means UNRESTRICTED** — AP-1's convention,
+ * and CLAUDE.md records it as a fail-open that was deliberately left alone:
+ * zero rows in `AccApproverInterfaceBrand` reads as every brand.
+ *
+ * `allIds` is the interface brand list, passed in because it is fetched now
+ * rather than a constant of four. **That changes when "all" is reached**, and
+ * it is worth stating rather than discovering: with a fifth brand configured,
+ * an approver who has four of five ticked stores those four explicitly instead
+ * of collapsing to `null`. That is the more faithful record of what an admin
+ * ticked, and it is also the safer direction — an explicit four scopes them to
+ * four, where `null` would silently widen them to whatever is configured next.
+ *
+ * **An empty `allIds` cannot reach here in a way that matters.** It is empty
+ * only while the list is loading, and every checkbox is rendered from that same
+ * list — so there is nothing to tick, `checked` stays as it was initialised,
+ * and `persist` is only ever called from a toggle. The `length === 0` guard
+ * below is what stops an empty tick set being read as "all" if it ever did.
+ */
+function toPayload(checked: Set<string>, allIds: readonly string[]): string[] | null {
   const list = Array.from(checked).sort();
   if (list.length === 0) return [];
-  if (list.length === ALL_BRAND_IDS.length) return null;
+  if (allIds.length > 0 && list.length === allIds.length) return null;
   return list;
 }
 
-function initChecked(codes: string[] | null): Set<string> {
-  if (codes === null) return new Set(ALL_BRAND_IDS);
+function initChecked(codes: string[] | null, allIds: readonly string[]): Set<string> {
+  if (codes === null) return new Set(allIds);
   return new Set(codes);
 }
 
@@ -78,18 +95,25 @@ function ApproverInterfaceCells({
   approver: AccApproverRow;
   onSaved: () => void;
 }) {
-  const [checked, setChecked] = useState<Set<string>>(() => initChecked(approver.interfaceBrandCodes));
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
+  const allIds = useMemo(() => ifaceBrands.map((b) => b.id), [ifaceBrands]);
+  const [checked, setChecked] = useState<Set<string>>(() => initChecked(approver.interfaceBrandCodes, []));
   const [saving, setSaving] = useState(false);
   const skipSaveRef = useRef(false);
 
+  /* `allIds` is in the dependencies, and it has to be: an unrestricted
+     approver (`interfaceBrandCodes === null`) starts with NOTHING ticked
+     because the list has not arrived, and every box has to tick itself the
+     moment it does. `skipSaveRef` is what stops that re-seed being written
+     back as an edit. */
   useEffect(() => {
     skipSaveRef.current = true;
-    setChecked(initChecked(approver.interfaceBrandCodes));
-  }, [approver.id, approver.interfaceBrandCodes]);
+    setChecked(initChecked(approver.interfaceBrandCodes, allIds));
+  }, [approver.id, approver.interfaceBrandCodes, allIds]);
 
   const persist = useCallback(
     async (nextChecked: Set<string>) => {
-      const payload = toPayload(nextChecked);
+      const payload = toPayload(nextChecked, allIds);
       if (codesEqual(payload, approver.interfaceBrandCodes)) return;
 
       setSaving(true);
@@ -137,7 +161,7 @@ function ApproverInterfaceCells({
 
   return (
     <>
-      {ERP_INTERFACE_BRANDS.map((iface) => (
+      {ifaceBrands.map((iface) => (
         <td key={iface.id} className="px-3 py-2.5 text-center">
           <BrandCheckbox
             checked={checked.has(iface.id)}
@@ -190,6 +214,9 @@ export function ApproverInterfaceBrandTable({
   onSaved: () => void;
   onToggleActive: (approver: AccApproverRow) => void;
 }) {
+  // Before the early return below, so the hook order is the same on every
+  // render — an empty roster must not skip it.
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   if (approvers.length === 0) {
     return (
       <div
@@ -224,7 +251,7 @@ export function ApproverInterfaceBrandTable({
               >
                 ผู้อนุมัติ
               </th>
-              {ERP_INTERFACE_BRANDS.map((iface) => (
+              {ifaceBrands.map((iface) => (
                 <th
                   key={iface.id}
                   className="text-center px-3 py-2.5 font-semibold whitespace-nowrap w-20"
@@ -278,7 +305,7 @@ export function ApproverInterfaceBrandTable({
                 {a.isActive ? (
                   <ApproverInterfaceCells approver={a} onSaved={onSaved} />
                 ) : (
-                  <td className="px-3 py-2.5 text-center" colSpan={ERP_INTERFACE_BRANDS.length}>
+                  <td className="px-3 py-2.5 text-center" colSpan={ifaceBrands.length}>
                     <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
                       เปิดใช้งานเพื่อกำหนดกลุ่ม Interface
                     </span>

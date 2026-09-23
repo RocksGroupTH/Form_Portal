@@ -18,35 +18,22 @@
  * to avoid, and it does so silently: the grid would still render as expected
  * (four unticked boxes) while every action quietly passed.
  *
- * The four-code allow-list below is inlined rather than imported from
- * erp-interface-brands.ts, to keep this module free of imports — see
- * brand-scope.test.ts, which imports ERP_INTERFACE_BRANDS itself and asserts
- * the two lists cannot drift apart.
- */
-
-/**
- * Mirrors ERP_INTERFACE_BRANDS' codes (src/lib/acc/erp-interface-brands.ts).
- * Kept as a local, import-free literal on purpose — see the module docblock
- * and the drift guard in brand-scope.test.ts.
- */
-export const SCOPE_BRAND_CODES: readonly string[] = ["PCTH", "KSI", "PCMY", "UNO"];
-
-/**
- * Is this a real, recognised target code? The one place the four-code
- * vocabulary is applied, so `isApproverScope` and `canActOnTarget` agree with
- * `normalizeScopeTargets` about what counts rather than each deciding for
- * itself.
+ * ## SCOPE_BRAND_CODES is GONE (2026-09-23), and that fixed a real defect
  *
- * `AccReimburseApproverBrand.InterfaceBrandCode` deliberately has no CHECK
- * constraint (migration 144, mirroring 038), so a blank or foreign value is
- * representable in the table. This function is what makes such a row inert
- * instead of a grant.
+ * This module held `["PCTH", "KSI", "PCMY", "UNO"]` as an import-free mirror
+ * of ERP_INTERFACE_BRANDS, with a test asserting the two could not drift. The
+ * test was doing its job right up to the moment the other list stopped being a
+ * literal — and a mirror of a database read cannot be a literal at all.
+ *
+ * Left alone it was the reported bug one level down: an admin ticks a newly
+ * configured brand for an AP-4 approver, `normalizeScopeTargets` silently
+ * drops it as unknown, and the tick vanishes on save with no message.
+ *
+ * So the known set is now **passed in** on the write path, which is the only
+ * path that needs it, and this module stays import-free — the property its
+ * docblock opens with, and the reason every AP-4 queue policy that calls
+ * `canActOnTarget` is still synchronous and unit-testable with no database.
  */
-function isKnownTarget(value: unknown): boolean {
-  return (
-    typeof value === "string" && SCOPE_BRAND_CODES.indexOf(value.trim().toUpperCase()) !== -1
-  );
-}
 
 /**
  * Does this set of targets make its owner an approver at all?
@@ -64,7 +51,16 @@ function isKnownTarget(value: unknown): boolean {
  * table has no CHECK on the column, so a blank row is representable.
  */
 export function isApproverScope(targets: readonly string[]): boolean {
-  return targets.some(isKnownTarget);
+  /* A non-blank STRING entry, rather than membership of an allow-list. The
+     entries reaching here have already been narrowed to the live interface
+     brands — `brand-scope-load.ts` normalises on the way out of the table and
+     the settings service normalises on the way in — so re-testing membership
+     here would be a second, now-unavoidably-stale copy of that check, and it
+     would read a legitimately ticked new brand as "not an approver". Blank
+     and non-string entries still answer false, which is the case this
+     function exists for: the column has no CHECK, so a blank row is
+     representable and must not count as a grant. */
+  return targets.some((t) => typeof t === "string" && t.trim().length > 0);
 }
 
 /**
@@ -88,7 +84,21 @@ export function canActOnTarget(
   // refuse, not throw: an exception inside an approver loop fails the whole
   // request where a refusal fails one row, and a crash is a worse way to be
   // safe than a no.
-  return targets.some((t) => isKnownTarget(t) && String(t).trim().toUpperCase() === normalized);
+  /* **No allow-list test here any more, and that is safe for a reason worth
+     stating.** It used to require each stored entry to be one of four known
+     codes, which was a second, weaker copy of a check the write path already
+     makes — and once the real list became a database read, this copy could
+     only ever be stale, refusing a legitimately ticked brand.
+
+     What protects the CHECK-less column (migration 144) is equality, not
+     membership: `target` is the claim's own interface target, resolved from
+     `AccBrandErpInterface`, so a junk row can only grant something by exactly
+     equalling a real target — at which point it is not junk. The `typeof`
+     test stays, because a null or a number from that column must refuse rather
+     than throw inside an approver loop. */
+  return targets.some(
+    (t) => typeof t === "string" && t.trim().toUpperCase() === normalized,
+  );
 }
 
 /**
@@ -106,16 +116,22 @@ export function filterToScope<T>(
 
 /**
  * Normalize a raw list of scope targets — trimmed, upper-cased, deduped, and
- * narrowed to the known interface brand codes. Anything that is not a
- * non-empty string, or is a string but not one of the four codes, is dropped
+ * narrowed to `known`, the interface brand codes as they are TODAY. Anything
+ * that is not a non-empty string, or is a string `known` does not carry, is
+ * dropped
  * rather than kept: an unrecognised value must never become a grant.
  */
-export function normalizeScopeTargets(raw: readonly unknown[]): string[] {
+export function normalizeScopeTargets(
+  raw: readonly unknown[],
+  known: readonly string[],
+): string[] {
+  const allowed = new Set(known.map((c) => c.trim().toUpperCase()));
   const out: string[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
-    if (!isKnownTarget(item)) continue;
-    const code = (item as string).trim().toUpperCase();
+    if (typeof item !== "string") continue;
+    const code = item.trim().toUpperCase();
+    if (!code || !allowed.has(code)) continue;
     if (seen.has(code)) continue;
     seen.add(code);
     out.push(code);

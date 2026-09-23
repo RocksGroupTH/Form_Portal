@@ -3,7 +3,7 @@ import {
   type ErpBcEnvironment,
   resolveEffectiveErpEnvironment,
 } from "@/lib/acc/erp-environment";
-import { ERP_INTERFACE_BRANDS, isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import { listErpTargetSettings } from "@/lib/acc/erp-target-setting-service";
 import { getBcConnectionById } from "@/lib/bc/bc-connection";
 import { getBrandConfig } from "@/lib/brand-config";
@@ -34,9 +34,12 @@ function buildErpTargetProfile(
   connById: Map<number, BcConnectionRow>,
 ): ErpTargetProfile | null {
   const code = interfaceBrandCode.trim().toUpperCase();
-  if (!isErpInterfaceBrandCode(code)) return null;
-
+  /* Membership is read off erpPage.targetBrands, which IS the interface brand
+     set (getBrandErpConfigPage builds it from listErpInterfaceBrands) — so
+     this stays a pure synchronous builder rather than acquiring a database
+     read of its own, and cannot disagree with the page it is handed. */
   const prodTarget = erpPage.targetBrands.find((t) => t.brandCode.toUpperCase() === code);
+  if (!prodTarget) return null;
   const uatRow = targetSettings.find((t) => t.brandCode === code);
 
   if (environment === "Production") {
@@ -129,8 +132,9 @@ export async function resolveErpTargetProfile(
   formCode: string,
 ): Promise<ErpTargetProfile | null> {
   const code = interfaceBrandCode.trim().toUpperCase();
-  if (!isErpInterfaceBrandCode(code)) return null;
-
+  if (!code) return null;
+  /* The membership test is buildErpTargetProfile's, below, against the page
+     this is about to load — one answer rather than two that can disagree. */
   const environment = await resolveEffectiveErpEnvironment();
   const [erpPage, targetSettings, cfg] = await Promise.all([
     getBrandErpConfigPage(formCode),
@@ -161,7 +165,7 @@ export async function resolveErpTargetProfile(
 export async function resolveAllErpTargetProfiles(
   formCode: string,
 ): Promise<ErpTargetProfile[]> {
-  const brandIds = ERP_INTERFACE_BRANDS.map((b) => b.id);
+  const brandIds = (await listErpInterfaceBrands()).map((b) => b.id);
   const environment = await resolveEffectiveErpEnvironment();
 
   const [erpPage, targetSettings, ...configs] = await Promise.all([

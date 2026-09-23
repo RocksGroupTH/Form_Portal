@@ -1,7 +1,7 @@
 /** Sync Business Central vendors into Rocks_ERP_Data.ErpVendors via RPCCodexStore_CodexGetVendors. */
 
 import type { Transaction } from "mssql";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import {
   postBcCodexStoreRpc,
   buildBcApiV2CompanyEntityUrl,
@@ -382,7 +382,7 @@ export async function syncAllBrandErpVendors(triggeredBy: number | null): Promis
 }> {
   const results: VendorSyncResult[] = [];
   const errors: { brandCode: string; error: string }[] = [];
-  for (const brand of ERP_INTERFACE_BRANDS) {
+  for (const brand of await listErpInterfaceBrands()) {
     try {
       results.push(await syncBrandErpVendors(brand.id, triggeredBy));
     } catch (error) {

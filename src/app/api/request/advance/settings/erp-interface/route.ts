@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import { listAdvanceInterfaceConfigView, saveAdvanceInterfacePerForm } from "@/lib/adv/advance-interface-settings-service";
 
 /**
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
 
     const interfaceBrandCode = (body.interfaceBrandCode ?? "").trim();
     if (!interfaceBrandCode) return NextResponse.json({ ok: false, error: "กรุณาเลือก Company ปลายทาง" }, { status: 400 });
-    if (!isErpInterfaceBrandCode(interfaceBrandCode)) return NextResponse.json({ ok: false, error: "Company ปลายทางไม่ถูกต้อง" }, { status: 400 });
+    if (!(await isErpInterfaceBrand(interfaceBrandCode))) return NextResponse.json({ ok: false, error: "Company ปลายทางไม่ถูกต้อง" }, { status: 400 });
 
     const bankAccountNo  = (body.bankAccountNo ?? "").trim();
     const branchCode     = (body.branchCode ?? "").trim() || null;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
 import { listClrErpBankAccountsForCompany } from "@/lib/clr/clear-advance-admin-service";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 
 /** GET active Bank Account cards from Rocks_ERP_Data.dbo.ErpBankAccountCard.
  *  ?company=PCTH — an already-resolved target Company, the only accepted
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const company = (req.nextUrl.searchParams.get("company") ?? "").trim();
-    if (!company || !isErpInterfaceBrandCode(company)) {
+    if (!company || !(await isErpInterfaceBrand(company))) {
       return NextResponse.json({ ok: true, data: [] });
     }
     const data = await listClrErpBankAccountsForCompany(company);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireReimburseSettingsTab } from "@/lib/acc/reimburse/require-reimburse-settings-tab";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import { listFormBrands } from "@/lib/acc/settings-service";
 import {
   loadReimburseErpGroups,
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
     if (!targetCode) {
       return NextResponse.json({ ok: false, error: "กรุณาระบุแบรนด์ปลายทาง" }, { status: 400 });
     }
-    if (!isErpInterfaceBrandCode(targetCode)) {
+    if (!(await isErpInterfaceBrand(targetCode))) {
       return NextResponse.json({ ok: false, error: "Company ปลายทางไม่ถูกต้อง" }, { status: 400 });
     }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import { Building2 } from "lucide-react";
 
 export const ADVANCE_COMPANY_ALL = "__ALL__";
@@ -19,13 +19,12 @@ export function AdvanceCompanyBar({
   onChange: (code: string) => void;
   counts: Record<string, number>;
 }) {
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const options: { id: string; name: string; logo: string | null }[] = [
     { id: ADVANCE_COMPANY_ALL, name: "ทั้งหมด", logo: null },
-    ...ERP_INTERFACE_BRANDS.map((b) => ({
-      id: b.id,
-      name: b.name,
-      logo: `/brandlogo/${b.id.toLowerCase()}-200.png`,
-    })),
+    // The registry's own logo, which prefers an uploaded one over the
+    // /brandlogo convention this used to rebuild by hand.
+    ...ifaceBrands.map((b) => ({ id: b.id, name: b.name, logo: b.logo })),
   ];
   return (
     <div className="flex items-center gap-2 mb-4 flex-wrap">

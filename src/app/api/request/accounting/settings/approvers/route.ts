@@ -7,7 +7,7 @@ import {
   upsertApprover,
 } from "@/lib/acc/settings-service";
 import { findActiveEmployeeByEmail } from "@/lib/hr/employee-lookup";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import { setApproverSettingsTabs } from "@/lib/acc/approver-settings-tabs";
 
 /*
@@ -82,9 +82,17 @@ export async function POST(req: NextRequest) {
         if (raw === null) {
           await setApproverInterfaceBrands(approverId, null);
         } else if (Array.isArray(raw)) {
+          /* The list is resolved ONCE and filtered against synchronously.
+             `.filter(async …)` would keep every code, because a promise is
+             truthy — the hazard that made `isErpInterfaceBrandCode` worth
+             renaming rather than making async in place. These codes become
+             `AccApproverInterfaceBrand` rows, which scope an approver. */
+          const known = new Set(
+            (await listErpInterfaceBrands()).map((b) => b.id.trim().toUpperCase()),
+          );
           const codes = raw
             .map((c: unknown) => String(c).trim().toUpperCase())
-            .filter((c) => isErpInterfaceBrandCode(c));
+            .filter((c) => known.has(c));
           await setApproverInterfaceBrands(approverId, codes.length > 0 ? codes : []);
         }
       }

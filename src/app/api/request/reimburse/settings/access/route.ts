@@ -15,6 +15,7 @@ import {
   setReimburseApproverBrands,
 } from "@/lib/acc/reimburse/settings-service";
 import { normalizeScopeTargets } from "@/lib/acc/reimburse/brand-scope";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 
 /*
  * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings,
@@ -269,7 +270,10 @@ export async function POST(req: NextRequest) {
     // `AccReimburseApprover.IsActive` from the tick count itself (see its own
     // docblock), so there is no separate active flag to post here.
     if (Array.isArray(body.brandTargets)) {
-      const targets = normalizeScopeTargets(body.brandTargets as unknown[]);
+      const targets = normalizeScopeTargets(
+        body.brandTargets as unknown[],
+        (await listErpInterfaceBrands()).map((b) => b.id),
+      );
       try {
         await setReimburseApproverBrands(employee.staffId, targets, Number(session.user.id), {
           // The HR address, preferred in the same order the deleted

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdvClrSettingsTab } from "@/lib/adv/require-adv-clr-settings-tab";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import {
   listAdvErpMaster,
   listAdvErpMasterForCompanies,
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
       const data = await listAdvErpMaster(company);
       return NextResponse.json({ ok: true, data });
     }
-    const companies = ERP_INTERFACE_BRANDS.map((b) => b.id);
+    const companies = (await listErpInterfaceBrands()).map((b) => b.id);
     const data = await listAdvErpMasterForCompanies(companies);
     return NextResponse.json({ ok: true, data });
   } catch (err) {

@@ -2,7 +2,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { getAllowedBrands } from "@/lib/acc/brand-options";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
+import { isErpInterfaceBrand } from "@/lib/acc/erp-interface-brands";
 import {
   defaultsOnly,
   perFormOrderBy,
@@ -13,7 +13,9 @@ import {
 
 async function assertJournalBrandAllowed(brandCode: string): Promise<void> {
   const code = brandCode.trim().toUpperCase();
-  if (isErpInterfaceBrandCode(code)) return;
+  // Awaited. Unawaited this is `if (promise)`, which is always true, and every
+  // brand would skip AP-1's allow-list check below.
+  if (await isErpInterfaceBrand(code)) return;
   const allowed = await getAllowedBrands(AP1_FORM_CODE);
   const ok = allowed.some((b) => b.brandCode.toUpperCase() === code);
   if (!ok) throw new Error("แบรนด์นี้ไม่ได้เปิดใช้ใน AP-1");

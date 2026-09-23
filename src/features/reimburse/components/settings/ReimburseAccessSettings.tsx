@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
 import { ALL_REIMBURSE_TABS, GRANTABLE_REIMBURSE_TABS, REIMBURSE_MENUS } from "@/lib/acc/reimburse/settings-tabs";
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 
 const ENDPOINT = "/api/request/reimburse/settings/access";
 
@@ -301,6 +301,12 @@ function BrandTickCells({
   row: ReimburseAccessRow;
   onSaved: () => void;
 }) {
+  /* The Interface targets a person may approve for — fetched now, because the
+     set is whichever brands have a complete Config BC. Nothing here collapses
+     an all-ticked set to null (AP-4 has no unrestricted state, deliberately —
+     see this component's docblock), so a longer list simply means more
+     columns rather than changing what a tick means. */
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const [checked, setChecked] = useState<Set<string>>(() => new Set(row.brandTargets));
   const [saving, setSaving] = useState(false);
   // Review round 1, MINOR #6: guards the re-seed effect below while THIS
@@ -345,7 +351,7 @@ function BrandTickCells({
           isActive: row.isActive,
           // The ticked set, sent verbatim and in a fixed order — never `null`,
           // never collapsed. See the component docblock above.
-          brandTargets: ERP_INTERFACE_BRANDS.filter((b) => next.has(b.id)).map((b) => b.id),
+          brandTargets: ifaceBrands.filter((b) => next.has(b.id)).map((b) => b.id),
         }),
       });
       const json = await res.json();
@@ -366,7 +372,7 @@ function BrandTickCells({
 
   return (
     <>
-      {ERP_INTERFACE_BRANDS.map((b) => (
+      {ifaceBrands.map((b) => (
         <td key={b.id} className="px-3 py-2.5 text-center">
           <TabGrantCheckbox
             checked={checked.has(b.id)}
@@ -572,6 +578,8 @@ function TabGrantCells({
  * `staffId`, not `id`, is what identifies a row everywhere in this file.
  */
 export function ReimburseAccessSettings() {
+  // The brand-approval columns of the grid below — see BrandTickCells.
+  const { brands: ifaceBrands } = useErpInterfaceBrands();
   const {
     data,
     error: fetchError,
@@ -791,7 +799,7 @@ export function ReimburseAccessSettings() {
                         accent and sits first, ahead of the two sight-only
                         groups. */}
                     <th
-                      colSpan={ERP_INTERFACE_BRANDS.length}
+                      colSpan={ifaceBrands.length}
                       className="text-center px-3 py-1.5 font-semibold whitespace-nowrap"
                       style={{ color: "var(--color-warning)" }}
                     >
@@ -824,9 +832,11 @@ export function ReimburseAccessSettings() {
                       background: "var(--bg-card-alt)",
                     }}
                   >
-                    {/* The four brand-approval columns, same logo-over-code
-                        shape as AP-1's ApproverInterfaceBrandTable header. */}
-                    {ERP_INTERFACE_BRANDS.map((b) => (
+                    {/* One column per interface brand — the same logo-over-code
+                        shape as AP-1's ApproverInterfaceBrandTable header. It
+                        was four until 2026-09-23; it is now however many have a
+                        complete Config BC. */}
+                    {ifaceBrands.map((b) => (
                       <th
                         key={b.id}
                         className="text-center px-3 py-2 font-semibold whitespace-nowrap w-20"

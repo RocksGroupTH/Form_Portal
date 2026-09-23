@@ -120,7 +120,7 @@ test("the three settings routes resolve brands from the registry", () => {
   }
 });
 
-test("BRANDS has exactly two importers left, and neither asks what a brand is", () => {
+test("BRANDS has exactly one importer left, and it is dead code for the sibling", () => {
   /* The literal survives for exactly the two things `brand.ts`'s own
      docblock names: `erp-interface-brands.ts` — "brands with a complete BC
      profile" — and `brand-config.ts`'s `LEGACY_DASHBOARD_BRANDS`, which
@@ -156,7 +156,14 @@ test("BRANDS has exactly two importers left, and neither asks what a brand is", 
     .sort();
   assert.deepEqual(
     rels,
-    ["lib/acc/erp-interface-brands.ts", "lib/brand-config.ts"],
+    /* ONE, since 2026-09-23. `erp-interface-brands.ts` was the other, and it
+       no longer imports the literal at all — it derives its answer from
+       `BrandConfig`, which is the whole of that day's change. What is left is
+       `brand-config.ts`'s `LEGACY_DASHBOARD_BRANDS`, feeding
+       `getBrandDashboardReadiness`: dead code kept for the Rocks Fast sibling,
+       and the last thing in this repository that still believes there are four
+       brands. Removing it is a separate decision about that sibling. */
+    ["lib/brand-config.ts"],
     "BRANDS is imported somewhere new. If the new importer is asking whether a brand EXISTS, " +
       "it must read listBrandRegistry() instead; if it is asking whether a brand has a Business " +
       "Central profile, say so where it is written and add it here",

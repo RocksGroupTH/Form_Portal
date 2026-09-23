@@ -1,14 +1,10 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { isErpInterfaceBrandCode } from "@/lib/acc/erp-interface-brands";
-import {
-  allInterfaceBrandCodes,
-  type ApproverInterfaceAccess,
-} from "@/lib/acc/approver-interface-access-shared";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
+import { type ApproverInterfaceAccess } from "@/lib/acc/approver-interface-access-shared";
 
 export type { ApproverInterfaceAccess } from "@/lib/acc/approver-interface-access-shared";
 export {
-  allInterfaceBrandCodes,
   buildInterfaceByClaimRecord,
   canActOnClaimBrand,
   canActOnInterfaceTarget,
@@ -19,13 +15,29 @@ export {
   INTERFACE_TARGET_SCOPE_ERROR,
 } from "@/lib/acc/approver-interface-access-shared";
 
-function normalizeCodes(codes: string[]): string[] {
+/**
+ * Uppercase, de-duplicate and **drop anything that is not an interface brand**.
+ *
+ * `known` is supplied rather than looked up, so the list is resolved once per
+ * call rather than once per code, and so this stays synchronous. That second
+ * half is not tidiness: the predicate this replaced was used as
+ * `if (isErpInterfaceBrandCode(c))`, and an async version kept in place would
+ * have made that `if (promise)` — always true — silently writing every posted
+ * code into `AccApproverInterfaceBrand`, which is what scopes an approver.
+ */
+function normalizeCodes(codes: string[], known: ReadonlySet<string>): string[] {
   const set = new Set<string>();
   for (const raw of codes) {
     const c = raw.trim().toUpperCase();
-    if (isErpInterfaceBrandCode(c)) set.add(c);
+    if (known.has(c)) set.add(c);
   }
   return Array.from(set).sort();
+}
+
+/** The interface brand codes, uppercased, as a set for `normalizeCodes`. */
+async function knownInterfaceCodes(): Promise<ReadonlySet<string>> {
+  const brands = await listErpInterfaceBrands();
+  return new Set(brands.map((b) => b.id.trim().toUpperCase()));
 }
 
 export async function loadInterfaceBrandsByApproverIds(
@@ -58,9 +70,10 @@ export async function loadInterfaceBrandsByApproverIds(
       byApprover.set(id, list);
     }
 
+    const known = await knownInterfaceCodes();
     for (const id of approverIds) {
       const list = byApprover.get(id);
-      map.set(id, list && list.length > 0 ? normalizeCodes(list) : null);
+      map.set(id, list && list.length > 0 ? normalizeCodes(list, known) : null);
     }
     return map;
   } catch (err) {
@@ -108,7 +121,7 @@ export async function setApproverInterfaceBrands(
       );
 
     if (codes != null && codes.length > 0) {
-      const normalized = normalizeCodes(codes);
+      const normalized = normalizeCodes(codes, await knownInterfaceCodes());
       for (const code of normalized) {
         await tx
           .request()
@@ -126,7 +139,6 @@ export async function resolveApproverInterfaceAccess(
   email: string | null | undefined,
   _role: string | null | undefined,
 ): Promise<ApproverInterfaceAccess> {
-  const allCodes = allInterfaceBrandCodes();
   if (!email) {
     return { allAccess: false, allowedCodes: [] };
   }
@@ -144,7 +156,13 @@ export async function resolveApproverInterfaceAccess(
 
   const codes = await getApproverInterfaceBrandCodes(approverId);
   if (codes === null) {
-    return { allAccess: true, allowedCodes: allCodes };
+    /* Resolved only on the unrestricted branch, which is the only one that
+       needs it — and after the roster read, so a non-approver costs nothing.
+       `allAccess` is what every authorization check short-circuits on
+       (`canActOnInterfaceTarget`), so this list is for display and filtering
+       rather than for deciding whether somebody may act. */
+    const all = await listErpInterfaceBrands();
+    return { allAccess: true, allowedCodes: all.map((b) => b.id) };
   }
   return { allAccess: false, allowedCodes: codes };
 }

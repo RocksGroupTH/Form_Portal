@@ -3,7 +3,7 @@
  * per Brand Config brand → Rocks_ERP_Data.ErpAccounts + ErpBankAccountCard
  */
 
-import { ERP_INTERFACE_BRANDS } from "@/lib/acc/erp-interface-brands";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 import {
   buildBcApiV2CompanyEntityUrl,
   buildBcODataEntityUrl,
@@ -550,7 +550,10 @@ export async function syncAllBrandErpAccounts(
   const results: AccountSyncResult[] = [];
   const errors: { brandCode: string; error: string }[] = [];
 
-  for (const b of ERP_INTERFACE_BRANDS) {
+  /* Resolved once, outside the loop. A brand joins this sweep by having a
+     complete Config BC — which is what it always meant, and is now derived
+     rather than listed. */
+  for (const b of await listErpInterfaceBrands()) {
     try {
       const r = await syncBrandErpAccounts(b.id, triggeredBy);
       results.push(r);

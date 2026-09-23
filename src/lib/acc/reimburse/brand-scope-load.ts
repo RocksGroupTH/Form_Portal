@@ -13,6 +13,7 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import { listBrandErpInterfaceMaps } from "@/lib/acc/brand-erp-interface-map-service";
 import { normalizeScopeTargets } from "./brand-scope";
+import { listErpInterfaceBrands } from "@/lib/acc/erp-interface-brands";
 
 /**
  * The ticked interface-brand targets for the active `AccReimburseApprover`
@@ -90,6 +91,7 @@ export async function loadApproverScopeByStaffId(
   // footgun rather than relying on every future caller to avoid it.
   return normalizeScopeTargets(
     (brands.recordset as { InterfaceBrandCode: string }[]).map((row) => row.InterfaceBrandCode),
+    (await listErpInterfaceBrands()).map((b) => b.id),
   );
 }
 
