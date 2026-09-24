@@ -510,6 +510,7 @@ export function AdvanceErpQueue() {
                             value={row.paymentDate ?? ""}
                             onChange={(d) => changePaymentDate(row.id, d)}
                             allowedDates={paymentDateOpts}
+                            hint="วันจ่ายทุกวันศุกร์ (เลื่อนกลับถ้าตรงวันหยุด)"
                           />
                         ) : (
                           <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
