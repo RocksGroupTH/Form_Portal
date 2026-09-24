@@ -165,6 +165,27 @@ export interface ReportRow {
    */
   managerApprovedAt?: string | null;
   /**
+   * When **accounting** signed it off, as an ISO instant.
+   *
+   * **It reads three different tables, because the five forms do not share
+   * one.** `AccApproval` carries AP-1, AP-17 and AP-4; AP-3 writes
+   * `AccClearAdvanceApproval` and AP-2 writes `AccAdvanceApproval`, and a
+   * column built on `AccApproval` alone would render an empty cell for two of
+   * the five — which reads as *not approved yet* rather than *not recorded
+   * here*. `managerApprovedAt` above has exactly that limitation and nothing
+   * had surfaced it, because no list rendered the field.
+   *
+   * **Which step counts as "accounting" differs too**, and the query does not
+   * branch on `FormCode` to say so: it takes the LATEST approved accounting
+   * step per table, which resolves each form's own answer on its own —
+   * `ACCOUNT_FINAL` for AP-4 (two accounting steps, the second being the one
+   * that finishes it), `ACCOUNT` for AP-1 / AP-17 / AP-3, and `ACC_OFFICER`
+   * for AP-2, the step that picks its payment date.
+   *
+   * Null is still honest for a claim accounting has not reached.
+   */
+  accountApprovedAt?: string | null;
+  /**
    * The round this claim is *meant* for, from the manager's clock — see
    * `payment-calendar.ts`. A suggestion shown beside the editable date; nothing
    * writes it.
@@ -338,6 +359,32 @@ const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.Staff
    FROM [dbo].[AccApproval] a
    WHERE a.RequestId = r.Id AND a.StepCode = N'MANAGER' AND a.Status = N'Approved'
    ORDER BY a.ActionedAt DESC, a.Id DESC) AS ManagerApprovedAt,
+  -- When accounting signed off. THREE tables, because the five forms do not
+  -- share one: AccApproval carries AP-1, AP-17 and AP-4, while AP-3 and AP-2
+  -- each write their own. Built on AccApproval alone this column would be
+  -- blank for two of the five and read as "not approved yet".
+  --
+  -- No FormCode branch: each arm takes its own table's LATEST approved
+  -- accounting step, which lands on the right one per form by itself —
+  -- ACCOUNT_FINAL for AP-4, ACCOUNT for AP-1/AP-17/AP-3, ACC_OFFICER for AP-2.
+  -- A request appears in exactly one of the three tables, so COALESCE picks
+  -- the only arm that can answer rather than preferring one over another.
+  COALESCE(
+    (SELECT TOP 1 aacc.ActionedAt
+     FROM [dbo].[AccApproval] aacc
+     WHERE aacc.RequestId = r.Id
+       AND aacc.StepCode IN (N'ACCOUNT', N'ACCOUNT_FINAL')
+       AND aacc.Status = N'Approved'
+     ORDER BY aacc.ActionedAt DESC, aacc.Id DESC),
+    (SELECT TOP 1 cacc.ActionedAt
+     FROM [dbo].[AccClearAdvanceApproval] cacc
+     WHERE cacc.RequestId = r.Id AND cacc.StepCode = N'ACCOUNT' AND cacc.Status = N'Approved'
+     ORDER BY cacc.ActionedAt DESC, cacc.Id DESC),
+    (SELECT TOP 1 aadv.ActionedAt
+     FROM [dbo].[AccAdvanceApproval] aadv
+     WHERE aadv.RequestId = r.Id AND aadv.StepType = N'ACC_OFFICER' AND aadv.Status = N'Approved'
+     ORDER BY aadv.ActionedAt DESC, aadv.Id DESC)
+  ) AS AccountApprovedAt,
   MIN(t.TravelDate) AS TravelDate,
   MAX(t.TravelDate) AS TravelDateTo,
   COUNT(t.Id) AS DayCount,
@@ -564,6 +611,7 @@ function mapRow(
     // useUTC: false, so the fixThaiDate ACC Portal still applies here would
     // shift it seven hours.
     managerApprovedAt: x.ManagerApprovedAt ? (x.ManagerApprovedAt as Date).toISOString() : null,
+    accountApprovedAt: x.AccountApprovedAt ? (x.AccountApprovedAt as Date).toISOString() : null,
     requesterDepartmentCode: (x.RequesterDepartmentCode as string) ?? null,
     pendingApproverEmail: (x.PendingApproverEmail as string) ?? null,
     managerStaffId: (x.ManagerStaffId as number) ?? null,

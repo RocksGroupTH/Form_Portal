@@ -1,0 +1,307 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx-js-style";
+import { Download } from "lucide-react";
+import { toast } from "sonner";
+import {
+  ColumnToggleMenu,
+  type ColumnToggleOption,
+} from "@/features/travel-booking/components/ColumnToggleMenu";
+import type { ReportRow } from "@/lib/acc/report-service";
+import {
+  cellExportValue,
+  cellText,
+  columnsForKind,
+  daysPending,
+  daysUntilPayment,
+  defaultVisibleKeys,
+  isSettled,
+  type MyRequestColKey,
+  type MyRequestColumn,
+  type MyRequestKind,
+} from "@/lib/acc/my-request-view";
+
+/**
+ * **The table half of My Requests and My Work.**
+ *
+ * Every rule about *which* columns exist, what they are called and what each
+ * cell says lives in `@/lib/acc/my-request-view` — pure and unit-tested. This
+ * file is the rendering, and it must not recompute a cell: the export and the
+ * screen read the same functions, because two renderers of one figure drift and
+ * the reader has no way to tell which one is lying.
+ *
+ * The list view is unchanged and still the default. This is an alternative
+ * shape for the same rows, the same filters and the same click target — a row
+ * opens the same drawer, so nothing about the table is a second way to do
+ * anything.
+ */
+
+/** Per page, so somebody's My Work layout is not somebody else's My Requests. */
+function storageKey(kind: MyRequestKind, part: "cols" | "order"): string {
+  return `form-portal-myreq-${part}-${kind}`;
+}
+
+/**
+ * Read a persisted layout, ignoring anything that no longer matches the code.
+ *
+ * A stored key that has since been removed, or a stored list missing a column
+ * that has since been added, must not decide the layout — the first would be a
+ * checkbox for a column that cannot render and the second would hide a new
+ * column from everybody who has ever opened the page. So the stored value is
+ * a *filter over today's list*, never a replacement for it.
+ */
+function readStored<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // A private window, or storage the browser has blocked. The layout is a
+    // convenience; losing it costs a reader two clicks and nothing else.
+  }
+}
+
+export function MyRequestsTable({
+  rows,
+  kind,
+  onOpen,
+}: {
+  rows: ReportRow[];
+  kind: MyRequestKind;
+  /** Same target as the list: a row opens the same drawer. */
+  onOpen: (row: ReportRow) => void;
+}) {
+  const allColumns = useMemo(() => columnsForKind(kind), [kind]);
+
+  const [order, setOrder] = useState<MyRequestColKey[]>(() =>
+    allColumns.map((c) => c.key),
+  );
+  const [visible, setVisible] = useState<Record<MyRequestColKey, boolean>>(() => {
+    const defaults = defaultVisibleKeys(kind);
+    const out = {} as Record<MyRequestColKey, boolean>;
+    for (const c of allColumns) out[c.key] = defaults.indexOf(c.key) !== -1;
+    return out;
+  });
+
+  /* Read after mount, not in the initial state: localStorage does not exist on
+     the server, and seeding state from it would make the first client render
+     disagree with the server's and hydrate wrong. */
+  useEffect(() => {
+    const storedCols = readStored<Record<string, boolean>>(storageKey(kind, "cols"));
+    if (storedCols) {
+      setVisible((prev) => {
+        const next = { ...prev };
+        for (const c of allColumns) {
+          // A column absent from the stored map is one added since it was
+          // written — it keeps today's default rather than defaulting to off.
+          if (typeof storedCols[c.key] === "boolean") next[c.key] = storedCols[c.key];
+        }
+        return next;
+      });
+    }
+    const storedOrder = readStored<string[]>(storageKey(kind, "order"));
+    if (storedOrder) {
+      const known = allColumns.map((c) => c.key);
+      const kept = storedOrder.filter((k): k is MyRequestColKey =>
+        known.indexOf(k as MyRequestColKey) !== -1,
+      );
+      // Anything the stored order never knew about goes on the end, in
+      // declaration order, so a new column appears rather than disappearing.
+      const missing = known.filter((k) => kept.indexOf(k) === -1);
+      setOrder([...kept, ...missing]);
+    }
+  }, [kind, allColumns]);
+
+  const byKey = useMemo(() => {
+    const m = new Map<MyRequestColKey, MyRequestColumn>();
+    for (const c of allColumns) m.set(c.key, c);
+    return m;
+  }, [allColumns]);
+
+  const orderedColumns = useMemo(
+    () => order.map((k) => byKey.get(k)).filter((c): c is MyRequestColumn => !!c),
+    [order, byKey],
+  );
+
+  const shownColumns = useMemo(
+    () => orderedColumns.filter((c) => visible[c.key]),
+    [orderedColumns, visible],
+  );
+
+  const toggleOptions: ColumnToggleOption<MyRequestColKey>[] = useMemo(
+    () => orderedColumns.map((c) => ({ key: c.key, label: c.label })),
+    [orderedColumns],
+  );
+
+  const handleVisibleChange = useCallback(
+    (next: Record<MyRequestColKey, boolean>) => {
+      setVisible(next);
+      writeStored(storageKey(kind, "cols"), next);
+    },
+    [kind],
+  );
+
+  const handleReorder = useCallback(
+    (keys: MyRequestColKey[]) => {
+      setOrder(keys);
+      writeStored(storageKey(kind, "order"), keys);
+    },
+    [kind],
+  );
+
+  /**
+   * ONE clock for the whole render.
+   *
+   * Every day-count column measures against it, so two rows of one table cannot
+   * be measured a millisecond apart — and the export writes the same numbers
+   * the reader was looking at when they pressed the button.
+   */
+  const nowIso = useMemo(() => new Date().toISOString(), [rows]);
+
+  function handleExport() {
+    if (rows.length === 0) {
+      toast.error("ไม่มีรายการให้ export");
+      return;
+    }
+    // Exactly the columns on screen, in the order they are on screen. An export
+    // that quietly widened to every column would not be the table somebody is
+    // looking at, which is the thing they pressed the button to keep.
+    const header = shownColumns.map((c) => c.label);
+    const body = rows.map((r) =>
+      shownColumns.map((c) => cellExportValue(r, c.key, nowIso)),
+    );
+    const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
+    ws["!cols"] = shownColumns.map((c) => ({ wch: c.key === "workDetail" ? 40 : 18 }));
+    for (let i = 0; i < header.length; i++) {
+      const ref = XLSX.utils.encode_cell({ r: 0, c: i });
+      const cell = ws[ref];
+      if (cell) {
+        cell.s = {
+          font: { bold: true, color: { rgb: "FFFFFF" } },
+          fill: { fgColor: { rgb: "4C74C4" } },
+          alignment: { horizontal: "center", vertical: "center" },
+        };
+      }
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, kind === "work" ? "My Work" : "My Request");
+    const stamp = new Date();
+    const name = `${kind === "work" ? "my-work" : "my-request"}-${stamp.getFullYear()}${String(
+      stamp.getMonth() + 1,
+    ).padStart(2, "0")}${String(stamp.getDate()).padStart(2, "0")}.xlsx`;
+    XLSX.writeFile(wb, name);
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-end gap-2">
+        <ColumnToggleMenu
+          columns={toggleOptions}
+          visible={visible}
+          onChange={handleVisibleChange}
+          onReorder={handleReorder}
+        />
+        <button
+          type="button"
+          onClick={handleExport}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border-none cursor-pointer"
+          style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+        >
+          <Download size={13} />
+          Excel
+        </button>
+      </div>
+
+      {/* The table scrolls rather than wrapping: a column of dates that wraps
+          stops being scannable, which is the whole reason for this view. */}
+      <div
+        className="overflow-x-auto rounded-xl"
+        style={{ border: "1px solid var(--border-card)" }}
+      >
+        <table className="w-full border-collapse text-[12px]">
+          <thead>
+            <tr style={{ background: "var(--bg-card-header)" }}>
+              {shownColumns.map((col) => (
+                <th
+                  key={col.key}
+                  className="px-3 py-2 font-bold whitespace-nowrap"
+                  style={{
+                    color: "var(--text-heading)",
+                    textAlign: col.align === "right" ? "right" : "left",
+                    borderBottom: "1px solid var(--border-card)",
+                  }}
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={`${row.environment ?? "P"}-${row.id}`}
+                onClick={() => onOpen(row)}
+                className="cursor-pointer transition-colors"
+                style={{ borderBottom: "1px solid var(--border-light)" }}
+              >
+                {shownColumns.map((col) => (
+                  <td
+                    key={col.key}
+                    className={
+                      col.key === "workDetail"
+                        ? "px-3 py-2 max-w-[280px] truncate"
+                        : "px-3 py-2 whitespace-nowrap"
+                    }
+                    style={{
+                      color: cellTone(row, col.key, nowIso),
+                      textAlign: col.align === "right" ? "right" : "left",
+                      fontVariantNumeric: col.align === "right" ? "tabular-nums" : undefined,
+                      fontWeight: col.key === "requestNo" || col.key === "totalAmount" ? 700 : 400,
+                    }}
+                    title={col.key === "workDetail" ? cellText(row, col.key, nowIso) : undefined}
+                  >
+                    {cellText(row, col.key, nowIso)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Colour is used for exactly two things, and both are "look at this row".
+ *
+ * A payment date already past on a claim nobody has settled, and a request that
+ * has sat for a fortnight. Everything else is body text: a table where several
+ * columns compete for attention has none.
+ *
+ * `nowIso` is the render's own clock, passed rather than read: calling
+ * `new Date()` per cell would measure the rows of one table against different
+ * instants, and could colour a row the cell beside it disagrees with.
+ */
+function cellTone(row: ReportRow, key: MyRequestColKey, nowIso: string): string {
+  if (key === "daysUntilPayment" && !isSettled(row.status)) {
+    const d = daysUntilPayment(row, nowIso);
+    if (d != null && d < 0) return "var(--text-danger)";
+  }
+  if (key === "daysPending") {
+    const d = daysPending(row, nowIso);
+    if (d != null && d >= 14) return "var(--text-danger)";
+    if (d != null && d >= 7) return "var(--text-warning)";
+  }
+  if (key === "requestNo") return "var(--text-heading)";
+  if (key === "totalAmount") return "var(--color-action)";
+  return "var(--text-secondary)";
+}

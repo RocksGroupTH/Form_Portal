@@ -4,8 +4,18 @@ import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-c
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { hrPhotoUrl } from "@/lib/hr/photo-url";
-import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck } from "lucide-react";
+import {
+  Search,
+  Inbox,
+  Loader2,
+  ChevronRight,
+  Send,
+  ClipboardCheck,
+  List,
+  Table as TableIcon,
+} from "lucide-react";
 import type { ReportRow } from "@/lib/acc/report-service";
+import { MyRequestsTable } from "@/features/accounting/components/MyRequestsTable";
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, myWorkStatusLabel, myWorkStatusStyle, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
@@ -172,6 +182,36 @@ function RequestRowList({
   const [caDetail, setCaDetail] = useState<ClearAdvanceRequest | null>(null);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
+  /**
+   * list or table, remembered per page.
+   *
+   * **list stays the default** (the user's call, 2026-09-24): it is what
+   * everybody already uses, and a table that arrives uninvited on a phone is
+   * a horizontal scrollbar where a readable list used to be. Read after mount
+   * for the reason every localStorage read in this app is — it does not exist
+   * on the server, and seeding state from it hydrates wrong.
+   */
+  const [view, setView] = useState<"list" | "table">("list");
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(`form-portal-myreq-view-${kind}`);
+      if (raw === "table" || raw === "list") setView(raw);
+    } catch {
+      // Private window or blocked storage: the default stands.
+    }
+  }, [kind]);
+  const chooseView = useCallback(
+    (next: "list" | "table") => {
+      setView(next);
+      try {
+        window.localStorage.setItem(`form-portal-myreq-view-${kind}`, next);
+      } catch {
+        // Losing the preference costs one click, so it is not worth reporting.
+      }
+    },
+    [kind],
+  );
+
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(
     () => (kind === "work" ? DEFAULT_WORK_STATUS_FILTER : DEFAULT_MINE_STATUS_FILTER),
@@ -429,6 +469,40 @@ function RequestRowList({
         <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
           {filtered.length} รายการ
         </span>
+        {/* Both views read the same filtered rows and open the same drawer, so
+            this switches the shape and nothing else. `aria-pressed` carries
+            which one is live to a screen reader, which the fill alone does
+            not — the same segmented control Brand Configuration uses. */}
+        <div
+          className="inline-flex gap-1 p-1 rounded-xl shrink-0"
+          style={{ background: "var(--bg-badge)" }}
+          role="group"
+          aria-label="รูปแบบการแสดงผล"
+        >
+          {([
+            { value: "list", label: "รายการ", Icon: List },
+            { value: "table", label: "ตาราง", Icon: TableIcon },
+          ] as const).map((v) => {
+            const active = view === v.value;
+            return (
+              <button
+                key={v.value}
+                type="button"
+                aria-pressed={active}
+                aria-label={v.label}
+                title={v.label}
+                onClick={() => chooseView(v.value)}
+                className="px-2 py-1 rounded-lg border-none cursor-pointer transition-colors inline-flex items-center"
+                style={{
+                  background: active ? "var(--color-action)" : "transparent",
+                  color: active ? "#fff" : "var(--text-muted)",
+                }}
+              >
+                <v.Icon size={14} />
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Form + submitted date range */}
@@ -520,6 +594,18 @@ function RequestRowList({
             {rows.length === 0 ? "ยังไม่มีรายการ" : "ไม่พบรายการที่ตรงกับตัวกรอง"}
           </p>
         </div>
+      ) : view === "table" ? (
+        /* Same rows, same filters, same drawer — only the shape differs. The
+           columns and every cell's text live in `@/lib/acc/my-request-view`,
+           which is pure and tested; this passes rows and a click target. */
+        <MyRequestsTable
+          rows={filtered}
+          kind={kind}
+          onOpen={(row) => {
+            setDrawerId(row.id);
+            setDrawerFormCode(row.formCode ?? null);
+          }}
+        />
       ) : (
         <div className="flex flex-col gap-2">
           {filtered.map((row) => {
