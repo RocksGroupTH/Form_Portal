@@ -507,6 +507,18 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ## Task 4: The two modules, ported
 
+> **Superseded in part by Task 2's code review (2026-09-24).** The code blocks below were written
+> before that review and show `paydaysInMonth` as a ternary and `PaydayForm` as a hand-spelled
+> union. Form Portal now uses a `switch` with a `never` exhaustiveness guard and
+> `Extract<FormCode, ...>`, and its `PaymentDatePicker` takes a **required** `hint`. **Port Form
+> Portal's files as they actually stand**, not the drafts below; the drafts remain only because
+> they still describe the shape and the reasoning. The same applies to Task 5's AP-2 refusal
+> message, which the review rewrote — see Task 2's follow-up commits.
+>
+> Tasks 5 and 6 additionally gained a `payday-form-scope-guard` test (vitest in ACC, `node:test` in
+> Form Portal) asserting the right form per directory. `tsc` proves *a* form is passed; nothing
+> else proves it is the right one.
+
 **Files:**
 - Modify: `R:\Acc_Portal\src\lib\acc\payment-calendar-core.ts`
 - Create: `R:\Acc_Portal\src\lib\acc\payment-rounds.ts`
