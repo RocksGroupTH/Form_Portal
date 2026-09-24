@@ -32,11 +32,20 @@ import { Users } from "lucide-react";
 export function ApproverHoverCard({
   text,
   brandCode,
+  postsInto,
   names,
 }: {
   /** What the cell shows — a department, usually. */
   text: string;
   brandCode: string | null | undefined;
+  /**
+   * The ERP books this claim posts into, when they are not its own brand's.
+   *
+   * Without it the card reads as a contradiction: a PCMY claim lists people
+   * nobody ticked PCMY for. They can act — the approve path maps the claim to
+   * its target first — and this line is why. Null on the ordinary row.
+   */
+  postsInto?: string | null;
   /** Empty is a real answer: the lookup worked and nobody can act. */
   names: string[];
 }) {
@@ -47,7 +56,7 @@ export function ApproverHoverCard({
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
     const CARD = 260;
-    const estimated = 52 + names.length * 22;
+    const estimated = 52 + (postsInto ? 18 : 0) + names.length * 22;
     // Clamped so a right-hand column does not push it off screen, and flipped
     // above when the rows near the bottom would put it past the fold.
     const left = Math.max(8, Math.min(r.left, window.innerWidth - CARD - 8));
@@ -113,6 +122,16 @@ export function ApproverHoverCard({
                 </span>
               ) : null}
             </div>
+
+            {postsInto ? (
+              <div
+                className="text-[10.5px] mb-1.5 pb-1.5"
+                style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-light)" }}
+              >
+                ใบนี้ลงบัญชีของ <b style={{ color: "var(--text-secondary)" }}>{postsInto}</b> —
+                ผู้ที่ดูแลบัญชี {postsInto} จึงอนุมัติได้
+              </div>
+            ) : null}
 
             {names.length === 0 ? (
               /* Not an error and not "loading" — the lookup worked and the

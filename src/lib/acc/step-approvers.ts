@@ -42,8 +42,31 @@ export interface StepApprover {
   brands: readonly string[] | null;
 }
 
-/** `formCode → stepCode → approvers`. A step with no pool is simply absent. */
-export type StepApproverMap = Readonly<Record<string, Readonly<Record<string, readonly StepApprover[]>>>>;
+/**
+ * One form's answer: its pool steps, and where its claim brands post.
+ *
+ * `postsInto` exists because of a question the first version could not answer.
+ * A PCMY claim on AP-1 lists the seven people scoped to **PCTH**, and that is
+ * correct — `canActOnClaimBrand` maps the claim to its ERP target before
+ * comparing, so PCTH's approvers really can act on it — but on screen it reads
+ * as "nobody ticked PCMY, why are these people here?", which is exactly what
+ * was reported (the user, 2026-09-24). The card says `PCMY → ลงบัญชี PCTH`
+ * instead of hiding the names, because hiding them would be false.
+ *
+ * **Only the forms whose scope is target-based carry it** — AP-1 and AP-4.
+ * AP-17 scopes on claim brands directly and AP-2/AP-3 do not scope by brand at
+ * all, so a "posts into" line there would explain a rule those forms do not
+ * apply.
+ */
+export interface StepApproverForm {
+  /** `stepCode → approvers`. A step with no pool is simply absent. */
+  steps: Readonly<Record<string, readonly StepApprover[]>>;
+  /** Claim brand → ERP interface target, **only where the two differ**. */
+  postsInto: Readonly<Record<string, string>>;
+}
+
+/** `formCode → that form's answer`. */
+export type StepApproverMap = Readonly<Record<string, StepApproverForm>>;
 
 /**
  * `environment → map`.
@@ -95,7 +118,7 @@ export function approverNamesFor(
   if (!step || step === NAMED_ON_THE_ROW) return null;
 
   const forms = payload?.[(environment ?? "").trim() || "Production"];
-  const people = forms?.[(formCode ?? "").trim()]?.[step];
+  const people = forms?.[(formCode ?? "").trim()]?.steps?.[step];
   if (!people) return null;
 
   const brand = (brandCode ?? "").trim();
@@ -108,6 +131,23 @@ export function approverNamesFor(
       return p.brands.indexOf(brand) >= 0;
     })
     .map((p) => p.name);
+}
+
+/**
+ * Which books this claim posts into, when that is not its own brand.
+ *
+ * `null` for the ordinary case — PCTH posts into PCTH, and saying so would be
+ * noise on every row — and for every form that does not scope on targets.
+ */
+export function postsIntoFor(
+  payload: StepApproverPayload | null | undefined,
+  { environment, formCode, brandCode }: StepApproverQuery,
+): string | null {
+  const brand = (brandCode ?? "").trim();
+  if (!brand) return null;
+  const forms = payload?.[(environment ?? "").trim() || "Production"];
+  const target = forms?.[(formCode ?? "").trim()]?.postsInto?.[brand];
+  return target && target !== brand ? target : null;
 }
 
 /*

@@ -23,7 +23,7 @@ import {
   type MyRequestKind,
   type MyRequestStatusDisplay,
 } from "@/lib/acc/my-request-view";
-import { approverNamesFor } from "@/lib/acc/step-approvers";
+import { approverNamesFor, postsIntoFor } from "@/lib/acc/step-approvers";
 import { useStepApprovers } from "@/lib/hooks/useStepApprovers";
 import { ApproverHoverCard } from "@/features/accounting/components/ApproverHoverCard";
 import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
@@ -391,17 +391,25 @@ export function MyRequestsTable({
                          the row already names, so it stays plain text with the
                          address on its `title` as it always had. */
                       (() => {
-                        const names = approverNamesFor(stepApprovers, {
+                        const q = {
                           environment: row.environment,
                           formCode: row.formCode,
-                          stepCode: row.pendingStepCode ?? row.currentStepCode ?? null,
                           brandCode: row.brandCode,
+                        };
+                        const names = approverNamesFor(stepApprovers, {
+                          ...q,
+                          stepCode: row.pendingStepCode ?? row.currentStepCode ?? null,
                         });
                         const text = cellText(row, col.key, nowIso);
                         return names === null ? (
                           text
                         ) : (
-                          <ApproverHoverCard text={text} brandCode={row.brandCode} names={names} />
+                          <ApproverHoverCard
+                            text={text}
+                            brandCode={row.brandCode}
+                            postsInto={postsIntoFor(stepApprovers, q)}
+                            names={names}
+                          />
                         );
                       })()
                     ) : (
