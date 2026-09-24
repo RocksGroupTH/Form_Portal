@@ -15,6 +15,7 @@ import { Loader2, FileX, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import type { ClrDetailRow } from "@/lib/clr/clear-advance-report-service";
+import { totalsLabelIndex } from "@/lib/clr/report-export-order";
 import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation";
 import { makeColumnPrefs } from "@/features/advance/lib/queue-column-prefs";
 import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
@@ -178,6 +179,19 @@ export function ClrDetailReport() {
     () => orderedCols.filter((c) => visible[c.key] ?? true),
     [orderedCols, visible],
   );
+
+  /* Which footer cell carries "รวมทั้งหมด".
+     The leftmost visible column that has no total of its own — the same rule
+     the Excel export uses, from the same function, so the screen and the file
+     cannot answer it differently. It was cell 0 while nobody could reorder the
+     columns; the reader has been able to drag them for a while, so cell 0 may
+     be a summed column and the label would have taken the place of that
+     column's total. ACC Portal's copy of this footer had the identical bug and
+     was fixed first. */
+  const totalsLabelAt = useMemo(() => {
+    const summed = new Set(visibleColumns.filter((c) => c.total).map((c) => c.key));
+    return totalsLabelIndex(visibleColumns.map((c) => c.key), (k) => summed.has(k));
+  }, [visibleColumns]);
 
   const patch = useCallback((p: Partial<DetailFilters>) => {
     setFilters((prev) => ({ ...prev, ...p }));
@@ -410,7 +424,7 @@ export function ClrDetailReport() {
                       >
                         {col.total
                           ? col.total(totals)
-                          : i === 0
+                          : i === totalsLabelAt
                             ? `รวมทั้งหมด (${rows.length} รายการ)`
                             : ""}
                       </td>
