@@ -6,6 +6,7 @@ import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
+  Maximize2, Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -24,6 +25,7 @@ import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-rea
 import { loadTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
 import { registrantFullName, sameRegisteredName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
 import { normalizeTaxIdInput, taxIdChecksumOk, taxIdNotice } from "@/lib/clr/seller-tax-id";
+import { wideCardStyle } from "@/lib/clr/wide-card-width";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
@@ -258,6 +260,25 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [ready, setReady] = useState(false);
+  const [linesWide, setLinesWide] = useState(false);
+  /**
+   * The viewport's width without its scrollbar, measured only while widened.
+   *
+   * Null until then, so the ordinary layout costs no listener and no reflow;
+   * `clientWidth` rather than `innerWidth` because the difference between them
+   * is exactly the scrollbar this must not include.
+   */
+  const [wideViewportWidth, setWideViewportWidth] = useState<number | null>(null);
+  useEffect(() => {
+    if (!linesWide) {
+      setWideViewportWidth(null);
+      return;
+    }
+    const measure = () => setWideViewportWidth(document.documentElement.clientWidth);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [linesWide]);
   // Inline validation (P1.1): once the user tries to submit, field errors show
   // next to each field and clear themselves as the field is fixed (errors are
   // derived from live state, not stored). rootRef locates the first bad field.
@@ -1581,7 +1602,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       </div>
 
       {/* Expense-line grid (AP-3.1 section 1) */}
-      <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box} data-err="lines">
+      <div
+        className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3 min-w-0 transition-[width,margin] duration-200"
+        style={{ ...box, ...wideCardStyle(linesWide, wideViewportWidth) }}
+        data-err="lines"
+      >
         <div className="flex items-center justify-between gap-2">
           <label className="text-[12px] font-bold" style={labelStyle}>รายการค่าใช้จ่ายจริง *</label>
           <div className="flex items-center gap-2">
@@ -1617,6 +1642,31 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             {!readOnly && (
               <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
             )}
+            {/* No `lines.length` guard, unlike AP-4's: this form always holds at
+                least one row — the initial state seeds a blank one and removeLine
+                puts it back — so the widened card never shows the blank page
+                AP-4's guard exists to prevent. */}
+            <button
+              type="button"
+              onClick={() => setLinesWide((v) => !v)}
+              aria-pressed={linesWide}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+              style={{
+                background: "var(--bg-card-alt)",
+                color: "var(--nav-active-text)",
+                border: "1px solid var(--border-card)",
+              }}
+            >
+              {linesWide ? (
+                <>
+                  <Minimize2 size={13} /> ย่อกลับ
+                </>
+              ) : (
+                <>
+                  <Maximize2 size={13} /> ขยายเต็มความกว้าง
+                </>
+              )}
+            </button>
           </div>
         </div>
         {!readOnly && (
