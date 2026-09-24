@@ -734,36 +734,16 @@ function RequestRowList({
         </div>
       </div>
 
-      {/* Status / form / brand, then the two date ranges.
+      {/* The two date ranges FIRST, then status / form / brand (the user,
+          2026-09-24: "กล่อง filter ให้กล่องวันที่ขึ้นก่อน"). It read the other
+          way round until then.
 
-          สถานะ is a multi-select over the SAME words the chip in each row
-          shows — Submitted / Pending / Complete / Rejected / Revise /
-          Cancelled — because you filter by what you can see. It replaces the
-          chip row that used to sit under these, which grouped Submitted and
-          Pending together and could not tell them apart at all. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <MultiSelectFilter
-          label="สถานะ"
-          options={statusOptions.map((o) => o.id)}
-          selected={statusFilter}
-          onChange={setStatusFilter}
-          formatLabel={(id) => statusLabelById[id] ?? id}
-        />
-        <MultiSelectFilter
-          label="ฟอร์ม"
-          options={formOptions}
-          selected={formFilter}
-          onChange={setFormFilter}
-          formatLabel={(code) => formLabelByCode[code] ?? code}
-        />
-        <MultiSelectFilter
-          label="แบรนด์"
-          options={brandOptions}
-          selected={brandFilter}
-          onChange={setBrandFilter}
-        />
-      </div>
-
+          It is only an order, and the order is the whole of it: every one of
+          these five narrows the same `filtered` list through the same pass, so
+          nothing about what they do changes. Worth knowing why it is worth
+          doing at all — สถานะ is already answered by the box strip above,
+          which is where that filter is actually set, so the first control a
+          reader meets under it should be one the strip cannot express. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FilterDateRangePicker
           label="วันที่ส่ง"
@@ -794,6 +774,34 @@ function RequestRowList({
             setPayTo(to);
           }}
           placeholder="เลือกช่วงวันที่จ่าย..."
+        />
+      </div>
+
+      {/* สถานะ is a multi-select over the SAME words the chip in each row
+          shows — Submitted / Pending / Complete / Rejected / Revise /
+          Cancelled — because you filter by what you can see. It replaces the
+          chip row that used to sit under these, which grouped Submitted and
+          Pending together and could not tell them apart at all. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <MultiSelectFilter
+          label="สถานะ"
+          options={statusOptions.map((o) => o.id)}
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          formatLabel={(id) => statusLabelById[id] ?? id}
+        />
+        <MultiSelectFilter
+          label="ฟอร์ม"
+          options={formOptions}
+          selected={formFilter}
+          onChange={setFormFilter}
+          formatLabel={(code) => formLabelByCode[code] ?? code}
+        />
+        <MultiSelectFilter
+          label="แบรนด์"
+          options={brandOptions}
+          selected={brandFilter}
+          onChange={setBrandFilter}
         />
       </div>
 
