@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   FileText, User, Mail, Wallet, CheckCircle, XCircle, Clock, RotateCcw,
   ThumbsUp, ThumbsDown, Ban, Paperclip, Image as ImageIcon, Banknote, ReceiptText,
-  Printer,
+  Printer, Sparkles, Loader2,
 } from "lucide-react";
 import type { ClearAdvanceDetail as ClearDetail } from "@/features/clear-advance/types";
 import { Dialog } from "@/components/ui/Dialog";
@@ -27,6 +27,8 @@ import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
+import { planGlSuggestions } from "@/lib/clr/gl-suggest-targets";
+import type { GlSuggestRun } from "@/lib/clr/gl-suggest-run";
 import { tinsNeedingRdCheck } from "@/lib/clr/rd-vat-core";
 import { useTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
 import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
@@ -155,6 +157,8 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   const [accAction, setAccAction] = useState<null | "reject" | "return">(null);
   const [accComment, setAccComment] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
+  // The G/L suggest button, while it is out asking.
+  const [glSuggesting, setGlSuggesting] = useState(false);
 
   // ACCOUNT-step inline edit state.
   /* The account step's editor saves itself.
@@ -316,6 +320,10 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
      the last step that can edit a line. `glMissingMessage` is the sentence the
      server throws, so the screen and the refusal cannot drift apart. */
   const missingGlLines = linesMissingGl(isAccountStep ? editItems : items);
+  /* The same rows, sorted into the ones the suggest button can ask the model
+     about and the ones it cannot. Only `targets` decides whether the button is
+     there — the counts are read off the answer, not off this. */
+  const glPlan = planGlSuggestions(isAccountStep ? editItems : items);
 
   /* The refund as the officer's unsaved edits leave it. The stored figure does
      not move while they type — autosave writes but nothing refetches — so a
@@ -522,6 +530,89 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     if (inFlight.current) await inFlight.current;
     await saveNow();
   }, [saveNow]);
+
+  /**
+   * Ask the model for an account on every line the ACCOUNT step is blocked on
+   * that has a รายละเอียด and a สาขา to go on, and apply what comes back here.
+   *
+   * **`flushSave` first.** The route reads the claim from the database, so
+   * without this it would be asked about the lines as they were before the last
+   * 900 ms of typing — and รายละเอียด is the entire input to the guess. AP-4's
+   * button chains on its own save promise for the same reason.
+   *
+   * **The screen applies, not the server.** The route's docblock is explicit
+   * about why it does not write: this grid is held in `editItems` and autosaved
+   * on a debounce, so accounts written server-side would be posted back over by
+   * the next keystroke anywhere in the table. One writer, and it is the save
+   * path that is already there — `setEditItems` marks the grid dirty and the
+   * existing effect persists it. There is no second save here on purpose.
+   *
+   * **The count check is not a formality.** Suggestions are keyed by position.
+   * If the server ran over a different number of lines than the screen is
+   * showing, every index means something else, and putting an account on the
+   * wrong line is worse than putting none anywhere — so a disagreement applies
+   * nothing and asks for a reload.
+   */
+  async function suggestGl(): Promise<void> {
+    if (glSuggesting) return;
+    setGlSuggesting(true);
+    try {
+      await flushSave();
+      const res = await fetch(`/api/request/clear-advance/requests/${request.id}/suggest-gl`, {
+        method: "POST",
+      });
+      const json = (await res.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; data?: GlSuggestRun }
+        | null;
+      if (!json?.ok || !json.data) {
+        toast.error(json?.error ?? "เดาบัญชีไม่สำเร็จ");
+        return;
+      }
+      const data = json.data;
+      if (data.itemCount !== editItems.length) {
+        toast.error("รายการบนหน้าจอไม่ตรงกับที่บันทึกไว้ — กรุณารีโหลดหน้านี้แล้วลองใหม่");
+        return;
+      }
+      if (data.suggestions.length > 0) {
+        /* Updater form, not the `[...editItems]` the cells use: those run on a
+           click with nothing awaited in front of them, this one has a round trip
+           of model calls behind it, and a รายละเอียด typed while it was out
+           must not be thrown away by a stale copy. Same two fields GlCell's
+           onPick sets — the cell renders the NAME, so an account number without
+           one shows blank, and the previous line's name is worse still. */
+        setEditItems((prev) => {
+          const next = [...prev];
+          for (const sug of data.suggestions) {
+            if (sug.index < 0 || sug.index >= next.length) continue;
+            next[sug.index] = {
+              ...next[sug.index],
+              glAccountNo: sug.glAccountNo,
+              glAccountName: sug.nameTh ?? null,
+            };
+          }
+          return next;
+        });
+      }
+      /* Each bucket named on its own, never summed (user, 2026-09-24). An
+         officer looking at a row that is still empty has to know whether the
+         model was asked and declined or was never asked at all: one is fixed by
+         picking an account, the other by typing what the money went on. Filling
+         nothing is not a failure — it is a sentence about what happened. */
+      const parts: string[] = [];
+      if (data.suggestions.length > 0) parts.push(`เติมบัญชีให้ ${data.suggestions.length} รายการ`);
+      if (data.noDescription > 0)
+        parts.push(`${data.noDescription} รายการไม่มีรายละเอียด ให้พิมพ์รายละเอียดหรือเลือกบัญชีเอง`);
+      if (data.noBranch > 0)
+        parts.push(`${data.noBranch} รายการยังไม่ได้เลือกสาขาที่ใช้จ่าย ให้เลือกสาขาก่อน`);
+      if (data.noAnswer > 0) parts.push(`${data.noAnswer} รายการ AI เดาไม่ออก ให้เลือกบัญชีเอง`);
+      toast.success(parts.length > 0 ? parts.join(" · ") : "ไม่มีรายการที่ต้องเติม");
+    } catch {
+      toast.error("เครือข่ายขัดข้อง — ลองใหม่อีกครั้ง");
+    } finally {
+      // Re-enabled whatever happened: a failure has to be retryable.
+      setGlSuggesting(false);
+    }
+  }
 
 
   return (
@@ -733,6 +824,40 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                         </button>
                       );
                     })()}
+                    {/* Gone entirely for a brand whose G/L the server forces —
+                        the same `glForced` the cell below reads, so the button
+                        and the read-only chip can never disagree about which
+                        claim this is. Every line is overwritten with
+                        FORCE_GL_NON_ROCKS_PC on save there, the route refuses
+                        for that reason, and a guess would be spent on a value
+                        already thrown away.
+
+                        Gone too when no line can be asked about, even if lines
+                        are blocked for a reason the model cannot fix: "a button
+                        that can only report 'nothing to do' is a button people
+                        learn to ignore" (AP-4's queue, same button). The count
+                        in the label is the RD button's habit beside it — what
+                        it is about to do, before it is pressed. */}
+                    {!glForced && glPlan.targets.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={glSuggesting}
+                        onClick={() => void suggestGl()}
+                        title="ให้ AI เดาบัญชีจากรายละเอียดของแต่ละรายการ — บันทึกสิ่งที่แก้ค้างไว้ก่อนถาม"
+                        className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg border-none"
+                        style={{
+                          background: "var(--nav-active-bg)",
+                          color: "var(--nav-active-text)",
+                          opacity: glSuggesting ? 0.55 : 1,
+                          cursor: glSuggesting ? "progress" : "pointer",
+                        }}
+                      >
+                        {glSuggesting
+                          ? <Loader2 size={11} className="animate-spin" />
+                          : <Sparkles size={11} />}
+                        {`เดาบัญชีด้วย AI (${glPlan.targets.length} รายการ)`}
+                      </button>
+                    )}
                   </div>
                   {/* show-x-scroll: `.acc-theme *` hides every scrollbar, so a
                       table wider than the page scrolled with nothing on screen
