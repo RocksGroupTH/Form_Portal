@@ -220,6 +220,7 @@ Since migration 066 that is a hard constraint, not a preference: `auth()` no lon
 
 - **Availability and writability are different questions.** `pickEnvironment().available` asks "may this person reach the form", and an id makes it unconditionally true so records stay readable and approvable. `environmentWritable` asks "is that database still taking new work". Use `resolveCurrentFormAccess()` + `resolveCurrentFormWritable()` on a form's own route, and `resolveFormAccess(formCode, requestId?)` + `resolveFormWritable(...)` to ask about a form from somewhere else (Home, the manager card). **`assertFormWritable()` (`src/lib/uat-tester/guards.ts`) has exactly six call sites** — a `saveDraft` and a submit for each of AP-1, AP-17 and AP-4, in the three `request-service.ts` files. AP-4's `delete-service.ts` deliberately has none, and says why: the guard asks whether the database is still taking *new work*, and withdrawing a draft from a closed form is not that.
 - **The manager differs by environment.** UAT routes to the requester's `UatTester.ManagerStaffId`, re-verified at submit time (still an active tester, still active in HR — self is allowed); Production reads `Rocks_Portal_HR.Employee.ManagerStaffId`. **UAT refuses rather than falling back to HR** — a real manager must never find test data in their queue. Three resolvers, keyed on the *resolved environment* and never on the cookie: `resolveManagerInfo()` (the preview card, shared), and a separate `withUatManager` for each form's submit — `resolveRequesterForActor` in `src/lib/acc/employee-context.ts` (AP-1) and `resolveEmployeeForActor` in `src/lib/hr/employee-lookup.ts` (AP-17). `resolveManagerEmail()` is deliberately *not* overridden.
+- **The MANAGER step follows HR, and the value the submit stamps is history — see "Who the manager is" below.** Everything in the bullet above is about *writing* that snapshot and is unchanged; what reads it changed on 2026-09-24.
 - **Mail follows the resolved environment**, with one exception: a recipient who is an **active tester gets the mail at their real address** with a `[UAT] ` subject prefix. Everyone else is redirected to `UAT_MAIL_REDIRECT` (falling back to `GRAPH_MAIL_FROM`) with a banner naming the intended recipient. If neither is set, `applyUatRedirect` (`src/lib/acc/email-queue.ts`) throws and the row stays queued rather than mailing a real person. The sweep endpoint drains both databases (`processQueueBoth`); per-action drains are single-pool.
 - **Business Central follows the same resolution**: `resolveEffectiveErpEnvironment()` (`src/lib/acc/erp-environment.ts`) maps UAT → Sandbox, otherwise Production. No separate ERP toggle — the navbar chip and the global `AppSetting` switch were removed on 2026-08-17. Which BC company and connection Sandbox uses is set at Settings → ERP Interface Environment. **The send echoes and verifies both its environment and its batch**, answering 409 on either drift (`ENVIRONMENT_STALE_ERROR` in the route, `ErpQueueDriftError` from `src/lib/acc/erp-interface-send.ts`) so the client reloads instead of retrying something that cannot succeed.
 - **The send claims the batch atomically, and an unknown remote outcome is never retried.** Both properties were missing until 2026-08-19 and either one costs duplicated financial journals:
@@ -296,7 +297,7 @@ configuration into the test run):
 
 | Question | Module | Notes |
 |----------|--------|-------|
-| May this person see / change this request? | `src/lib/acc/request-acl-policy.ts` (pure) + `request-acl.ts` (pools) | `authorizeAccRequest(session, id, "read" \| "mutate")` is the two-line route helper. Read: owner, on-behalf requester, assigned manager, or account area. Mutate: creator only, `Draft`/`Returned` only. Plus the UAT tester barrier — see "Parallel Production and UAT". |
+| May this person see / change this request? | `src/lib/acc/request-acl-policy.ts` (pure) + `request-acl.ts` (pools) | `authorizeAccRequest(session, id, "read" \| "mutate")` is the two-line route helper. Read: owner, on-behalf requester, **either** manager (the one stamped at submit *or* the one HR names today — see "Who the manager is"), or account area. Mutate: creator only, `Draft`/`Returned` only. Plus the UAT tester barrier — see "Parallel Production and UAT". |
 | Are these bytes actually a receipt? | `src/lib/acc/attachment-guard.ts` | Magic-byte allowlist (PNG/JPEG/GIF/WEBP/HEIC/PDF); `File.type` is a hint only. `attachmentResponseHeaders` re-sniffs on download and serves anything non-raster as `attachment` with `nosniff` and a `sandbox` CSP. AP-1 passes `allowedKinds: ["image"]`, AP-17 also takes PDF. |
 | Whose national-ID scan is this? | `src/lib/acc/travel-booking/id-card-access.ts` | Data subject only, for granting consent, listing, downloading and reusing. Sharing a department is not consent. |
 | Are these books this approver's? | `src/lib/acc/approver-interface-access-shared.ts` (`canActOnInterfaceTarget` / `canActOnClaimBrand`) | Called on the prep detail, the report export (including its `ids=` form), the ERP send and the ACCOUNT approve/reject — every path that previously relied on the list's row filter. |
@@ -329,7 +330,102 @@ a non-production build *and* `ACC_MANAGER_DEV_BYPASS=1`, default off.
 not), but it is now recorded: `Actor.onBehalfOfManagerStaffId` makes
 `logManagerOnBehalf` write a `manager_acted_on_behalf` activity row naming the
 real actor and the manager they stood in for, inside the same transaction as the
-approval.
+approval. Since 2026-09-24 the manager it names is the **current** one — see
+below.
+
+#### Who the manager is — HR today, not the submit's snapshot (2026-09-24)
+
+**The MANAGER step asks HR who the requester's manager is now, every time.**
+Until this date it asked nothing: the submit read HR once, wrote the answer to
+`AccRequest.ManagerStaffId` / `ManagerEmail` **and** to the `MANAGER` approval
+row's `AssignedTo` / `AssignedEmail`, and every later decision — who may act,
+whose My Work it appears in, whose name the requester reads under รออนุมัติโดย
+— compared against that copy. So a manager who moved team, changed reporting
+line or left took every request already in flight with them: it stayed in their
+inbox for ever, never appeared for whoever manages the requester now, and
+**became actionable by nobody at all**, because AP-1, AP-2, AP-3 and AP-4 have
+no admin arm on that step. The only remedy was for the old manager to return the
+request so its owner could resubmit — circular, when the reason it is stuck is
+that the old manager cannot act. The user asked for it to follow HR instead, and
+chose that **the current manager is the only one who may act**.
+
+- **`src/lib/acc/current-manager.ts`** answers it for one request
+  (`resolveCurrentManagerForRequest`); **`current-manager-sql.ts`** is the same
+  rule as SQL fragments a list embeds. Split because the pool half drags `@/env`
+  in and the generated SQL has to be assertable without a database — the same
+  policy/pool split `request-acl-policy` and `approval-policy` use. The pure
+  half is re-exported from the other, so a caller imports one path.
+- **UAT reads `Fast_Core.UatTester`, not HR**, with the manager required to be
+  an active tester *and* to have a live HR row — `uatManagerFor`'s own rule,
+  reused by the per-request half and restated (unavoidably) by the SQL half,
+  which is why `current-manager-sql.test.ts` pins them equal.
+- **`null` abstains; it never refuses.** No active HR row for the requester, no
+  `ManagerStaffId`, or one naming somebody who has left, all answer null — and
+  every caller then falls back to the snapshot, which is exactly what it did
+  before. *"HR says somebody else"* narrows who may act; *"HR says nothing"*
+  must never narrow it to nobody, because the commonest cause of a blank
+  `ManagerStaffId` is missing data, and a request no human can approve is worse
+  than one a departed manager can.
+- **`mayActOnManagerStep` / `mayActOnManagerStepApi`** replace
+  `canActManagerStep` / `canActManagerApi`. **The rename is load-bearing**: the
+  `current` field is `CurrentManagerRef | null | undefined`, so `current: null`
+  compiles and silently restores snapshot-only behaviour on one route. Renaming
+  turned all thirteen call sites into compile errors — the tactic
+  `erp-interface-brand-source-guard.test.ts` records for `isErpInterfaceBrand`,
+  for the same reason. The arguments are objects rather than six positionals
+  because every id is `number | null` and `snapshotStaffId` / `assignedTo`
+  transpose without a type error.
+- **Thirteen paths decide the step**: AP-1, AP-3 and AP-4's approve / reject /
+  return (plus AP-4's `approval-context`, which decides whether the page draws
+  the buttons) through the shared rule, and AP-17's three through its own inline
+  gate, where `managerStaffId` is now `currentManager?.staffId ?? snapshot` so
+  `isManager`, the on-behalf record and the dev-bypass fallback all follow it.
+  **AP-2 has no manager step at all** — its chain is HEAD_ACC / DIRECTOR /
+  ACC_OFFICER off an amount matrix, with its own `HEAD_DEPT` retired.
+- **The detail read resolves it once and everything else reads that.** The four
+  `get*Request` services put it on the payload as `currentManager`, so the
+  route, the object ACL and the **browser's own button gate** — which cannot ask
+  HR — all see one answer. Resolving again in the route would be a second HR
+  round trip and a second answer, which can differ from the one the page was
+  drawn with.
+- **Reading is the UNION of both managers; acting is not.** `request-acl-policy`
+  admits either, deliberately: a manager replaced mid-review must stop
+  approving, but an approval trail whose own participant cannot open it is not a
+  trail. The ACL resolves it **in the loader's own statement**
+  (`currentManagerStaffIdSql`), because that guard runs on every request-scoped
+  route in the app and a second round trip there is not worth a column the
+  database can join to.
+- **My Work has three arms and none is redundant** (`buildMyWorkManagerQuery`,
+  `my-work-manager-sql.ts`, pure): *live* (HR says I manage this requester
+  today), *history* (`ActionedByStaffId` — I actually actioned it, so a settled
+  claim stays in my อนุมัติแล้ว tab whatever HR says afterwards), and *fallback*
+  (`NOT hasCurrentManagerPredicate` — the snapshot governs exactly where the
+  button says it governs). Dropping any one either hides a request from somebody
+  who must act on it or takes a finished one out of the history of the person
+  who did. `queryBothPools` now hands its callback the environment, because HR
+  and `UatTester` are different tables and a pool *is* an environment here.
+- **รออนุมัติโดย names the current manager** on a pending MANAGER step —
+  `requestRowSelect(environment)` is a function for that one column pair alone.
+  Naming the stale assignee tells a requester their claim is waiting on somebody
+  the routes no longer admit.
+- **Nothing about the write changed**: the submit still stamps both columns, as
+  history and as the fallback, and **there is no migration**.
+- **Measured, not assumed.** `npm run check:manager-drift`
+  (`scripts/checks/report-manager-drift.ts`, read-only, both databases) reports
+  every request whose live manager differs from its stamped one, and how many of
+  those are still pending — the rows that actually changed hands. Run
+  2026-09-24: **`Rocks_Portal_Form` holds no non-draft request at all**, so
+  production was unaffected on the day; `Rocks_Portal_Form_UAT` held 174, of
+  which 80 disagreed with their snapshot and exactly **one** was still pending
+  (`TOF26-09045`, staff 10176 → 10177), confirmed from the other side by the My
+  Work counts moving 7 → 6 and 0 → 1.
+- **What is NOT covered**: `manager-auth.test.ts` covers the rule and
+  `current-manager-sql.test.ts` the generated SQL, but only SQL Server can say
+  what a WHERE means — the live measurement above is that half.
+  `resolveCurrentManager`'s own liveness check is a **source pin**
+  (`manager-step-live-guard.test.ts`), because that module imports the HR pool
+  and no unit test can call it; it was the one mutation of thirteen that
+  survived the first sweep, and the pin is why both spellings of it go red now.
 
 ### Theme — Sky
 
@@ -373,7 +469,7 @@ Only the middle two live in `NAV` (`src/lib/constants.ts`). Home and Settings ar
   - **Home's card list is its own, not a filter over `REQUEST_CARDS`.** `ACCOUNTING_FORMS` in `HomeCatalogue.tsx` and `REQUEST_CARDS` in `src/lib/constants.ts` are two hand-kept lists, and a form added to one alone appears on only one surface. Environment filtering needs nothing extra either way: `/api/form-environment` resolves every code any `REQUEST_CARDS` badge names. **Their order is not one of the hand-kept things, though**: both surfaces sort through `sortByFormCode` (`src/lib/form-code-order.ts`), which reads the number out of the badge and compares it as a number, so every list renders AP-1 · AP-4 · AP-17. A plain string sort gives AP-1 · AP-17 · AP-4 — "17" before "4", one character at a time — which is what both surfaces showed until 2026-08-22. A card with no parseable badge sorts to the end of its group, so a new form still needs one; `form-code-order.test.ts` asserts every `REQUEST_CARDS` entry has one and that each group comes out in **non-decreasing** numeric order — not strictly ascending, because one form may legitimately carry more than one card in a group and `compareFormCodes` calls equal codes a tie, held in source order by the stable sort. What must never happen is a later card sorting ahead of an earlier one's number, which `<=` still catches.
   - **"Continue where you left off" is still AP-1 and AP-17 only.** `useHomeData` fetches those two drafts endpoints and `ResumableGroup.formCode` is typed to the pair; `/api/request/reimburse/requests/drafts` exists and is not read, so an AP-4 draft is resumable from the form page but is not offered here.
 - **`My Requests`** (`/my-request`) — the Accounting requests you submitted and their status. Form-agnostic: `listMyRequestRows` filters on ownership, not `FormCode`, so AP-4 rows appear alongside AP-1's and AP-17's, merged across both databases by `src/lib/acc/query-both.ts`.
-- **`My Work`** (`/my-work`) — requests awaiting your approval or otherwise involving you.
+- **`My Work`** (`/my-work`) — **the manager's inbox, and nothing else** (the user's decision, 2026-09-24). It used to be "anything you have a part in approving", which for somebody who is both a manager and an accountant meant one list holding two unrelated jobs; every accounting roster arm is gone, and each of those queues has its own page. Whose inbox a request lands in follows **HR today**, not the manager stamped at submit — see "Who the manager is" under Authorization. AP-2 appears here at all only if it ever gains a manager step; it has none.
 - **`Settings`** (`/settings`, IT Admin+) — hub of `SETTINGS_CARDS`: **API Keys** (`/settings/api-keys`), Database Connections, Business Central, Brand Configuration, **ERP Interface Environment**, **Form Environment** (`/settings/form-environment`), **UAT Users** (`/settings/uat-users`), **Users & Roles** (`/settings/users`) — the bolded four are `systemAdminOnly` — and Accounting Admin, which points at `/request?group=Settings` rather than `/request/accounting`, because the AP-1 hub would leave out AP-17 and AP-4.
   - **Two gates, ANDed, and they answer different questions**: `systemAdminOnly` is a role, `uatOnly` is which database the viewer is writing to. `visibleSettingsCards` (`src/lib/settings-card-visibility.ts`, pure and unit-tested) is the one place both are applied — the page is a client component reaching for `useSession` and `useViewerUat`, so a predicate written inline in it could not be tested at all.
   - **Accounting Admin is `uatOnly` since 2026-09-21** (the user's rule): in PRO the card is gone from Settings **everywhere, localhost included**, and it is back the moment a tester switches to UAT. `isUatViewer` is `useViewerUat()?.uatMode` — `/api/form-environment`'s answer, which re-checks an active `UatTester` row beside the cookie, never the cookie alone — and it reads **false while the payload loads and false if the fetch fails**, so the card appears once the payload lands rather than flashing in and being withdrawn.
@@ -434,7 +530,7 @@ Office travel-expense reimbursement form (fuel/toll/parking against a route or m
 - **Pages:** `/request/travel-expense` (fill/resume draft), `/request/travel-expense/[id]` (detail + timeline + self-cancel ≤24h after submit)
 - **Detail tables:** `AccTravelExpense` + `AccTravelExpenseItem`
 - **Settings tables:** `AccApprover` (configured account approvers), `AccVehicle` (vehicle rate table), `AccFormBrand` (brand access per form)
-- **Workflow:** Manager (resolved from `Rocks_Portal_HR.Employee.ManagerStaffId`) → Account (from `AccApprover`). Email notification at every transition via Graph queue (`src/lib/acc/email-queue.ts`), drained after each action. Account approval sets `PaymentDate`, shifted **backward** past weekends and holidays from `Rocks_Codex.Holiday` (`shiftPaymentDay`, `src/lib/acc/payment-calendar.ts`, whose loop is `cur.setDate(cur.getDate() - 1)`). This sentence said "forward" until 2026-08-20 and the AP-4 one below was copied from it.
+- **Workflow:** Manager (resolved from `Rocks_Portal_HR.Employee.ManagerStaffId` — **live, on every read, since 2026-09-24**, not the copy the submit stamps; see "Who the manager is" under Authorization) → Account (from `AccApprover`). Email notification at every transition via Graph queue (`src/lib/acc/email-queue.ts`), drained after each action. Account approval sets `PaymentDate`, shifted **backward** past weekends and holidays from `Rocks_Codex.Holiday` (`shiftPaymentDay`, `src/lib/acc/payment-calendar.ts`, whose loop is `cur.setDate(cur.getDate() - 1)`). This sentence said "forward" until 2026-08-20 and the AP-4 one below was copied from it.
   - **Which round is decided by noon on the Monday of that round's own week**, measured against when the **manager** approved — not against noon on the day they happened to click, and not against "now". `payment-calendar-core.ts` owns it (`weekMondayNoon`, `defaultPaymentRound`), shared with AP-4, which had the rule first; the two forms differ only in which Fridays they pay on. Until 2026-09-03 AP-1 had no cutoff at all, `AP1_HEADER_MESSAGE_LINES` promised one to requesters, and a comment beside that copy said outright that nothing enforced it.
   - **The round is a property of the claim, fixed when the manager signs.** `paymentRoundsForApprovals` anchors on each approval, so a suggestion does not move under an accountant who left the queue open over a weekend — it used to be computed against `getPaymentDates()`, which drops rounds earlier than today, so a claim approved 03/09 read 11/09 until the 11th and then silently read 25/09. That is also why `approveAccount` validates with a **one-month backward window**: without it the queue would suggest a round the approve path refuses.
   - Still a suggestion beside an editable date, not a rule that refuses — the accountant picks, and a claim that legitimately needs a later round can have one. **ACC Portal has none of this** and still takes the next round outright, so the two apps differ here.
@@ -939,7 +1035,7 @@ An employee itemises money they spent out of pocket, attaches the AP-4.1 Excel s
 - **A line owes accounting a Vendor only when it carries VAT and nobody has established that the seller has no card** (2026-09-14, `vendorRequired` in `reimburse/vendor-match-core.ts`, which the queue's checkbox and its reason text both read). Both halves were separately wrong before: **Tax Vendor No. travels on the VAT line and nowhere else**, so a line with no VAT produces no VAT line and is complete without one — the rule `linesMissingTaxVendor` has enforced for AP-3 since it shipped — and `AccReimburseItem.VendorNo`'s own docblock already called a null ordinary, *a one-off purchase from a seller who is not a vendor of ours*, while the queue refused to approve such a claim at all. **`ตรวจ Vendor` is the button that answers the second half**: `POST .../requests/[id]/match-vendors` runs a three-rung ladder — an exact tax id against the card's `TaxRegistrationNumber` (most lines, no model call), then the seller's distinctive words (AP-3's `buildVendorNameTerms`) narrowing the ledger with the model asked **only** to separate the two or three near-identical cards that survive, then `'none'`. **A tax id matching SEVERAL cards is not a match** — that is a head office and its branches, and taking the first is a guess that lands in a subledger. The verdict is derived server-side and **never parsed off the wire**, because `'none'` exempts a line from the requirement and must be the matcher's answer rather than something a posted body asserts about itself; clearing a vendor returns the line to `NULL` — asking again — not to `'none'`. The write goes through `setReimburseItemAccounts` for the four guards below, and the route re-sends each line's **current** `category`, because an edit that omits it clears it.
 - **`PATCH /api/request/reimburse/requests/[id]/items`** lets accounting correct the AI-proposed G/L account (`AccReimburseItem.Category`) per line, from the queue. Neither `saveReimburseDraft` (creator-only, `Draft`/`Returned`-only) nor the generic object ACL's `mutate` mode fits "the current accounting approver corrects one column on a claim someone else filed and a manager already approved" — both are the right rule for a requester's own draft and the wrong shape here. The route calls `authorizeAccRequest(session, id, "read", AP4_FORM_CODE)` deliberately, not `"mutate"` — that mode is creator-and-`Draft`/`Returned`-only and would refuse every legitimate approver — then `setReimburseItemAccounts` applies the same `requireApproverStaffId` check `approveReimburseAccountCheck` makes for this exact step, since the `"read"` verdict alone also admits AP-1's shared `AccApprover` roster: the OR that lets it in lives in the caller, `buildAccAclViewer` (`isSharedAccountArea || ownFormApprover`), not inside `isOwnFormRosterApprover` itself. **The state predicate is claimed, not merely read, inside the transaction that writes** — found and fixed within this same round: a first version checked `(AP-4, ManagerApproved, ACCOUNT)` with a bare `SELECT`, whose shared lock this database's READ COMMITTED isolation releases at statement end, leaving the per-line `UPDATE` loop that followed — a sequential round trip per line, carrying no state predicate of its own — free to land even after a concurrent `approveReimburseAccountCheck` had claimed the row to `ACCOUNT_FINAL` and committed: the G/L account changing after the checking accountant had already signed off. Fixed the way `claimStep` fixes a real transition: a conditional `UPDATE … WHERE <expected state>` checked against `rowsAffected`, taking and holding an exclusive lock to commit, before the per-line writes and the old→new activity-log row they now carry.
 - **Feature code:** `src/features/reimburse/`; services under `src/lib/acc/reimburse/`. `src/features/reimburse/constants.ts` imports nothing and is the home for anything pure that needs a test — the form code, the step and status vocabulary, the notice copy, and `validateRuleText`'s 1,000-character bound.
-- **Three approval steps**, not AP-1's two: **Manager** (`Rocks_Portal_HR.Employee.ManagerStaffId`, or `UatTester.ManagerStaffId` in UAT) → **Accounting check** (`ACCOUNT`, from `AccReimburseApprover`), which is the step that sets `PaymentDate` → **Accounting final** (`ACCOUNT_FINAL`), from the same pool but **necessarily a different person** — `canActFinalStep` (`two-person.ts`) refuses a match, and refuses when either StaffId is absent, because a missing id is not evidence of a different person.
+- **Three approval steps**, not AP-1's two: **Manager** (`Rocks_Portal_HR.Employee.ManagerStaffId`, or `UatTester.ManagerStaffId` in UAT — resolved **live** since 2026-09-24, see "Who the manager is" under Authorization) → **Accounting check** (`ACCOUNT`, from `AccReimburseApprover`), which is the step that sets `PaymentDate` → **Accounting final** (`ACCOUNT_FINAL`), from the same pool but **necessarily a different person** — `canActFinalStep` (`two-person.ts`) refuses a match, and refuses when either StaffId is absent, because a missing id is not evidence of a different person.
 - **There are four ways out of a submitted claim, and three of them are actions an approver takes.** Approve moves it on; **reject** ends it; **return** (`POST /api/request/reimburse/requests/[id]/return`, `returnReimburse`) sends it back to the requester as `Returned`, editable and keeping its `RBM` number; and the requester's own **self-cancel** withdraws it. Returning is available at **all three** steps, not just the manager's, and a comment is required on it — server-side, by `returnCommentOrError`. It exists because a rejection is terminal: `decideRequestMutate` admits `Draft`/`Returned` only, so without a return path a fixable typo costs a full re-key and a second running number. Do **not** route this through AP-1's `returnForEdit`; it is pinned to `AP1_FORM_CODE`, and pinning it is precisely what left AP-4 with no way back for one round of this branch.
   - **Reject is enforced manager-only, not merely designed that way — since 2026-09-08.** The spec's own §1 table always called for this; `mayReject(stepCode)` (`approval-policy.ts`) answers false for either accounting step, and `rejectReimburse` checks it before it claims or writes anything, throwing `AccForbiddenError` → 403 rather than the 400 a malformed body gets. `ReimburseDetail.tsx` had been rendering the Reject button at all three steps since AP-4 shipped and now gates it to `step === "MANAGER"` — a control removed from a page is not a rule, which is why the server refusal came first. `POST .../reject` still dispatches on whichever step the record is actually at rather than pre-filtering to MANAGER in the route, so an accounting-step call reaches the service's own refusal (`REJECT_NOT_AVAILABLE_ERROR`) and gets one Thai answer instead of two versions of "no" that could drift apart. Return is unaffected and stays available at every step — it is the only way back from an accounting step, which is why removing Reject there does not strand a claim.
 - **Self-cancel is ≤24 h after submit and only while the manager still holds it**, like AP-1's — but the window is decided on the **server's** clock, not the browser's. `selfCancelRefusal` / `selfCancelDeadline` (`reimburse/approval-policy.ts`, pure and unit-tested at the exact boundary) name which of three conditions failed, and `claimSelfCancel` re-asserts all three in one conditional `UPDATE` against `DATEADD(HOUR, -@hours, SYSDATETIME())`. The detail page draws the bar from `approval-context`'s `selfCancel` answer; AP-1's page evaluates `Date.now() - new Date(submittedAt)` in the browser instead, which is the second copy of the rule AP-4 deliberately does not keep. A cancel closes the pending approval row as `Returned` because `CK_AccApproval_Status` has no `Cancelled`; the timeline reads the *request* status so it does not call that a return.
