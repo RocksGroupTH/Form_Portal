@@ -94,13 +94,30 @@ order shown above; a screen column owning none emits nothing. The result is alwa
 export columns in some permutation — never more, never fewer, and the two-column groups never
 separate.
 
+### 1.3.1 Why the export becomes a list of column descriptors, not a reordered header
+
+Reordering the header array alone would be wrong, and silently so. Each Control export today is
+three positional arrays that must agree: `header`, each `body` row, and a **totals row** whose sums
+sit at fixed indices (`advanceAmount` at 6, `actualTotal` at 8, `refundToCompany` at 9,
+`extraToEmployee` at 10). Permute the header and leave the totals row alone and the sums appear
+under whichever headers happen to land above them — a report that looks right and is not.
+
+So the export is expressed once, as an ordered list of **descriptors** — `{ key, header,
+value(row), total? }` — from which the header row, the body rows and the totals row are all derived.
+Reordering then means reordering one list, and the three rows cannot drift apart because there is
+only one list. ACC's client-side export has the same three arrays and the same hazard, and takes
+the same shape.
+
 This is a pure function of `(screenOrder) → exportKeys[]` with no React and no I/O in it, so it is
 the one part of item 2 that can be tested directly, and it is the part most likely to be got wrong.
 It is **shared in name and behaviour across the two repos** (each repo its own copy, kept
 identical), because a file whose column order depends on which console produced it is worse than
 either order.
 
-The Detail report needs the same function but its mapping is 1:1 across all 21 columns.
+The Detail report needs the same function but its mapping is 1:1 across all 21 columns. **Its export
+headers are worded differently from its screen headers** — "Request no." against "เลขที่เคลียร์",
+"รหัสสาขา" against "สาขา", and so on — and that stays. The mapping is by key and position, not by
+label; nobody should "tidy" the two wordings into agreement while doing this.
 
 ### 1.4 Getting the order to Form Portal's server export
 
