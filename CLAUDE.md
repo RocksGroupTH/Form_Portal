@@ -566,6 +566,22 @@ still true of the deleted code in git history:
 
 What that replaced: **all five forms mailed the next queue's whole roster at every hop** — AP-2's amount matrix did it up to three times for one request — and AP-1, AP-4 and AP-17 mailed the requester a *second* time to say their manager had said yes. AP-1's and AP-4's final approval also copied the manager, who had acted on the claim and whose own queue already shows what became of it.
 
+**What those four mails SAY, since later the same day.** A notification was a subject line and a table of fields; a table answers *which request* and never *what happened to it*, and a rejection's reason sat in a row labelled `หมายเหตุ` rather than in the sentence saying the claim was refused. The user supplied the copy and every form now opens with it — `src/lib/acc/mail-copy.ts`, pure and import-free, one module for all five:
+
+| | sentence |
+|---|---|
+| ส่งคำขอ | `ท่านมี Request {ฟอร์ม} เลขที่ {เลข} กรุณาพิจารณาและอนุมัติ` |
+| อนุมัติ | `{ฟอร์ม} เลขที่เอกสาร : {เลข} ได้รับการอนุมัติแล้ว` |
+| ไม่อนุมัติ | `{ฟอร์ม} เลขที่เอกสาร : {เลข} ไม่ได้รับการอนุมัติ เนื่องจาก {remark}` |
+| ส่งกลับแก้ไข | `{ฟอร์ม} เลขที่เอกสาร : {เลข} ถูกส่งกลับให้แก้ไข เนื่องจาก {remark}` |
+
+  - **ส่งกลับแก้ไข was NOT in the user's list** and is written in the same voice, because it is the fourth mail a requester gets and would otherwise have been the only one without a sentence. If that wording is wrong it is wrong in one place.
+  - **`RPC-` is deliberately absent.** The user's note wrote the number as `RPC-TOFyy-xxxx`, and it is a real company document-number convention — two AP-3 comments record it. **Asked directly, they said not to add it**: nothing here stores or renders that prefix, so a mail quoting it would match neither My Requests, nor the detail page, nor the Excel export, nor the database.
+  - **The reason moved INTO the sentence, so the row carrying it went.** Keeping both would read as two different remarks. `email-templates.test.ts` had pinned the row label `เหตุผล` and was rewritten to pin the sentence — not relaxed to "somewhere in the HTML", which would pass if the row came back.
+  - **The builders return finished, escaped HTML rather than text.** AP-3 interpolated the approver's comment **raw** into its mail body until this change — `<p>เหตุผล: ${comment}</p>`, free text from a person straight into an HTML email. A helper handing back a bare string would have preserved exactly that trap; the guard test also pins that `${comment}` is gone from that file.
+  - **AP-1's form name reads `(ออฟฟิศ)` in mail and `(ออฟฟิต)` in `AccFormMaster.FormNameTh`**, which is what Home and the form filter show. The user wrote `ออฟฟิศ`; renaming the catalogue entry is a database change nobody asked for.
+  - **Two triggers deliberately carry no sentence**: AP-1's `ManagerApproved` and AP-2's `StepPending`, neither of which anything has queued since the four-event rule. AP-17's `Approved` is the same case — its terminal transition is `Completed`, which is where its approval sentence lives.
+  - `mail-copy-guard.test.ts` reads all seven mail-building modules, because a form that stops calling the shared copy is a **missing call** and every one of those modules reaches `@/env`, so none can be loaded in a test at all.
 **It is a reduction and it has a cost, stated rather than discovered**: a queue nobody opens now goes unworked with nothing to prompt anybody. The user was asked about precisely that for the accounting queue and chose it. Each roster has its own queue page, which is the authority on that work anyway.
 
 **Two roster mails survive, and both are named in `mail-on-step-advance-guard.test.ts` with the reason** — an exemption on the record rather than an oversight:

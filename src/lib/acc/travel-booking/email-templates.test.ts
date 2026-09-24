@@ -106,11 +106,17 @@ test("Returned tells the requester what to do, not just what happened", async ()
   assert.ok(html.includes(RETURNED_ACTION_TEXT), "Returned does not say to submit again");
 });
 
-test("Rejected still carries its reason", async () => {
+test("Rejected carries its reason INSIDE the sentence, not as a labelled row", async () => {
+  /* This asserted `เหตุผล` — the row label — until 2026-09-24. The user asked
+     for the refusal to read as a sentence ("…ไม่ได้รับการอนุมัติ เนื่องจาก
+     {remark}"), so the row went and the reason moved into the lead paragraph.
+     Pinned the new way round rather than relaxed: the reason reaching the
+     requester is the part that must not regress, and "somewhere in the HTML"
+     would have passed against the row coming back as well. */
   const { buildTravelBookingEmail } = await load();
   const { html } = buildTravelBookingEmail("Rejected", req(), "งบไม่พอ");
-  assert.ok(html.includes("เหตุผล"));
-  assert.ok(html.includes("งบไม่พอ"));
+  assert.match(html, /ไม่ได้รับการอนุมัติ เนื่องจาก งบไม่พอ/);
+  assert.doesNotMatch(html, /เหตุผล/, "the reason is in the sentence now, not a row");
 });
 
 test("the three untouched triggers still build", async () => {

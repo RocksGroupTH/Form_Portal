@@ -19,6 +19,7 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { MAIL_FORM_NAMES, esc, submittedLead } from "@/lib/acc/mail-copy";
 import {
   AP3_FORM_CODE,
   AP3_SEQUENCE_PREFIX,
@@ -958,9 +959,9 @@ export async function submitRequest(
   if (updated) {
     const subject = `เคลียร์เงินทดรองจ่าย ${requestNo} รออนุมัติ (${CLR_STEP_LABEL_TH.MANAGER})`;
     const bodyHtml =
-      `<p>มีคำขอเคลียร์คืนเงินทดรองจ่ายเลขที่ <b>${requestNo}</b> รอการอนุมัติของท่าน</p>` +
-      `<p>ผู้ขอ: ${updated.requesterFullName ?? "-"} · ค่าใช้จ่ายจริง: ${(updated.clear?.actualTotal ?? 0).toLocaleString()} บาท` +
-      ` · ต้องโอนคืนบริษัท: ${(updated.clear?.refundToCompany ?? 0).toLocaleString()} บาท</p>` +
+      submittedLead(MAIL_FORM_NAMES["AP-3"], requestNo) +
+      `<p>ผู้ขอ: ${esc(updated.requesterFullName ?? "-")} · ค่าใช้จ่ายจริง: ${esc((updated.clear?.actualTotal ?? 0).toLocaleString())} บาท` +
+      ` · ต้องโอนคืนบริษัท: ${esc((updated.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
       documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
     await queueEmail({
       requestId: id, toEmail: managerEmail,

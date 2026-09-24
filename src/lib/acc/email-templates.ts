@@ -5,11 +5,18 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import type { AccRequest } from "@/features/accounting/types";
+import {
+  MAIL_FORM_NAMES,
+  approvedLead,
+  rejectedLead,
+  returnedLead,
+  submittedLead,
+} from "@/lib/acc/mail-copy";
 
-export function esc(s: unknown): string {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-}
+/* One copy, in the import-free module beside this one — re-exported because
+   AP-4's own builder and several panels import `esc` from here. */
+export { esc } from "@/lib/acc/mail-copy";
+import { esc } from "@/lib/acc/mail-copy";
 
 function shell(title: string, bodyRows: string, ctaUrl: string, lead = ""): string {
   return `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto">
@@ -43,18 +50,38 @@ export type AccTrigger =
    */
   | "Cancelled";
 
+const STALE_CANCEL_LEAD =
+  `<p style="font-size:14px;line-height:1.6;color:#333;margin:0 0 12px">` +
+  `คำขอเบิกค่าเดินทางของท่านถูก<b>ยกเลิกโดยระบบอัตโนมัติ</b> ` +
+  `เนื่องจากผู้จัดการไม่ได้อนุมัติหรือไม่อนุมัติภายใน 1 เดือน นับจากวันที่ส่งคำขอ<br>` +
+  `หากยังต้องการเบิกค่าใช้จ่ายรายการนี้ กรุณาสร้างคำขอใหม่อีกครั้ง</p>`;
+
 /**
- * An explanatory paragraph above the detail table, for the triggers that need
- * one. A row-by-row summary answers "which request" but not "why is this in my
- * inbox", and for an event nobody asked for that is the whole question.
+ * The paragraph above the detail table.
+ *
+ * A row-by-row summary answers "which request" but never "what happened to it",
+ * so since 2026-09-24 every trigger that reaches a person carries a sentence —
+ * see `mail-copy.ts` for the wording and whose it is. `ManagerApproved` is the
+ * one member with none, and deliberately: nothing has queued it since the mail
+ * rules were cut to four events, so a sentence here would be copy nobody reads.
  */
-const LEADS: Partial<Record<AccTrigger, string>> = {
-  Cancelled:
-    `<p style="font-size:14px;line-height:1.6;color:#333;margin:0 0 12px">` +
-    `คำขอเบิกค่าเดินทางของท่านถูก<b>ยกเลิกโดยระบบอัตโนมัติ</b> ` +
-    `เนื่องจากผู้จัดการไม่ได้อนุมัติหรือไม่อนุมัติภายใน 1 เดือน นับจากวันที่ส่งคำขอ<br>` +
-    `หากยังต้องการเบิกค่าใช้จ่ายรายการนี้ กรุณาสร้างคำขอใหม่อีกครั้ง</p>`,
-};
+function leadFor(trigger: AccTrigger, req: AccRequest, note?: string): string {
+  const name = MAIL_FORM_NAMES["AP-1"];
+  switch (trigger) {
+    case "Submitted":
+      return submittedLead(name, req.requestNo);
+    case "Approved":
+      return approvedLead(name, req.requestNo);
+    case "Rejected":
+      return rejectedLead(name, req.requestNo, note);
+    case "Returned":
+      return returnedLead(name, req.requestNo, note);
+    case "Cancelled":
+      return STALE_CANCEL_LEAD;
+    default:
+      return "";
+  }
+}
 
 export function buildEmail(
   trigger: AccTrigger,
@@ -91,10 +118,14 @@ export function buildEmail(
       ? row("อัตราแลกเปลี่ยน", referenceRateNote(req.currency, req.exchangeRate, req.rateAsOf))
       : "",
     req.paymentDate ? row("วันที่จ่าย", req.paymentDate) : "",
-    note ? row("หมายเหตุ", note) : "",
+    /* The reason is inside the sentence above for these two, which is what the
+       user asked for; a row repeating it reads as a second, different remark. */
+    note && trigger !== "Rejected" && trigger !== "Returned"
+      ? row("หมายเหตุ", note)
+      : "",
   ].join("");
   return {
     subject: titles[trigger],
-    html: shell(titles[trigger], rows, url, LEADS[trigger] ?? ""),
+    html: shell(titles[trigger], rows, url, leadFor(trigger, req, note)),
   };
 }

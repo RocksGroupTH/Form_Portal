@@ -2,6 +2,13 @@ import { env } from "@/env";
 import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queueEmail } from "@/lib/acc/email-queue";
+import {
+  MAIL_FORM_NAMES,
+  approvedLead,
+  esc,
+  rejectedLead,
+  returnedLead,
+} from "@/lib/acc/mail-copy";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
@@ -176,8 +183,9 @@ export async function approveCurrentStep(
   if (!nextStep) {
     const subject = `เคลียร์เงินทดรองจ่าย ${no} อนุมัติครบแล้ว`;
     const body =
-      `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ได้รับการอนุมัติครบทุกขั้นแล้ว</p>` +
-      `<p>ต้องโอนคืนบริษัท: ${(req.clear?.refundToCompany ?? 0).toLocaleString()} บาท</p>` + link(requestId);
+      approvedLead(MAIL_FORM_NAMES["AP-3"], no) +
+      `<p>ต้องโอนคืนบริษัท: ${esc((req.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
+      link(requestId);
     await notify(requestId, subject, body, req.requesterEmail, "Approved");
   }
 }
@@ -228,7 +236,11 @@ export async function reject(
     await notify(
       requestId,
       `เคลียร์เงินทดรองจ่าย ${no} ไม่อนุมัติ`,
-      `<p>คำขอ <b>${no}</b> ไม่ได้รับการอนุมัติ</p><p>เหตุผล: ${comment}</p>` + link(requestId),
+      /* The comment was interpolated RAW here until 2026-09-24 — free text
+         from an approver, straight into an HTML mail body. `rejectedLead`
+         returns finished, escaped HTML, which is why it takes the reason
+         rather than handing a caller a string to remember to escape. */
+      rejectedLead(MAIL_FORM_NAMES["AP-3"], no, comment) + link(requestId),
       req.requesterEmail,
       "Rejected",
     );
@@ -281,7 +293,7 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
     await notify(
       requestId,
       `เคลียร์เงินทดรองจ่าย ${no} ส่งกลับแก้ไข`,
-      `<p>คำขอ <b>${no}</b> ถูกส่งกลับให้แก้ไข</p><p>หมายเหตุ: ${comment}</p>` + link(requestId),
+      returnedLead(MAIL_FORM_NAMES["AP-3"], no, comment) + link(requestId),
       req.requesterEmail,
       "Returned",
     );

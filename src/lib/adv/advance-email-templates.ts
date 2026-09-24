@@ -1,15 +1,24 @@
 import { env } from "@/env";
+import {
+  MAIL_FORM_NAMES,
+  approvedLead,
+  esc,
+  rejectedLead,
+  returnedLead,
+  submittedLead,
+} from "@/lib/acc/mail-copy";
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
-export function esc(s: unknown): string {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-}
+/* One implementation, in `@/lib/acc/mail-copy` — re-exported because AP-2's
+   own modules import `esc` from here. */
+export { esc } from "@/lib/acc/mail-copy";
 
-function shell(title: string, bodyRows: string, ctaUrl: string): string {
+/** `lead` is the sentence from `mail-copy.ts`; blank for the triggers with none. */
+function shell(title: string, bodyRows: string, ctaUrl: string, lead = ""): string {
   return `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto">
     <h2 style="color:#A3121B">${esc(title)}</h2>
+    ${lead}
     <table style="width:100%;border-collapse:collapse">${bodyRows}</table>
     <p style="margin-top:16px"><a href="${esc(ctaUrl)}"
       style="background:#A3121B;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">เปิดเอกสาร</a></p>
@@ -75,8 +84,24 @@ export function buildAdvanceEmail(
       : "",
     d.paymentDate      ? row("วันที่จ่าย", d.paymentDate) : "",
     showStep && d.stepLabel ? row("ขั้นอนุมัติ", d.stepLabel) : "",
-    d.note             ? row("หมายเหตุ", d.note) : "",
+    /* The reason is in the sentence above for these two — a row repeating it
+       reads as a second, different remark. */
+    d.note && trigger !== "Rejected" && trigger !== "Returned"
+      ? row("หมายเหตุ", d.note)
+      : "",
   ].join("");
 
-  return { subject: title, html: shell(title, rows, url) };
+  /* AP-2 has no manager step — its chain is an amount matrix — so "ส่งคำขอ"
+     addresses whichever approver the tier puts first. The sentence asks them
+     to act, which is true of any of them. `StepPending` gets none: nothing
+     has queued it since the 2026-09-24 mail rules cut step-advance mail. */
+  const name = MAIL_FORM_NAMES["AP-2"];
+  const lead =
+    trigger === "Submitted" ? submittedLead(name, d.requestNo)
+    : trigger === "Approved" ? approvedLead(name, d.requestNo)
+    : trigger === "Rejected" ? rejectedLead(name, d.requestNo, d.note)
+    : trigger === "Returned" ? returnedLead(name, d.requestNo, d.note)
+    : "";
+
+  return { subject: title, html: shell(title, rows, url, lead) };
 }

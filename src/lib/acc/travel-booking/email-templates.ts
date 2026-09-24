@@ -1,4 +1,11 @@
 import { env } from "@/env";
+import {
+  MAIL_FORM_NAMES,
+  approvedLead,
+  rejectedLead,
+  returnedLead,
+  submittedLead,
+} from "@/lib/acc/mail-copy";
 import { esc } from "@/lib/acc/email-templates";
 import { payoutDateLabel } from "@/lib/acc/travel-booking/payout-rule";
 import type { TravelBookingRequest } from "@/features/travel-booking/types";
@@ -12,10 +19,12 @@ import type { TravelBookingRequest } from "@/features/travel-booking/types";
 const BRAND_COLOR = "#A3121B";
 const FORM_LABEL = "AP-17 · แบบฟอร์มขอจองที่พัก/ตั๋วโดยสาร";
 
-function shell(title: string, bodyRows: string, ctaUrl: string): string {
+/** `lead` is the sentence from `mail-copy.ts`; blank for the triggers with none. */
+function shell(title: string, bodyRows: string, ctaUrl: string, lead = ""): string {
   return `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto">
     <p style="margin:0 0 4px;color:#999;font-size:12px">${esc(FORM_LABEL)}</p>
     <h2 style="color:${BRAND_COLOR};margin-top:0">${esc(title)}</h2>
+    ${lead}
     <table style="width:100%;border-collapse:collapse">${bodyRows}</table>
     <p style="margin-top:16px"><a href="${esc(ctaUrl)}"
       style="background:${BRAND_COLOR};color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">เปิดเอกสาร</a></p>
@@ -112,7 +121,10 @@ export function buildTravelBookingEmail(
         row("วันเดินทาง", dateRangeLabel(req)),
         row("เบี้ยเลี้ยง", perDiemLabel(req)),
       ].join("");
-      return { subject, html: shell(subject, rows, url) };
+      return {
+        subject,
+        html: shell(subject, rows, url, submittedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo)),
+      };
     }
 
     case "Approved": {
@@ -154,9 +166,11 @@ export function buildTravelBookingEmail(
         row("วันเดินทาง", dateRangeLabel(req)),
         row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
         actorName ? row("ไม่อนุมัติโดย", actorName) : "",
-        note ? row("เหตุผล", note) : "",
       ].join("");
-      return { subject, html: shell(subject, rows, url) };
+      return {
+        subject,
+        html: shell(subject, rows, url, rejectedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo, note)),
+      };
     }
 
     case "Returned": {
@@ -166,12 +180,14 @@ export function buildTravelBookingEmail(
         row("วันเดินทาง", dateRangeLabel(req)),
         row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
         actorName ? row("ส่งกลับโดย", actorName) : "",
-        note ? row("หมายเหตุ", note) : "",
         // "ส่งกลับแก้ไข" states a status. This states the instruction — and
         // that the running number survives, so nobody files a second request.
         row("สิ่งที่ต้องทำ", RETURNED_ACTION_TEXT),
       ].join("");
-      return { subject, html: shell(subject, rows, url) };
+      return {
+        subject,
+        html: shell(subject, rows, url, returnedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo, note)),
+      };
     }
 
     case "Completed": {
@@ -181,7 +197,15 @@ export function buildTravelBookingEmail(
         row("สถานที่ปฏิบัติงาน", workLocationLine(req)),
         row("วันเดินทาง", dateRangeLabel(req)),
       ].join("");
-      return { subject, html: shell(subject, rows, url) };
+      /* AP-17's terminal transition is `Completed`, not `Approved` — the
+         accounting sign-off. That is the event the user's "บัญชีอนุมัติ"
+         line names, so this is where the approval sentence belongs. The
+         `Approved` case above is the manager step and has queued nothing
+         since the 2026-09-24 mail rules. */
+      return {
+        subject,
+        html: shell(subject, rows, url, approvedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo)),
+      };
     }
   }
 }

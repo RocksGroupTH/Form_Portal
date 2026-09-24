@@ -33,6 +33,12 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { getHolidaySet, shiftPaymentDay, ymd } from "@/lib/acc/payment-calendar";
 import { queueEmail } from "@/lib/acc/email-queue";
+import {
+  MAIL_FORM_NAMES,
+  approvedLead,
+  rejectedLead,
+  returnedLead,
+} from "@/lib/acc/mail-copy";
 import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, AccForbiddenError } from "@/lib/acc/request-errors";
 import { vendorStatusForEdit } from "@/lib/acc/reimburse/item-account-edits";
@@ -256,6 +262,8 @@ function buildReimburseEmail(
   req: ReimburseDetail,
   headline: string,
   note?: string | null,
+  /** The sentence from `mail-copy.ts`; blank for a trigger with none. */
+  lead = "",
 ): { subject: string; html: string } {
   const url = `${env.NEXT_PUBLIC_APP_URL ?? ""}/request/reimburse/${req.id}`;
   const subject = `${headline} — ขอเบิกเงินคืนพนักงาน ${req.requestNo ?? ""}`.trim();
@@ -266,11 +274,16 @@ function buildReimburseEmail(
     row("ยอดรวม (บาท)", req.totalAmount ?? "-"),
     req.paymentDate ? row("วันที่จ่าย", req.paymentDate) : "",
   ].join("");
-  const noteHtml = note?.trim()
-    ? `<p style="margin:12px 0;padding:10px;background:#f5f5f5;border-left:4px solid #999;white-space:pre-wrap">${esc(note.trim())}</p>`
-    : "";
+  /* Blank once the lead carries it: `rejectedLead`/`returnedLead` put the
+     reason inside the sentence, and a quoted block repeating it underneath
+     reads as a second, different remark. */
+  const noteHtml =
+    note?.trim() && !lead
+      ? `<p style="margin:12px 0;padding:10px;background:#f5f5f5;border-left:4px solid #999;white-space:pre-wrap">${esc(note.trim())}</p>`
+      : "";
   const html = `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto">
     <h2 style="color:#A3121B">${esc(subject)}</h2>
+    ${lead}
     <table style="width:100%;border-collapse:collapse">${rows}</table>
     ${noteHtml}
     <p style="margin-top:16px"><a href="${esc(url)}"
@@ -294,7 +307,16 @@ async function notify(
   note?: string | null,
 ): Promise<void> {
   if (!toEmail?.trim()) return;
-  const mail = buildReimburseEmail(req, headline, note);
+  /* `ACCOUNT` is terminal for AP-4 — `STATE_AFTER_APPROVE.ACCOUNT` has
+     `nextStep: null` — so only ONE "Approved" mail can reach a requester per
+     claim, however many places queue that trigger. */
+  const name = MAIL_FORM_NAMES["AP-4"];
+  const lead =
+    trigger === "Approved" ? approvedLead(name, req.requestNo)
+    : trigger === "Rejected" ? rejectedLead(name, req.requestNo, note)
+    : trigger === "Returned" ? returnedLead(name, req.requestNo, note)
+    : "";
+  const mail = buildReimburseEmail(req, headline, note, lead);
   await queueEmail({
     requestId: req.id,
     toEmail: toEmail.trim(),
