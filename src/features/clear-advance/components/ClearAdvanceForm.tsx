@@ -886,7 +886,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   async function uploadFiles(
     list: FileList | null,
     refType: "clear_doc" | "refund_proof",
+    /* `read: false` uploads and stores the file exactly as always and skips the
+       AI read at the end of this function — the ปกติ buttons the CR asked for.
+       One function with one argument rather than a second upload path, so the
+       two cannot drift apart. */
+    opts: { read?: boolean } = {},
   ) {
+    const read = opts.read !== false;
     if (!list || list.length === 0) return;
     // Receipts require the advance to be chosen first (the OCR fills lines that
     // clear THAT advance). Refund-proof isn't gated (it only appears post-refund).
@@ -942,7 +948,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       // Both boxes go through the same reader: the model says what each page is
       // (receipt / slip / other), and that — not the box it was dropped in —
       // decides where the values land (decision: 2026-09-01).
-      if (ocrDocs.length) void verifyReceipts(ocrDocs);
+      if (read && ocrDocs.length) void verifyReceipts(ocrDocs);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
     } finally {
@@ -1586,6 +1592,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             locked={advanceRequestId == null}
             lockedHint="กรุณาเลือก “เงินทดรองจ่ายที่จะเคลียร์” ก่อน จึงจะแนบใบเสร็จได้"
             onPick={(list) => uploadFiles(list, "clear_doc")}
+            onPickRaw={(list) => uploadFiles(list, "clear_doc", { read: false })}
             onRemove={(id) => removeFile(id, "clear_doc")}
             onView={openFileViewer}
           />
@@ -2342,12 +2349,16 @@ function FootVal({ value, accent, tone }: { value: string; accent?: boolean; ton
 }
 
 function FileArea({
-  files, readOnly, uploading, onPick, onRemove, onView, locked, lockedHint,
+  files, readOnly, uploading, onPick, onPickRaw, onRemove, onView, locked, lockedHint,
 }: {
   files: AccFileMeta[];
   readOnly: boolean;
   uploading: boolean;
   onPick: (list: FileList | null) => void;
+  /** When given, the section also offers buttons that upload WITHOUT the AI
+   *  read. The refund-slip section deliberately passes nothing, which is how
+   *  it keeps the two buttons it has today. */
+  onPickRaw?: (list: FileList | null) => void;
   onRemove: (id: number) => void;
   onView: (f: AccFileMeta) => void;
   /** Disable attaching until a prerequisite is met (e.g. pick the advance first). */
@@ -2365,15 +2376,29 @@ function FileArea({
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-            <Paperclip size={14} /> แนบไฟล์
+            <Paperclip size={14} /> {onPickRaw ? "แนบไฟล์อ่านด้วย AI" : "แนบไฟล์"}
             <input type="file" hidden multiple accept="image/*,application/pdf" disabled={disabled}
               onChange={(e) => { onPick(e.target.files); e.target.value = ""; }} />
           </label>
           <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-            <Camera size={14} /> ถ่ายรูป
+            <Camera size={14} /> {onPickRaw ? "ถ่ายรูปอ่านด้วย AI" : "ถ่ายรูป"}
             <input type="file" hidden accept="image/*" capture="environment" disabled={disabled}
               onChange={(e) => { onPick(e.target.files); e.target.value = ""; }} />
           </label>
+          {onPickRaw && (
+            <>
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
+                <Paperclip size={14} /> แนบไฟล์
+                <input type="file" hidden multiple accept="image/*,application/pdf" disabled={disabled}
+                  onChange={(e) => { onPickRaw(e.target.files); e.target.value = ""; }} />
+              </label>
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
+                <Camera size={14} /> ถ่ายรูป
+                <input type="file" hidden accept="image/*" capture="environment" disabled={disabled}
+                  onChange={(e) => { onPickRaw(e.target.files); e.target.value = ""; }} />
+              </label>
+            </>
+          )}
           {uploading && <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>กำลังอัปโหลด...</span>}
         </div>
       )}
