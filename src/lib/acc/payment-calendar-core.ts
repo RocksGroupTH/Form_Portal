@@ -19,6 +19,25 @@ export function nthFridayOfMonth(year: number, month0: number, nth: number): Dat
   return new Date(year, month0, 1 + offset + (nth - 1) * 7);
 }
 
+/**
+ * Every Friday that falls inside this month — four in most, five in some.
+ *
+ * NOT `[1,2,3,4,5].map(nthFridayOfMonth)`. That helper is raw arithmetic —
+ * `1 + offset + (nth - 1) * 7` — so asking a four-Friday month for its fifth
+ * returns a date in the NEXT month, silently, which is then produced again when
+ * that month is walked as its own first Friday. This walks instead, and stops
+ * when it leaves the month it was asked about.
+ */
+export function everyFridayInMonth(year: number, month0: number): Date[] {
+  const out: Date[] = [];
+  const d = nthFridayOfMonth(year, month0, 1);
+  while (d.getMonth() === month0) {
+    out.push(new Date(d));
+    d.setDate(d.getDate() + 7);
+  }
+  return out;
+}
+
 export function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
