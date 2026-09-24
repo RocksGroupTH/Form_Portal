@@ -20,6 +20,21 @@
 4. **Do not change any amount, posting date, document type or `employeeCode`.** Group B changes *when* AP-2 pays and *what one Description string says*. Nothing else.
 5. Slices A–C (item 1) and Slice D (item 6) are independent. D can ship without A–C and vice versa.
 
+## Open question, deliberately not answered here
+
+**Which Friday AP-2 pre-fills.** This plan changes which Fridays AP-2 *offers*; it does not touch
+the rule that decides which one is *preselected*. `defaultPaymentRound` takes the first round whose
+own week's Monday noon has not passed — designed for a fortnightly cadence, where missing that
+deadline cost two weeks. Under a weekly cadence an approval at Monday 12:01 defaults to the Friday
+eleven days out while the Friday four days out sits selectable in the picker beside it, so an
+officer approving Tuesday-to-Friday will override the default every week.
+
+Raised by the code review of Task 2 on 2026-09-24. The user deferred it to ask the business, so
+**AP-2 keeps the shared cut-off for now** and the reasoning is recorded in `getDefaultPaymentDate`'s
+docblock rather than left to be rediscovered. Nothing in Tasks 1–9 depends on the answer; whichever
+way it goes, the change is in `payment-calendar-core.ts`'s `defaultPaymentRound` plus a test, and it
+must be made in both consoles.
+
 ## File structure
 
 | File | Change | Task |
