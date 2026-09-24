@@ -81,7 +81,22 @@ export async function approveCurrentStep(
   if (needsPayment(step.stepType)) {
     const valid = await getPaymentDates("AP-2");
     if (!opts.paymentDate || !valid.includes(opts.paymentDate)) {
-      throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด — ต้องเป็นวันศุกร์");
+      /* "ต้องเป็นวันศุกร์" was wrong in both of the cases that reach this line,
+         and told the reader the opposite of what to do. `valid` is not every
+         Friday: a payday landing on a holiday is shifted BACKWARD, so the
+         payable date is a Thursday or earlier and someone picking that Friday —
+         the natural mistake — was told to pick a Friday; and `getPaymentDates`
+         drops past rounds (monthsBack = 0), so a stale form resubmitted was told
+         to pick a Friday about a Friday. The picker restricts selection, so
+         whoever gets here has a stale tab or is calling the API directly — the
+         one person with no calendar in front of them, which is why the list
+         itself, already in hand on the line above, goes into the message. */
+      const next = valid.slice(0, 2).join(", ");
+      throw new Error(
+        next
+          ? `วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ทุกวันศุกร์ เลื่อนกลับถ้าตรงวันหยุด และต้องไม่ย้อนหลัง) — รอบถัดไป: ${next}`
+          : "วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ทุกวันศุกร์ เลื่อนกลับถ้าตรงวันหยุด และต้องไม่ย้อนหลัง) — ขณะนี้ไม่มีรอบจ่ายที่เลือกได้",
+      );
     }
     // AP-2: the debit posts to a Vendor, so the Accounting Officer must have a
     // confirmed vendor before this step can complete. (Belt: the send guard and

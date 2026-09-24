@@ -7,6 +7,7 @@ import { Loader2, FileX, Eye, SendHorizonal, X, Search, Download, Building2 } fr
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { AP3_FORTNIGHTLY_PAYDAY_HINT } from "@/features/clear-advance/constants";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
@@ -895,6 +896,7 @@ export function ClrErpInterfaceQueue() {
                                 value={row.paymentDate ?? ""}
                                 onChange={(d) => changePaymentDate(row.id, d)}
                                 allowedDates={paymentDateOpts}
+                                hint={AP3_FORTNIGHTLY_PAYDAY_HINT}
                               />
                             ) : (
                               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
