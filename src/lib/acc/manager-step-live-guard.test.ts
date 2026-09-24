@@ -137,6 +137,43 @@ test("AP-17's three routes prefer the live manager over the stamped one", () => 
   }
 });
 
+test("a manager who has left HR abstains rather than being named", () => {
+  /**
+   * `resolveCurrentManager`'s production arm reads the manager's own HR row
+   * through `resolveManagerEmail`, whose `Status = 'Active'` pin doubles as the
+   * liveness test: a `ManagerStaffId` pointing at somebody who has gone answers
+   * null, and null falls back to the snapshot rather than locking the request
+   * to a person who cannot sign in.
+   *
+   * **This is a source pin because nothing else can reach it.**
+   * `current-manager.ts` imports the HR pool, so `@/env` validates the whole
+   * environment at import and no unit test can call the function at all —
+   * measured: deleting the two lines below leaves the whole suite green, which
+   * is the one mutation of thirteen that survived when this landed. The SQL
+   * half of the same rule IS covered properly, by
+   * `current-manager-sql.test.ts`'s "both environments require the MANAGER to
+   * be active too", and the two halves must agree or the list admits somebody
+   * the button refuses.
+   */
+  const src = code(path.resolve(process.cwd(), "src/lib/acc/current-manager.ts"));
+  const marker = "export async function resolveCurrentManager(";
+  const start = src.indexOf(marker);
+  assert.ok(start > 0, "resolveCurrentManager not found — has it been renamed?");
+  const body = src.slice(start, src.indexOf("export async function", start + marker.length));
+
+  assert.ok(
+    /const email = await resolveManagerEmail\(managerStaffId\);/.test(body),
+    "resolveCurrentManager no longer resolves the manager's address, so it no longer proves " +
+      "the manager is an active employee",
+  );
+  assert.ok(
+    /if \(!email\) return null;/.test(body),
+    "resolveCurrentManager names a manager whose HR row is gone or inactive — that person " +
+      "cannot sign in, so the request becomes actionable by nobody instead of falling back " +
+      "to the submit-time snapshot",
+  );
+});
+
 test("the detail reads that feed those routes resolve the manager themselves", () => {
   // The routes read `<rec>.currentManager` rather than resolving it, so the
   // resolution has to happen in the service. One HR round trip per detail read,
