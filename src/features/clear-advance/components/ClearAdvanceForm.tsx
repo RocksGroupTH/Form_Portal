@@ -169,7 +169,8 @@ interface WhtRow {
   taxId: string;
   payeeName: string;
   payeeAddress: string;
-  /** "" = nobody has chosen yet, which is what the row shows and what it saves. */
+  /** "" = no type could be read from the tax id. Nothing on this form can resolve
+   *  it — only accounting's step sets one. */
   pndType: "PND3" | "PND53" | "";
   amount: string;
   whtAmount: string;
@@ -488,10 +489,17 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   /**
-   * Typing a tax id fills the ภ.ง.ด. type — but only on a row where nobody has
-   * chosen one. Re-seeding on every keystroke would mean correcting a typo in
-   * the id silently discards a deliberate choice, and the row is a decision of
-   * record: it picks the vendor accounting has to clear.
+   * Typing a tax id fills the ภ.ง.ด. type — but only on a row that has none yet.
+   *
+   * The `w.pndType ||` guard still earns its place now that the requester has no
+   * control of their own: `readOnly` is false for a **Returned** request, so a
+   * requester sent back to fix something can still edit this row, and without the
+   * guard their tax-id correction would overwrite the type accounting had already
+   * decided.
+   *
+   * The cost, which nothing else records: on a fresh row a mistyped tax id seeds a
+   * type, and correcting the id does NOT re-seed it. The first suggestion is what
+   * saves, invisibly, and only accounting's step can change it.
    */
   function updateWhtTaxId(idx: number, taxId: string) {
     setWhtRows((p) => p.map((w, i) => (
@@ -600,8 +608,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             taxId: w.taxId.trim() || null,
             payeeName: w.payeeName.trim() || null,
             payeeAddress: w.payeeAddress.trim() || null,
-            // What the row shows is what it saves — the suggestion is seeded into
-            // the visible value, never inferred behind the user's back at save.
+            // Saved unseen since 2026-09-24: the requester has no ภ.ง.ด. control
+            // any more, so this is whatever suggestPndType read from the tax id.
+            // It still has to be sent — the ERP payload refuses a WHT row with no
+            // decided type — and accounting is who can actually change it, at
+            // ClearAdvanceDetail's account step.
             pndType: w.pndType || null,
             amount: num(w.amount) || null,
             whtAmount: num(w.whtAmount) || null,
@@ -1912,6 +1923,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           <div className="overflow-x-auto -mx-1 px-1 hidden md:block">
             <table className="w-full border-collapse" style={{ minWidth: 980 }}>
               <thead>
+                {/* Adding or removing a column here means two colSpans below
+                    follow it: the empty-state row (~1937) and the totals row
+                    (~2011). They are different numbers and both are wrong if
+                    only one is changed. */}
                 <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                   <Th w={34}>#</Th>
                   <Th w={110}>วันที่</Th>
@@ -1930,8 +1945,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     {/* The header is eight columns read-only, nine with the
                         remove button, and this row spans all of them. The
                         totals row below reaches the same width differently —
-                        colSpan 7 plus its own two cells — so the two numbers
-                        are not interchangeable. All three dropped by one when
+                        colSpan 7 plus the WHT cell, plus the remove-button cell
+                        when it is there — so the two numbers are not
+                        interchangeable. All three dropped by one when
                         the ภ.ง.ด. column left on 2026-09-24; this row was the
                         one that got missed. */}
                     <Td colSpan={readOnly ? 8 : 9}>
