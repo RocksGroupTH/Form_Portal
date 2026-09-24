@@ -1927,10 +1927,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    {/* Eight columns read-only, nine with the remove button —
-                        the same count the totals row below spans. Both follow
-                        the header, and both were one too wide until the ภ.ง.ด.
-                        column left on 2026-09-24. */}
+                    {/* The header is eight columns read-only, nine with the
+                        remove button, and this row spans all of them. The
+                        totals row below reaches the same width differently —
+                        colSpan 7 plus its own two cells — so the two numbers
+                        are not interchangeable. All three dropped by one when
+                        the ภ.ง.ด. column left on 2026-09-24; this row was the
+                        one that got missed. */}
                     <Td colSpan={readOnly ? 8 : 9}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
