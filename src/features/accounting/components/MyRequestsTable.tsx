@@ -19,10 +19,11 @@ import {
   isSettled,
   statusDisplay,
   type MyRequestColKey,
-  type MyRequestStatusTone,
   type MyRequestColumn,
   type MyRequestKind,
+  type MyRequestStatusDisplay,
 } from "@/lib/acc/my-request-view";
+import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
 
 /**
  * **The table half of My Requests and My Work.**
@@ -75,11 +76,23 @@ export function MyRequestsTable({
   rows,
   kind,
   onOpen,
+  statusFor,
 }: {
   rows: ReportRow[];
   kind: MyRequestKind;
   /** Same target as the list: a row opens the same drawer. */
   onOpen: (row: ReportRow) => void;
+  /**
+   * How to label a row's status — **passed in so the table cannot disagree
+   * with the list beside it**.
+   *
+   * งานของฉัน labels a row by what it means to the VIEWER
+   * (`getMyWorkStatusBucket`: a request you have already signed reads Complete
+   * even while accounting still holds it), and คำขอของฉัน labels it by the
+   * request's own status. Reading `row.status` here would have made the table
+   * answer the other page's question on My Work.
+   */
+  statusFor?: (row: ReportRow) => MyRequestStatusDisplay;
 }) {
   const allColumns = useMemo(() => columnsForKind(kind), [kind]);
 
@@ -168,6 +181,11 @@ export function MyRequestsTable({
    */
   const nowIso = useMemo(() => new Date().toISOString(), [rows]);
 
+  const statusOf = useCallback(
+    (row: ReportRow) => statusFor?.(row) ?? statusDisplay(row.status),
+    [statusFor],
+  );
+
   function handleExport() {
     if (rows.length === 0) {
       toast.error("ไม่มีรายการให้ export");
@@ -178,7 +196,13 @@ export function MyRequestsTable({
     // looking at, which is the thing they pressed the button to keep.
     const header = shownColumns.map((c) => c.label);
     const body = rows.map((r) =>
-      shownColumns.map((c) => cellExportValue(r, c.key, nowIso)),
+      shownColumns.map((c) =>
+        // Status alone comes from `statusOf`, for the reason its prop gives:
+        // `cellExportValue` reads the row's own status, which is the wrong
+        // question on My Work — and an export that disagrees with the screen
+        // it was taken from is worse than no export.
+        c.key === "status" ? statusOf(r).label : cellExportValue(r, c.key, nowIso),
+      ),
     );
     const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
     ws["!cols"] = shownColumns.map((c) => ({ wch: c.key === "workDetail" ? 40 : 18 }));
@@ -271,7 +295,7 @@ export function MyRequestsTable({
                     title={cellTitle(row, col.key, nowIso)}
                   >
                     {col.key === "status" ? (
-                      <StatusChip status={row.status} />
+                      <MyRequestStatusChip display={statusOf(row)} />
                     ) : (
                       cellText(row, col.key, nowIso)
                     )}
@@ -283,66 +307,6 @@ export function MyRequestsTable({
         </table>
       </div>
     </div>
-  );
-}
-
-/**
- * Six statuses, six colours — the user's instruction of 2026-09-24
- * ("ปรับสีให้แตกต่างกัน"), and the reason the labels were separated in the
- * first place: `Submitted` and `Pending` are different desks, and a reader
- * scanning for what is stuck has to be able to tell them apart without reading.
- *
- * Every colour is a token. `--status-*` offers only four pairs, so the two
- * extra tones are washes over `--color-warning` and `--color-danger` built
- * with `color-mix`, which is what the list's own chips already do.
- */
-const STATUS_TONE: Record<MyRequestStatusTone, React.CSSProperties> = {
-  submitted: {
-    background: "var(--nav-active-bg)",
-    color: "var(--nav-active-text)",
-    border: "1px solid color-mix(in srgb, var(--nav-active-text) 25%, transparent)",
-  },
-  pending: {
-    background: "var(--bg-info-yellow)",
-    color: "var(--text-info-yellow)",
-    border: "1px solid var(--border-info-yellow)",
-  },
-  complete: {
-    background: "var(--bg-info-green)",
-    color: "var(--text-info-green)",
-    border: "1px solid var(--border-info-green)",
-  },
-  revise: {
-    background: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
-    color: "var(--color-warning)",
-    border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)",
-  },
-  rejected: {
-    background: "color-mix(in srgb, var(--color-danger) 10%, transparent)",
-    color: "var(--color-danger)",
-    border: "1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)",
-  },
-  cancelled: {
-    background: "var(--bg-badge)",
-    color: "var(--text-muted)",
-    border: "1px solid var(--border-light)",
-  },
-  other: {
-    background: "transparent",
-    color: "var(--text-muted)",
-    border: "1px dashed var(--border-light)",
-  },
-};
-
-function StatusChip({ status }: { status: string }) {
-  const d = statusDisplay(status);
-  return (
-    <span
-      className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-      style={STATUS_TONE[d.tone]}
-    >
-      {d.label}
-    </span>
   );
 }
 

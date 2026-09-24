@@ -17,10 +17,12 @@ import {
 import type { ReportRow } from "@/lib/acc/report-service";
 import { MyRequestsTable } from "@/features/accounting/components/MyRequestsTable";
 import { formFilterLabel } from "@/lib/acc/form-names";
+import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
+import { statusDisplay, statusDisplayForBucket } from "@/lib/acc/my-request-view";
 import type { AccRequest } from "@/features/accounting/types";
-import { formatNextApprovalDetail, getMyWorkStatusBucket, myWorkStatusLabel, myWorkStatusStyle, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
+import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
-import { isPendingApprovalStatus, statusLabelDisplay } from "@/features/accounting/constants";
+import { isPendingApprovalStatus } from "@/features/accounting/constants";
 import { MultiSelectFilter, inDateRange, isMultiSelectActive, matchesMultiSelectValue } from "@/features/accounting/components/ApprovalQueueFilters";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
@@ -72,24 +74,6 @@ function fmtMoney(n: number | null | undefined): string {
 // one of about twenty identical copies across this app.
 const fmtDate = (raw: string | null | undefined) => formatEnDate(raw);
 
-/** Status → chip colors (tokens). */
-function statusStyle(status: string): React.CSSProperties {
-  switch (status) {
-    case "Approved":
-      return { background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)" };
-    case "Submitted":
-    case "ManagerApproved":
-      return { background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" };
-    case "Returned":
-      return { background: "color-mix(in srgb, var(--color-warning) 14%, transparent)", color: "var(--color-warning)", border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)" };
-    case "Rejected":
-    case "Cancelled":
-      return { background: "color-mix(in srgb, var(--color-danger) 10%, transparent)", color: "var(--color-danger)", border: "1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)" };
-    default:
-      return { background: "var(--bg-badge)", color: "var(--text-muted)", border: "1px solid var(--border-light)" };
-  }
-}
-
 function SummaryStat({
   label, value, bg, fg, border,
 }: { label: string; value: number; bg: string; fg: string; border: string }) {
@@ -105,18 +89,26 @@ function SummaryStat({
   );
 }
 
+/**
+ * One vocabulary across both views (the user, 2026-09-24: "ใช้ชุดเดียวกัน").
+ *
+ * The QUESTION each page asks is unchanged and still differs — งานของฉัน
+ * labels a row by what it means to the viewer, คำขอของฉัน by the request's own
+ * status — but the words and the colours are now the table's, so toggling the
+ * view never changes the word on a row.
+ *
+ * `myWorkStatusLabel` / `myWorkStatusStyle` / `statusStyle` /
+ * `statusLabelDisplay` are no longer read here. The first two have no other
+ * caller and stay in `approval-display.ts` beside the bucket logic that is
+ * still very much in use; the last two are `RequestStatusBadge`'s vocabulary,
+ * which six other surfaces render and which this change deliberately left
+ * alone.
+ */
 function StatusBadge({ status, workBucket }: { status: string; workBucket?: MyWorkStatusBucket }) {
-  if (workBucket) {
-    return (
-      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0" style={myWorkStatusStyle(workBucket)}>
-        {myWorkStatusLabel(workBucket)}
-      </span>
-    );
-  }
   return (
-    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0" style={statusStyle(status)}>
-      {statusLabelDisplay(status)}
-    </span>
+    <MyRequestStatusChip
+      display={workBucket ? statusDisplayForBucket(workBucket) : statusDisplay(status)}
+    />
   );
 }
 
@@ -611,6 +603,11 @@ function RequestRowList({
             setDrawerId(row.id);
             setDrawerFormCode(row.formCode ?? null);
           }}
+          statusFor={
+            kind === "work"
+              ? (row) => statusDisplayForBucket(rowWorkBucket(row))
+              : undefined
+          }
         />
       ) : (
         <div className="flex flex-col gap-2">

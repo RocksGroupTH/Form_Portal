@@ -333,6 +333,42 @@ export function statusDisplay(raw: string | null | undefined): MyRequestStatusDi
 }
 
 /**
+ * The same six words for **งานของฉัน's viewer-relative bucket**.
+ *
+ * My Work does not label a row with the request's own status, and that is a
+ * feature rather than an oversight: `getMyWorkStatusBucket` answers *what this
+ * row means to YOU*, so a `ManagerApproved` request whose manager step you
+ * already signed reads **Complete** — you are done with it — while the request
+ * itself is still pending at accounting. A queue that kept calling those
+ * "Pending" would never shrink.
+ *
+ * So the two pages ask different questions and now answer in one vocabulary,
+ * which is what "ใช้ชุดเดียวกัน" (the user, 2026-09-24) asks for: the words and
+ * the colours are shared, the *question* stays each page's own.
+ *
+ * **`Submitted` cannot appear here**, and should not: the bucket has no such
+ * member, because a submitted request sitting on your own manager step is
+ * precisely one that is pending *you*.
+ *
+ * Takes the bucket id as a plain string rather than importing
+ * `MyWorkStatusBucket`, so this module keeps its one type-only import and stays
+ * unit-testable.
+ */
+const BUCKET_DISPLAY: Record<string, MyRequestStatusDisplay> = {
+  pending: { label: "Pending", tone: "pending" },
+  Approved: { label: "Complete", tone: "complete" },
+  Rejected: { label: "Rejected", tone: "rejected" },
+  Returned: { label: "Revise", tone: "revise" },
+  Cancelled: { label: "Cancelled", tone: "cancelled" },
+};
+
+export function statusDisplayForBucket(bucket: string | null | undefined): MyRequestStatusDisplay {
+  const key = (bucket ?? "").trim();
+  if (!key) return { label: BLANK, tone: "other" };
+  return BUCKET_DISPLAY[key] ?? { label: key, tone: "other" };
+}
+
+/**
  * One cell, as text — the same string the screen shows and the export writes.
  *
  * `now` is passed rather than read, so the three day-count columns are testable

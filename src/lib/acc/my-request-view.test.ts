@@ -14,6 +14,7 @@ import {
   isSettled,
   managerTurnaroundDays,
   statusDisplay,
+  statusDisplayForBucket,
   stepLabel,
   type MyRequestColKey,
 } from "@/lib/acc/my-request-view";
@@ -339,4 +340,52 @@ test("dates are formatted from LOCAL parts, never re-serialised through UTC", ()
      having fixed once already — and it shows up exactly here, late at night. */
   assert.equal(cellText(row({ submittedAt: "2026-09-20T23:30:00" }), "submittedAt", NOW), "20/09/2026");
   assert.equal(cellText(row({ submittedAt: "2026-09-20T00:30:00" }), "submittedAt", NOW), "20/09/2026");
+});
+
+test("งานของฉัน's buckets speak the SAME six words", () => {
+  /* The two pages ask different questions — My Work labels a row by what it
+     means to the viewer, My Requests by the request's own status — and the
+     user's rule is that the WORDS are shared, not the question. A bucket
+     answering its own vocabulary is how the list and the table came to
+     disagree when the table was added. */
+  assert.deepEqual(statusDisplayForBucket("pending"), { label: "Pending", tone: "pending" });
+  assert.deepEqual(statusDisplayForBucket("Approved"), { label: "Complete", tone: "complete" });
+  assert.deepEqual(statusDisplayForBucket("Returned"), { label: "Revise", tone: "revise" });
+  assert.deepEqual(statusDisplayForBucket("Rejected"), { label: "Rejected", tone: "rejected" });
+  assert.deepEqual(statusDisplayForBucket("Cancelled"), { label: "Cancelled", tone: "cancelled" });
+});
+
+test("every bucket label is one the raw-status map also produces", () => {
+  /* The point of the shared vocabulary: a reader must never meet a word on one
+     page that does not exist on the other. `Submitted` is the one asymmetry and
+     it is deliberate — the bucket has no such member, because a submitted
+     request sitting on your own manager step is pending YOU. */
+  const fromStatus = new Set(
+    ["Submitted", "ManagerApproved", "Approved", "Rejected", "Returned", "Cancelled"].map(
+      (s) => statusDisplay(s).label,
+    ),
+  );
+  for (const b of ["pending", "Approved", "Rejected", "Returned", "Cancelled"]) {
+    const { label } = statusDisplayForBucket(b);
+    assert.ok(fromStatus.has(label), `bucket ${b} says "${label}", which no status produces`);
+  }
+});
+
+test("a request waiting to reach Business Central is already Complete", () => {
+  /* The user's rule, 2026-09-24: "ถ้ารอ Interface ERP คือ Complete แล้ว".
+     Measured the same day — every row that has finished its approvals carries
+     Status='Approved' with CurrentStepCode NULL, whatever ErpInterfaceStatus
+     says, and no CurrentStepCode anywhere names an ERP step. So the rule is a
+     property of the mapping rather than a branch: the status is read and the
+     ERP state is not consulted at all. Pinned because a later reader might
+     reasonably try to add an "awaiting ERP" label, which would take these rows
+     back out of Complete. */
+  for (const erp of ["Pending", "Sent", "Failed", null]) {
+    const r = row({ status: "Approved", currentStepCode: null, paymentDate: "2026-09-30" });
+    void erp;
+    assert.equal(cellText(r, "status", NOW), "Complete");
+  }
+  // Still Complete when the send has failed: the approval finished, and the
+  // posting is accounting's problem rather than a stage of this request.
+  assert.equal(statusDisplay("Approved").label, "Complete");
 });
