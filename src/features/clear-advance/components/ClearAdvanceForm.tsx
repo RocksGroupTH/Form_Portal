@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
+import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
@@ -1919,7 +1919,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <Th w={130}>เลขผู้เสียภาษี *</Th>
                   <Th w={150}>ชื่อผู้รับ *</Th>
                   <Th w={170}>ที่อยู่</Th>
-                  <Th w={110}>ภ.ง.ด.</Th>
                   <Th w={100} right>ค่าใช้จ่าย</Th>
                   <Th w={90} right>WHT</Th>
                   {!readOnly && <Th w={34}> </Th>}
@@ -1971,18 +1970,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         ref={(el) => autoGrow(el)}
                         onChange={(e) => { autoGrow(e.target); updateWht(idx, { payeeAddress: e.target.value }); }} />
                     </Td>
-                    <Td>
-                      {/* Picks the BC vendor accounting clears against. Suggested
-                          from the tax id, never fixed by it: a 0-prefixed id can
-                          belong to a foreign individual. */}
-                      <select className={cellClass} style={{ ...cellStyle, width: "100%" }}
-                        value={w.pndType} disabled={readOnly}
-                        onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
-                        <option value="">— ยังไม่ระบุ —</option>
-                        <option value="PND3">{PND_LABEL.PND3}</option>
-                        <option value="PND53">{PND_LABEL.PND53}</option>
-                      </select>
-                    </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
                         value={w.amount} disabled={readOnly} placeholder="0.00"
@@ -2007,11 +1994,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               </tbody>
               <tfoot>
                 <tr className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-                  {/* #, วันที่, เลขที่เอกสาร, เลขผู้เสียภาษี, ชื่อผู้รับ, ที่อยู่,
-                      ภ.ง.ด. and ค่าใช้จ่าย — eight, so รวม WHT lands under the
-                      WHT column. It spanned seven, which left the header a cell
-                      wider than this row. */}
-                  <Td colSpan={8}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
+                  {/* #, วันที่, เลขที่เอกสาร, เลขผู้เสียภาษี, ชื่อผู้รับ, ที่อยู่
+                      and ค่าใช้จ่าย — seven, so รวม WHT lands under the WHT
+                      column. It was eight while the requester still chose the
+                      ภ.ง.ด. type; that column left this form on 2026-09-24 and
+                      the count follows it. Get this wrong and the header sits a
+                      cell wider than the totals row, which is how it was found
+                      the last time. */}
+                  <Td colSpan={7}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
                   <Td right><FootVal value={money(certWht)} accent={!whtMismatch} tone={whtMismatch ? "danger" : undefined} /></Td>
                   {!readOnly && <Td />}
                 </tr>
@@ -2064,15 +2054,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <input className={fieldClass} style={fieldStyle}
                     value={w.payeeAddress} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
-                </MField>
-                <MField label="ภ.ง.ด.">
-                  <select className={fieldClass} style={fieldStyle}
-                    value={w.pndType} disabled={readOnly}
-                    onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
-                    <option value="">— ยังไม่ระบุ —</option>
-                    <option value="PND3">{PND_LABEL.PND3}</option>
-                    <option value="PND53">{PND_LABEL.PND53}</option>
-                  </select>
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ค่าใช้จ่าย">
