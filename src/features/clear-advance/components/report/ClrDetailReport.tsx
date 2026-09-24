@@ -10,10 +10,12 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Loader2, FileX, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import type { ClrDetailRow } from "@/lib/clr/clear-advance-report-service";
+import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation";
 import { makeColumnPrefs } from "@/features/advance/lib/queue-column-prefs";
 import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
 import {
@@ -86,8 +88,19 @@ const txt = (v: string | number | null | undefined) =>
  * use, and the choice sticks per browser.
  */
 const SCREEN_COLS: DetailCol[] = [
+  /* The number is the way into the claim's detail and approval timeline. This
+     report is line-level, so several rows share one number — each links to the
+     clearing its own line belongs to (`r.requestId`), never to the one above. */
   { key: "requestNo", label: "เลขที่เคลียร์", align: "left",
-    render: (r) => <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{txt(r.requestNo)}</span> },
+    render: (r) => (
+      <Link
+        href={clearAdvanceDetailHref(r.requestId)}
+        className="font-semibold underline-offset-2 hover:underline no-underline"
+        style={{ color: "var(--nav-active-text)" }}
+      >
+        {txt(r.requestNo)}
+      </Link>
+    ) },
   { key: "requestDate", label: "วันที่", align: "left", render: (r) => fmtDateOnly(r.requestDate) },
   { key: "lineNo", label: "ลำดับ", align: "right", render: (r) => r.lineNo },
   { key: "staffId", label: "รหัสพนักงาน", align: "left", render: (r) => txt(r.staffId) },

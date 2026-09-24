@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useMemo } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Loader2, FileX, Eye, SendHorizonal, X, Search, Download, Building2 } from "lucide-react";
@@ -13,6 +14,7 @@ import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilt
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
 import type { ClrPreviewItem, ClrPreviewLine } from "@/lib/clr/clear-advance-erp-send";
 import { effectiveSelection } from "@/lib/clr/erp-queue-selection";
+import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation";
 import { fmtMoney } from "@/features/clear-advance/components/admin/shared";
 
 /* ─────────────────────── helpers ─────────────────────── */
@@ -47,6 +49,30 @@ function fmtDateTime(iso: string | null): string {
   if (isNaN(d.getTime())) return "—";
   // `th-TH` alone is the Buddhist calendar — this printed 04/09/**69**.
   return d.toLocaleString("th-TH-u-ca-gregory", { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * The request number as the way into that claim's detail and approval timeline.
+ *
+ * One component rather than four copies of the same <Link>: the href is built
+ * from the row it is handed, so a cell cannot be pasted into a neighbouring
+ * table and quietly keep pointing at the row it came from. The look is the
+ * AP-3-Control report's requestNo cell, so an ADC number reads the same on
+ * every screen that shows one.
+ *
+ * Only the four queue tables use it. The dialogs keep their number as text —
+ * see the note on each.
+ */
+function AdcLink({ row }: { row: ClrErpQueueRow }) {
+  return (
+    <Link
+      href={clearAdvanceDetailHref(row.id)}
+      className="font-semibold underline-offset-2 hover:underline no-underline"
+      style={{ color: "var(--nav-active-text)" }}
+    >
+      {row.requestNo ?? `#${row.id}`}
+    </Link>
+  );
 }
 
 function EnvBadge({ env }: { env: string | null }) {
@@ -313,6 +339,9 @@ function ClrErpPreviewModal({ items, onClose }: { items: ClrPreviewItem[]; onClo
               <div key={item.id} className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border-card)" }}>
                 <div className="flex flex-wrap items-center gap-2 px-3 py-2.5"
                   style={{ background: "var(--bg-card-alt)", borderBottom: "1px solid var(--border-light)" }}>
+                  {/* Text, not a link: this is the last look before the journal
+                      goes to BC, and leaving would drop the preview and the
+                      tick-box selection behind it. */}
                   <span className="text-[13px] font-bold" style={{ color: "var(--text-heading)" }}>{item.requestNo ?? `#${item.id}`}</span>
                   {item.interfaceTarget && (
                     <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded"
@@ -872,7 +901,7 @@ export function ClrErpInterfaceQueue() {
                               className={selectable ? "cursor-pointer" : "cursor-not-allowed opacity-40"} />
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                            <AdcLink row={row} />
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
@@ -997,7 +1026,7 @@ export function ClrErpInterfaceQueue() {
                           onMouseEnter={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--nav-active-bg) 20%, var(--bg-card))"; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                            <AdcLink row={row} />
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
@@ -1084,7 +1113,7 @@ export function ClrErpInterfaceQueue() {
                       return (
                         <tr key={row.id} style={{ background: rowBg, borderBottom: "1px solid var(--border-light)" }}>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                            <AdcLink row={row} />
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
@@ -1173,7 +1202,7 @@ export function ClrErpInterfaceQueue() {
                       return (
                         <tr key={row.id} style={{ background: rowBg, borderBottom: "1px solid var(--border-light)" }}>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            <span className="font-semibold" style={{ color: "var(--nav-active-text)" }}>{row.requestNo ?? `#${row.id}`}</span>
+                            <AdcLink row={row} />
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>{row.brandCode ?? "—"}</td>
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-primary)" }}>{row.requesterFullName ?? "—"}</td>
@@ -1209,6 +1238,9 @@ export function ClrErpInterfaceQueue() {
         >
           <div className="flex flex-col gap-3 p-1">
             <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+              {/* Text, not a link: the number names what is about to be
+                  cancelled, and following it would throw away the reason
+                  being typed below. */}
               <b style={{ color: "var(--text-heading)" }}>{cancelRow.requestNo ?? `#${cancelRow.id}`}</b>{" "}
               จะถูกยกเลิกและย้ายไปแท็บ “ยกเลิก” — ส่งเข้า ERP ไม่ได้อีก
               และเงินทดรองจ่าย {cancelRow.advanceRequestNo ?? "ของใบนี้"} จะกลับไปเคลียร์ใหม่ได้
@@ -1274,6 +1306,8 @@ export function ClrErpInterfaceQueue() {
         >
           <div className="flex flex-col gap-3 p-1">
             <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
+              {/* Text, not a link — same reason as the cancel dialog: this is a
+                  confirmation, and the number is its subject, not an exit. */}
               <b style={{ color: "var(--text-heading)" }}>{pullbackRow.requestNo ?? `#${pullbackRow.id}`}</b>{" "}
               จะถูกล้างสถานะ ERP และย้ายกลับไปแท็บ “รอส่ง” เพื่อส่งใหม่
             </p>
@@ -1306,6 +1340,9 @@ export function ClrErpInterfaceQueue() {
         <Dialog
           open={!!bcRow}
           onOpenChange={(o) => { if (!o) setBcRow(null); }}
+          /* A modal's own heading, and `title` takes a string — the number here
+             says which claim BC was answering about, not where to go next. The
+             failed row it was opened from carries the link. */
           title={`คำตอบจาก Business Central — ${bcRow.requestNo ?? bcRow.id}`}
           contentClassName="max-w-[720px]"
         >

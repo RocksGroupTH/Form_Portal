@@ -131,6 +131,10 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
 /* ─────────────── AP-3-Detail: one row per expense line (Complete only) ─────────────── */
 
 export interface ClrDetailRow {
+  /** `AccRequest.Id` of the clearing this line belongs to — what
+   *  `clearAdvanceDetailHref` needs to turn the number on screen into a way
+   *  into the claim. Not a column of the report: the export never writes it. */
+  requestId: number;
   requestNo: string | null;
   requestDate: string | null;
   lineNo: number;
@@ -162,7 +166,8 @@ export async function listDetailRows(f: ClrReportFilters): Promise<ClrDetailRow[
   const where = whereClause(forced, r);
 
   const res = await r.query(`
-    SELECT req.RequestNo, req.SubmittedAt, req.StaffId, req.RequesterFullName,
+    SELECT req.Id AS RequestId,
+           req.RequestNo, req.SubmittedAt, req.StaffId, req.RequesterFullName,
            c.ExpenseOf, c.AdvanceRequestNo,
            i.[LineNo], i.ExpenseDate, i.DocNo, i.GlAccountNo, i.GlAccountName, i.Description, i.BranchCode,
            i.AmountBeforeVat, i.VatAmount, i.TotalInclVat, i.WhtAmount, i.NetAmount,
@@ -187,6 +192,7 @@ export async function listDetailRows(f: ClrReportFilters): Promise<ClrDetailRow[
   `);
 
   return (res.recordset as Record<string, unknown>[]).map((x) => ({
+    requestId: x.RequestId as number,
     requestNo: (x.RequestNo as string) ?? null,
     requestDate: x.SubmittedAt ? toYmd(x.SubmittedAt as Date) : null,
     lineNo: (x.LineNo as number) ?? 0,
