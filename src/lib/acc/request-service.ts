@@ -1,5 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import { DEAD_REQUEST_STATUSES } from "@/features/accounting/constants";
 import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
@@ -719,6 +720,19 @@ export async function isSameDayMultiBrandStaff(staffId: number): Promise<boolean
 }
 
 /**
+ * `r.Status NOT IN (…)` over the statuses that own nothing.
+ *
+ * Built from `DEAD_REQUEST_STATUSES` rather than typed out, because the two
+ * queries below — the picker's list and the submit's refusal — must agree or
+ * the calendar lies, which is exactly what `listBlockedTravelDates`' own
+ * docblock says. Rendered as literals rather than bound parameters because
+ * the values are a code-side constant that never touches a request body.
+ */
+const ALIVE_REQUEST_PREDICATE = `r.Status NOT IN (${DEAD_REQUEST_STATUSES.map(
+  (s) => `N'${s}'`,
+).join(", ")})`;
+
+/**
  * Travel-date duplicate check. Normally blocks same StaffId + same date
  * (status != Rejected, different request). For allowlisted staff with a brand,
  * blocks only when the brand also matches (same date, different brand is allowed).
@@ -738,14 +752,19 @@ export async function isDuplicateTravelDate(
       SELECT TOP 1 1 AS dup FROM [dbo].[AccRequest] r
       JOIN [dbo].[AccTravelExpense] t ON t.RequestId = r.Id
       WHERE r.StaffId = @staff AND t.TravelDate = @date
-        AND r.Status <> 'Rejected' AND r.Id <> @exclude
+        AND ${ALIVE_REQUEST_PREDICATE} AND r.Id <> @exclude
         ${allowMultiBrand ? "AND r.BrandCode = @brand" : ""}
     `);
   return r.recordset.length > 0;
 }
 
 /**
- * Travel dates already used by **this requester** in another non-rejected request.
+ * Travel dates already used by **this requester** in another LIVE request.
+ *
+ * `Cancelled` joined `Rejected` in that exclusion on 2026-09-24: a withdrawn
+ * claim went on owning its travel date for ever, so the day stayed grey and a
+ * resubmit was refused with nothing saying which request held it. See
+ * `DEAD_REQUEST_STATUSES`.
  *
  * Keyed on `StaffId` alone, and deliberately: this list is what greys days out in
  * the picker, and `isDuplicateTravelDate` is what actually refuses a submit. The
@@ -777,7 +796,7 @@ export async function listBlockedTravelDates(
       SELECT DISTINCT t.TravelDate
       FROM [dbo].[AccRequest] r
       INNER JOIN [dbo].[AccTravelExpense] t ON t.RequestId = r.Id
-      WHERE r.Status <> N'Rejected'
+      WHERE ${ALIVE_REQUEST_PREDICATE}
         AND r.Id <> @exclude
         AND t.TravelDate IS NOT NULL
         AND r.StaffId = @staff
