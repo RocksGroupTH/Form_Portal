@@ -534,7 +534,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     const short = src.filter((l) => !l.taxId.trim() || !l.payeeName.trim()).length;
     toast.success(
       short === 0
-        ? "ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — เติมเลขผู้เสียภาษี / ชื่อผู้รับ / ภ.ง.ด. ให้ด้วย"
+        ? "ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — เติมเลขผู้เสียภาษี / ชื่อผู้รับ ให้ด้วย"
         : `ดึงรายการหัก ณ ที่จ่ายแล้ว — อีก ${short} รายการยังไม่มีเลขผู้เสียภาษี/ชื่อผู้รับ กรุณากรอกให้ครบ`,
     );
   }
@@ -1927,7 +1927,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    <Td colSpan={readOnly ? 9 : 10}>
+                    {/* Eight columns read-only, nine with the remove button —
+                        the same count the totals row below spans. Both follow
+                        the header, and both were one too wide until the ภ.ง.ด.
+                        column left on 2026-09-24. */}
+                    <Td colSpan={readOnly ? 8 : 9}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
                       </span>
