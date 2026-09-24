@@ -389,3 +389,46 @@ test("a request waiting to reach Business Central is already Complete", () => {
   // posting is accounting's problem rather than a stage of this request.
   assert.equal(statusDisplay("Approved").label, "Complete");
 });
+
+test("AP-4 at ACCOUNT_FINAL reads Complete to its REQUESTER", () => {
+  /* The user's rule, 2026-09-24: by then the checking accountant has signed and
+     the payment date is set, so nothing the requester filed is still in
+     question. `ManagerApproved` alone reads Pending, which says somebody is
+     still deciding. */
+  const r = row({ status: "ManagerApproved", currentStepCode: "ACCOUNT_FINAL" });
+  assert.equal(cellText(r, "status", NOW), "Complete");
+  assert.equal(statusDisplay("ManagerApproved", "ACCOUNT_FINAL").tone, "complete");
+});
+
+test("the step alone is the condition, so no other form is touched", () => {
+  /* `ACCOUNT_FINAL` is a ReimburseStepCode and nothing else writes it, which is
+     what lets this rule skip a FormCode branch. AP-1 and AP-17 sit at ACCOUNT
+     and must stay Pending. */
+  assert.equal(statusDisplay("ManagerApproved", "ACCOUNT").label, "Pending");
+  assert.equal(statusDisplay("ManagerApproved", "ADMIN").label, "Pending");
+  assert.equal(statusDisplay("ManagerApproved", null).label, "Pending");
+  assert.equal(statusDisplay("ManagerApproved").label, "Pending");
+});
+
+test("the step promotes NOTHING but a Pending row", () => {
+  /* A rejected or cancelled claim can still carry a step code; reading the step
+     first would turn either into Complete. The status is decided before the
+     step is consulted, and these pin that order. */
+  assert.equal(statusDisplay("Rejected", "ACCOUNT_FINAL").label, "Rejected");
+  assert.equal(statusDisplay("Cancelled", "ACCOUNT_FINAL").label, "Cancelled");
+  assert.equal(statusDisplay("Returned", "ACCOUNT_FINAL").label, "Revise");
+  assert.equal(statusDisplay("Submitted", "ACCOUNT_FINAL").label, "Submitted");
+});
+
+test("งานของฉัน does NOT get the promotion, and that is what makes it safe", () => {
+  /* In the code as it stands ACCOUNT_FINAL is a second HUMAN approval
+     (STATE_AFTER_APPROVE.ACCOUNT_FINAL -> Approved, and canActFinalStep
+     requires a different person). The rule is a display decision for the
+     requester; the accountant who must still sign sees the row through
+     `statusDisplayForBucket`, which takes no step and cannot promote it.
+
+     If a later change routes My Work through `statusDisplay` instead, this test
+     is the one that should stop it. */
+  assert.equal(statusDisplayForBucket("pending").label, "Pending");
+  assert.equal(statusDisplayForBucket.length, 1, "a bucket must not start taking a step");
+});

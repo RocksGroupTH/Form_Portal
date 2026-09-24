@@ -104,10 +104,21 @@ function SummaryStat({
  * which six other surfaces render and which this change deliberately left
  * alone.
  */
-function StatusBadge({ status, workBucket }: { status: string; workBucket?: MyWorkStatusBucket }) {
+function StatusBadge({
+  status,
+  currentStepCode,
+  workBucket,
+}: {
+  status: string;
+  /** AP-4's ACCOUNT_FINAL reads Complete — see `statusDisplay`. */
+  currentStepCode?: string | null;
+  workBucket?: MyWorkStatusBucket;
+}) {
   return (
     <MyRequestStatusChip
-      display={workBucket ? statusDisplayForBucket(workBucket) : statusDisplay(status)}
+      display={
+        workBucket ? statusDisplayForBucket(workBucket) : statusDisplay(status, currentStepCode)
+      }
     />
   );
 }
@@ -650,7 +661,11 @@ function RequestRowList({
                       UAT
                     </span>
                   )}
-                  <StatusBadge status={row.status} workBucket={workBucket} />
+                  <StatusBadge
+                    status={row.status}
+                    currentStepCode={row.currentStepCode}
+                    workBucket={workBucket}
+                  />
                   {row.formCode && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}>
                       {row.formCode}
