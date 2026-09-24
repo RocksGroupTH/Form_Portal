@@ -5,7 +5,7 @@ import { canAccessAccountArea } from "@/lib/acc/access";
 import { listControlRows, type ClrControlRow, type ClrReportFilters } from "@/lib/clr/clear-advance-report-service";
 import { STATUS_LABEL_TH } from "@/features/accounting/constants";
 import { reportPv } from "@/lib/clr/clr-report-pv";
-import { controlExportOrder, type ControlExportKey } from "@/lib/clr/report-export-order";
+import { controlExportOrder, totalsLabelIndex, type ControlExportKey } from "@/lib/clr/report-export-order";
 
 /** ISO datetime → "DD/MM/YYYY HH:mm" (local getters; strings are already the right instant). */
 function fmtDt(iso: string | null): string {
@@ -97,10 +97,19 @@ export async function GET(req: NextRequest) {
 
     const header = keys.map((k) => COLS[k].header);
     const body = rows.map((r) => keys.map((k) => COLS[k].value(r)));
-    // "รวมทั้งหมด" sits in the first cell whatever that column now is, the way it
-    // always sat in the first cell; every other cell is its own column's total or
-    // blank, so the sums travel with their headings.
-    const totalRow = keys.map((k, i) => (i === 0 ? "รวมทั้งหมด" : COLS[k].total?.() ?? ""));
+    /* Every sum sits under its own heading; the label takes the leftmost cell
+       that has no sum to lose.
+
+       Not simply index 0. A reader who drags วงเงินที่ได้รับ to the front would
+       then get the word "รวมทั้งหมด" where that column's total belongs, and the
+       total would be gone from the file — the very mis-reporting this rewrite
+       exists to prevent, arriving through the label instead of through the
+       sums. There are four summed columns out of seventeen, so a cell without
+       one is always available. */
+    const labelAt = totalsLabelIndex(keys, (k) => !!COLS[k].total);
+    const totalRow = keys.map((k, i) =>
+      i === labelAt ? "รวมทั้งหมด" : COLS[k].total?.() ?? "",
+    );
 
     const ws = XLSX.utils.aoa_to_sheet([header, ...body, totalRow]);
     const wb = XLSX.utils.book_new();

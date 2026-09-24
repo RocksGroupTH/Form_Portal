@@ -89,3 +89,25 @@ export function controlExportOrder(screenOrder: readonly string[]): ControlExpor
 export function detailExportOrder(screenOrder: readonly string[]): DetailExportKey[] {
   return order(screenOrder, DETAIL_OWNS, DETAIL_EXPORT_ORDER);
 }
+
+/**
+ * Which cell of a totals row carries the "รวมทั้งหมด" label.
+ *
+ * The leftmost column that has no total of its own — not index 0. Once the
+ * reader can reorder columns, index 0 might be a summed column, and putting the
+ * label there would overwrite that column's total: the file would be short a
+ * sum, which is the same class of mis-reporting that deriving the row from one
+ * ordered list exists to prevent.
+ *
+ * Returns 0 when every column has a total, so the label still appears
+ * somewhere. That cannot happen with today's reports — four of the Control
+ * export's seventeen columns are summed and the Detail export has no totals row
+ * at all — and it is here so the answer is defined rather than `-1`.
+ */
+export function totalsLabelIndex<K extends string>(
+  keys: readonly K[],
+  hasTotal: (key: K) => boolean,
+): number {
+  const i = keys.findIndex((k) => !hasTotal(k));
+  return i === -1 ? 0 : i;
+}

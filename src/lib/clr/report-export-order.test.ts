@@ -7,6 +7,7 @@ import {
   DETAIL_OWNS,
   controlExportOrder,
   detailExportOrder,
+  totalsLabelIndex,
 } from "./report-export-order";
 
 /**
@@ -112,4 +113,24 @@ test("every export column is owned by exactly one screen column", () => {
       "a screen column owns a column the export does not have",
     );
   }
+});
+
+/**
+ * Where the totals row's label goes.
+ *
+ * Found while reviewing the Control export rewrite: with the label pinned to
+ * index 0, a reader who dragged a summed column to the front would have got the
+ * word "รวมทั้งหมด" where that column's total belonged, and the total would
+ * have been absent from the file.
+ */
+
+test("the totals label takes the leftmost cell that has no total", () => {
+  const hasTotal = (k: string) => k === "advanceAmount" || k === "actualTotal";
+  assert.equal(totalsLabelIndex(["submittedAt", "advanceAmount"], hasTotal), 0);
+  assert.equal(totalsLabelIndex(["advanceAmount", "submittedAt"], hasTotal), 1);
+  assert.equal(totalsLabelIndex(["advanceAmount", "actualTotal", "requestNo"], hasTotal), 2);
+});
+
+test("every column summed -> the label still appears, rather than nowhere", () => {
+  assert.equal(totalsLabelIndex(["a", "b"], () => true), 0);
 });
