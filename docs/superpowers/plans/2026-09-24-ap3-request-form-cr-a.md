@@ -113,15 +113,23 @@ table:
 The table is now 8 columns read-only and 9 with the remove-row button, so replace it with:
 
 ```tsx
-                    {/* Eight columns read-only, nine with the remove button —
-                        the same count the totals row below spans. Both follow
-                        the header, and both were one too wide until the ภ.ง.ด.
-                        column left on 2026-09-24. */}
+                    {/* The header is eight columns read-only, nine with the
+                        remove button, and this row spans all of them. The
+                        totals row below reaches the same width differently —
+                        colSpan 7 plus its own two cells — so the two numbers
+                        are not interchangeable. All three dropped by one when
+                        the ภ.ง.ด. column left on 2026-09-24; this row was the
+                        one that got missed. */}
                     <Td colSpan={readOnly ? 8 : 9}>
 ```
 
 **This is the row a brand-new form shows**, and an over-long `colspan` grows the table by a
 phantom column — so getting this wrong is visible on first open, not in some edge case.
+
+**Do not shorten that comment to "the same count the totals row spans".** It is not the same
+count: this row spans the whole table, the totals row spans 7 and adds two cells. The first
+draft of this comment said they were equal, and a reader who believed it would have raised
+the 7 to an 8 — the misalignment this task exists to fix.
 
 - [ ] **Step 5: Delete the narrow card's field**
 
