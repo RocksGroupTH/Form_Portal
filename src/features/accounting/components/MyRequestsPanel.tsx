@@ -41,6 +41,7 @@ import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
 import {
+  defaultStatusFilter,
   isSummaryBoxActive,
   statusFilterKey,
   statusFilterOptions,
@@ -140,7 +141,7 @@ function PagerButton({
 
 /** The four summary tones, as the three CSS values each needs. */
 const SUMMARY_TONES: Record<
-  "neutral" | "pending" | "ok" | "danger",
+  "neutral" | "pending" | "ok" | "warning" | "danger" | "muted",
   { bg: string; fg: string; border: string }
 > = {
   neutral: { bg: "var(--bg-card-alt)", fg: "var(--text-heading)", border: "var(--border-card)" },
@@ -150,11 +151,21 @@ const SUMMARY_TONES: Record<
     border: "var(--border-info-yellow)",
   },
   ok: { bg: "var(--bg-info-green)", fg: "var(--text-info-green)", border: "var(--border-info-green)" },
+  /* ส่งกลับแก้ไข is the warning token, not the danger one: the requester has
+     something to do and nothing has been refused. Same distinction
+     `myWorkStatusStyle` already draws between Returned and Rejected. */
+  warning: {
+    bg: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+    fg: "var(--color-warning)",
+    border: "color-mix(in srgb, var(--color-warning) 35%, transparent)",
+  },
   danger: {
     bg: "color-mix(in srgb, var(--color-danger) 10%, transparent)",
     fg: "var(--color-danger)",
     border: "color-mix(in srgb, var(--color-danger) 30%, transparent)",
   },
+  /* ยกเลิก is withdrawn work, not failed work — it earns no colour at all. */
+  muted: { bg: "var(--bg-badge)", fg: "var(--text-muted)", border: "var(--border-light)" },
 };
 
 /**
@@ -176,7 +187,7 @@ function SummaryStat({
 }: {
   label: string;
   value: string | number;
-  tone: "neutral" | "pending" | "ok" | "danger";
+  tone: keyof typeof SUMMARY_TONES;
   active?: boolean;
   onClick?: () => void;
 }) {
@@ -349,7 +360,12 @@ function RequestRowList({
   const searchParams = useSearchParams();
   const initialStatus = useMemo(() => {
     const raw = searchParams.get("status");
-    if (!raw || raw === "all") return [];
+    /* No link, no filter named: the page opens on the box somebody came to
+       work from — รออนุมัติจากคุณ on My Work, กำลังดำเนินการ on My Requests
+       (the user, 2026-09-24). `all` is an explicit ask for everything and
+       must not be read as an absent parameter. */
+    if (!raw) return defaultStatusFilter(kind);
+    if (raw === "all") return [];
     const known = statusFilterOptions(kind).map((o) => o.id);
     /* Home links with a single coarse id. `pending` is the one that is not an
        option id of its own — it spans both approval steps on My Requests, which
@@ -643,7 +659,7 @@ function RequestRowList({
   return (
     <div className="flex flex-col gap-3">
       {/* Summary totals — and the status filter (the user, 2026-09-24). */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {boxes.map((b) => (
           <SummaryStat
             key={b.id}
@@ -654,16 +670,6 @@ function RequestRowList({
             onClick={() => setStatusFilter([...b.ids])}
           />
         ))}
-        {/* The one box that is NOT a filter: it answers what the filter came
-            to. Baht whatever currency a claim was entered in — see
-            `sumTotalAmount`. It reads `filtered`, while the four counts beside
-            it read every row; the labels are what say so, and a sum over rows
-            nobody is looking at would answer no question at all. */}
-        <SummaryStat
-          label="ยอดรวมที่กรอง (บาท)"
-          value={fmtMoney(sumTotalAmount(filtered))}
-          tone="neutral"
-        />
       </div>
 
       {/* Search + count */}
@@ -920,6 +926,30 @@ function RequestRowList({
             </button>
             );
           })}
+        </div>
+      )}
+
+      {/* The filtered total, under the table where a total belongs (the user,
+          2026-09-24 — it was a fifth summary box for one commit).
+
+          It sums EVERY filtered row, not the page on screen: a total that
+          changed when you turned the page would answer no question anybody
+          asks. Baht whatever currency a claim was entered in, which is why
+          these figures can be added at all — see `sumTotalAmount`. */}
+      {!loading && viewerReady && filtered.length > 0 && (
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            ยอดรวมที่กรอง ({filtered.length} รายการ)
+          </span>
+          <span
+            className="text-[15px] font-bold tabular-nums"
+            style={{ color: "var(--text-heading)" }}
+          >
+            {fmtMoney(sumTotalAmount(filtered))}
+          </span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            บาท
+          </span>
         </div>
       )}
 

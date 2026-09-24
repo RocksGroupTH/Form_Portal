@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   MINE_STATUS_OPTIONS,
   WORK_STATUS_OPTIONS,
+  defaultStatusFilter,
   isSummaryBoxActive,
   statusFilterKey,
   statusFilterOptions,
@@ -80,20 +81,72 @@ test("My Work's key is the bucket it was handed", () => {
 
 /* ── the boxes ── */
 
-test("there are four boxes and the first is ทั้งหมด", () => {
+test("ทั้งหมด leads, and every other option has a box of its own", () => {
+  /* The boxes PARTITION the statuses — that is what makes the strip
+     navigation rather than a summary with shortcuts attached. Before
+     2026-09-24 there were four and ยกเลิก had none, which the user reported
+     as the page not having it at all. */
   for (const kind of ["mine", "work"] as const) {
     const boxes = statusSummaryBoxes(kind);
-    assert.equal(boxes.length, 4);
     assert.equal(boxes[0].id, "all");
     assert.deepEqual([...boxes[0].ids], []);
+
+    const covered = boxes.flatMap((b) => [...b.ids]);
+    const options = statusFilterOptions(kind).map((o) => o.id);
+    for (const id of options) {
+      assert.equal(
+        covered.filter((c) => c === id).length,
+        1,
+        `${kind}: ${id} is under ${covered.filter((c) => c === id).length} boxes, not exactly one`,
+      );
+    }
   }
 });
 
-test("กำลังดำเนินการ includes Revise — a returned request is still in flight", () => {
+test("กำลังดำเนินการ is the two approval steps, and Revise stands alone", () => {
+  /* It used to mean "in flight", which swallowed Revise. True, and it made
+     the box impossible to line up with anything: Home's คำขอที่รออนุมัติ tile
+     counts the two approval steps and nothing else, so its link filled the
+     dropdown and lit no box. */
   const mine = statusSummaryBoxes("mine").find((b) => b.id === "inProcess")!;
-  assert.deepEqual([...mine.ids], ["Submitted", "ManagerApproved", "Returned"]);
+  assert.deepEqual([...mine.ids], ["Submitted", "ManagerApproved"]);
+  const returned = statusSummaryBoxes("mine").find((b) => b.id === "returned")!;
+  assert.deepEqual([...returned.ids], ["Returned"]);
+});
+
+test("My Work says รออนุมัติจากคุณ, and means it", () => {
+  /* That page's buckets are viewer-relative — `pending` there means waiting
+     on YOU — so folding `Returned` in would make the label false: a returned
+     request is back with its requester and waiting on nobody's approval. */
   const work = statusSummaryBoxes("work").find((b) => b.id === "inProcess")!;
-  assert.deepEqual([...work.ids], ["pending", "Returned"]);
+  assert.equal(work.label, "รออนุมัติจากคุณ");
+  assert.deepEqual([...work.ids], ["pending"]);
+  assert.equal(statusSummaryBoxes("mine").find((b) => b.id === "inProcess")!.label, "กำลังดำเนินการ");
+});
+
+test("ยกเลิก has a box on both pages", () => {
+  for (const kind of ["mine", "work"] as const) {
+    const box = statusSummaryBoxes(kind).find((b) => b.id === "cancelled");
+    assert.ok(box, `${kind} lost its ยกเลิก box`);
+    assert.deepEqual([...box!.ids], ["Cancelled"]);
+  }
+});
+
+test("the page opens on the box somebody came to work from", () => {
+  assert.deepEqual(defaultStatusFilter("mine"), ["Submitted", "ManagerApproved"]);
+  assert.deepEqual(defaultStatusFilter("work"), ["pending"]);
+});
+
+test("the default is always exactly one box, so it is always highlighted", () => {
+  /* A filter nobody can see is what makes a default indefensible. Expressing
+     it as a box id rather than a list is what keeps that true. */
+  for (const kind of ["mine", "work"] as const) {
+    const lit = statusSummaryBoxes(kind).filter((b) =>
+      isSummaryBoxActive(defaultStatusFilter(kind), b),
+    );
+    assert.equal(lit.length, 1, `${kind}: the default lights ${lit.length} boxes`);
+    assert.equal(lit[0].id, "inProcess");
+  }
 });
 
 test("every box names only ids its own kind offers", () => {
@@ -113,16 +166,16 @@ test("every box names only ids its own kind offers", () => {
 
 test("a box lights when the selection is exactly its set, in any order", () => {
   const box = statusSummaryBoxes("mine").find((b) => b.id === "inProcess")!;
-  assert.equal(isSummaryBoxActive(["Submitted", "ManagerApproved", "Returned"], box), true);
-  assert.equal(isSummaryBoxActive(["Returned", "Submitted", "ManagerApproved"], box), true);
+  assert.equal(isSummaryBoxActive(["Submitted", "ManagerApproved"], box), true);
+  assert.equal(isSummaryBoxActive(["ManagerApproved", "Submitted"], box), true);
 });
 
 test("a box goes out the moment one of its statuses is removed", () => {
-  // Picking กำลังดำเนินการ's three one at a time in the dropdown lights it;
-  // dropping any one puts it out. That two-way agreement is the whole reason
+  // Picking กำลังดำเนินการ's two one at a time in the dropdown lights it;
+  // dropping either puts it out. That two-way agreement is the whole reason
   // both controls can exist over one value.
   const box = statusSummaryBoxes("mine").find((b) => b.id === "inProcess")!;
-  assert.equal(isSummaryBoxActive(["Submitted", "ManagerApproved"], box), false);
+  assert.equal(isSummaryBoxActive(["Submitted"], box), false);
 });
 
 test("a superset does not light a box either", () => {

@@ -104,32 +104,67 @@ export interface StatusSummaryBox {
   label: string;
   /** Option ids this box stands for. Empty = every row. */
   ids: readonly string[];
-  tone: "neutral" | "pending" | "ok" | "danger";
+  tone: "neutral" | "pending" | "ok" | "warning" | "danger" | "muted";
 }
 
 /**
- * The four boxes, per kind.
+ * The boxes, per kind — **one per option, so they partition the statuses**.
  *
- * **กำลังดำเนินการ includes Revise**, and that is deliberate rather than
- * inherited: a returned request is still in flight — its owner has something to
- * do and the money has not been decided — so counting it as finished would be
- * wrong in the direction that hides work. It is the definition the boxes have
- * always used; it is written down here because the dropdown now lets somebody
- * pick Revise on its own and notice the overlap.
+ * That property is what makes the strip usable as navigation rather than as a
+ * summary with a few shortcuts attached: every row is under exactly one box
+ * besides ทั้งหมด, so no status is reachable only through the dropdown and no
+ * two boxes overlap. It costs the four-box layout the page had until
+ * 2026-09-24, and it buys three things that were each wrong before:
  *
- * **There is no ยกเลิก box**, by the same argument that there are only four:
- * these are the states somebody scans for, and a cancelled request is one
- * nobody is waiting on. It is one click away in the dropdown, which is the
- * whole reason the dropdown exists.
+ *  - **ยกเลิก is a box.** It was reachable only from the dropdown, which the
+ *    user reported as the page simply not having it.
+ *  - **กำลังดำเนินการ no longer swallows Revise.** It used to mean "in flight",
+ *    which is true of a returned request but made the box impossible to line up
+ *    with anything: Home's คำขอที่รออนุมัติ tile counts the two approval steps
+ *    and nothing else, so its link filled the dropdown and lit no box at all.
+ *    ส่งกลับแก้ไข now stands on its own and the two agree.
+ *  - **My Work says รออนุมัติจากคุณ** rather than กำลังดำเนินการ (the user,
+ *    2026-09-24), and it is `pending` alone. That page's buckets are
+ *    viewer-relative — `pending` there means *waiting on you* — so the label is
+ *    now literally what the box selects. Folding `Returned` in would have made
+ *    it false: a returned request is back with its requester and waiting on
+ *    nobody's approval.
  */
 export function statusSummaryBoxes(kind: "mine" | "work"): readonly StatusSummaryBox[] {
-  const inProcess = kind === "work" ? ["pending", "Returned"] : ["Submitted", "ManagerApproved", "Returned"];
+  const inProcess: StatusSummaryBox =
+    kind === "work"
+      ? { id: "inProcess", label: "รออนุมัติจากคุณ", ids: ["pending"], tone: "pending" }
+      : {
+          id: "inProcess",
+          label: "กำลังดำเนินการ",
+          ids: ["Submitted", "ManagerApproved"],
+          tone: "pending",
+        };
   return [
     { id: "all", label: "ทั้งหมด", ids: [], tone: "neutral" },
-    { id: "inProcess", label: "กำลังดำเนินการ", ids: inProcess, tone: "pending" },
+    inProcess,
     { id: "approved", label: "อนุมัติแล้ว", ids: ["Approved"], tone: "ok" },
+    { id: "returned", label: "ส่งกลับแก้ไข", ids: ["Returned"], tone: "warning" },
     { id: "rejected", label: "ไม่อนุมัติ", ids: ["Rejected"], tone: "danger" },
+    { id: "cancelled", label: "ยกเลิก", ids: ["Cancelled"], tone: "muted" },
   ];
+}
+
+/**
+ * What the page opens on: the box a person came to work from.
+ *
+ * **My Work opens on รออนุมัติจากคุณ and My Requests on กำลังดำเนินการ** (the
+ * user, 2026-09-24). Both pages had a default before this feature and lost it
+ * when the filter became a multi-select; restoring it is safe now in a way it
+ * was not then, because the box that produced it is highlighted — a filter
+ * nobody can see is what makes a default indefensible, not the default itself.
+ *
+ * It is expressed as a box id rather than a list so the two cannot drift: the
+ * page opens on a selection that is, by construction, exactly one box's set.
+ */
+export function defaultStatusFilter(kind: "mine" | "work"): string[] {
+  const box = statusSummaryBoxes(kind).find((b) => b.id === "inProcess");
+  return box ? [...box.ids] : [];
 }
 
 /**
