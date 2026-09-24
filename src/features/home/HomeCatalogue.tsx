@@ -19,6 +19,7 @@ import { sortByFormCode } from "@/lib/form-code-order";
 // cards were plain <Link>s and the only card surface in the app without it, so
 // the same tile felt inert here and interactive on /request.
 import { HoverCard } from "@/components/ui/HoverCard";
+import { StatIcon, type StatIconName } from "@/components/ui/StatIcon";
 // `Receipt` is AP-4's, `ReceiptText` is AP-3's — two forms, two icons, not a
 // rename either side made.
 import { Search, Route, Luggage, Receipt, ReceiptText, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
@@ -120,11 +121,13 @@ function StatCard({
   value,
   label,
   tone,
+  icon,
   href,
 }: {
   value: number;
   label: string;
   tone: string;
+  icon: StatIconName;
   href?: string;
 }) {
   const style = {
@@ -134,15 +137,22 @@ function StatCard({
     border: "1px solid var(--border-card)",
   } as const;
 
+  /* Right of the figure, in the tile's own colour and held well back — the
+     same placement the summary boxes on My Requests use, so the two strips
+     read as one idea rather than two. `StatIcon` explains which icon each
+     state gets and why they are the timeline's. */
   const body = (
-    <>
-      <div className="text-[19px] font-extrabold leading-none tabular-nums" style={{ color: tone }}>
-        {value}
+    <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0">
+        <div className="text-[19px] font-extrabold leading-none tabular-nums" style={{ color: tone }}>
+          {value}
+        </div>
+        <div className="text-[11px] mt-1.5 truncate" style={{ color: "var(--text-muted)" }}>
+          {label}
+        </div>
       </div>
-      <div className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-        {label}
-      </div>
-    </>
+      <StatIcon name={icon} color={tone} size={20} />
+    </div>
   );
 
   if (!href) {
@@ -494,12 +504,14 @@ export function HomeCatalogue() {
             <StatCard
               value={pendingCount}
               label="รออนุมัติจากคุณ"
+              icon="inbox"
               tone="var(--status-pending-text)"
               href="/my-work"
             />
             <StatCard
               value={stats.total}
               label="คำขอทั้งหมด"
+              icon="all"
               tone="var(--text-primary)"
               href="/my-request?status=all"
             />
@@ -509,30 +521,35 @@ export function HomeCatalogue() {
             <StatCard
               value={stats.month}
               label="คำขอเดือนนี้"
+              icon="month"
               tone="var(--status-ok-text)"
               href={`/my-request?status=all&from=${monthRange.from}&to=${monthRange.to}`}
             />
             <StatCard
               value={stats.pending}
               label="คำขอที่รออนุมัติ"
+              icon="pending"
               tone="var(--status-pending-text)"
               href="/my-request?status=pending"
             />
             <StatCard
               value={stats.approved}
               label="อนุมัติแล้ว"
+              icon="approved"
               tone="var(--status-ok-text)"
               href="/my-request?status=Approved"
             />
             <StatCard
               value={stats.rejected}
               label="ไม่อนุมัติ"
+              icon="rejected"
               tone="var(--color-danger)"
               href="/my-request?status=Rejected"
             />
             <StatCard
               value={stats.cancelled}
               label="ยกเลิก"
+              icon="cancelled"
               tone="var(--text-muted)"
               href="/my-request?status=Cancelled"
             />
@@ -545,6 +562,7 @@ export function HomeCatalogue() {
             <StatCard
               value={stats.unfinished}
               label="ร่าง / ตีกลับ"
+              icon="draft"
               tone="var(--status-draft-text)"
               href="/my-request?status=Draft,Returned"
             />

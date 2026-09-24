@@ -258,3 +258,40 @@ test("a non-finite amount cannot poison the sum", () => {
 test("a negative amount is added, not dropped", () => {
   assert.equal(sumTotalAmount([{ totalAmount: 500 }, { totalAmount: -200 }]), 300);
 });
+
+/* ── the icons ── */
+
+test("every box names an icon", () => {
+  /* The type would catch a missing one, but not a box added with a copied
+     neighbour's icon — so this pins that the four shared ids get the icon the
+     approval timeline already draws for the same state. A box is a filter onto
+     rows whose chips carry those icons; a different one here makes one state
+     look like two states on two screens. */
+  const expected: Record<string, string> = {
+    all: "all",
+    approved: "approved",
+    rejected: "rejected",
+    cancelled: "cancelled",
+  };
+  for (const kind of ["mine", "work"] as const) {
+    for (const box of statusSummaryBoxes(kind)) {
+      assert.ok(box.icon, `${kind}: box ${box.id} has no icon`);
+      if (expected[box.id]) {
+        assert.equal(box.icon, expected[box.id], `${kind}: box ${box.id}`);
+      }
+    }
+  }
+});
+
+test("the last box's icon follows what it actually holds", () => {
+  // `draft` where it carries drafts and leads its label with ร่าง; `returned`
+  // on My Work, where a draft can never appear.
+  assert.equal(statusSummaryBoxes("mine").find((b) => b.id === "returned")!.icon, "draft");
+  assert.equal(statusSummaryBoxes("work").find((b) => b.id === "returned")!.icon, "returned");
+});
+
+test("the pending box is the clock on both pages", () => {
+  for (const kind of ["mine", "work"] as const) {
+    assert.equal(statusSummaryBoxes(kind).find((b) => b.id === "inProcess")!.icon, "pending");
+  }
+});

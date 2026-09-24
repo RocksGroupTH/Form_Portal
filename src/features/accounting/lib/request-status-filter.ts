@@ -31,6 +31,7 @@
  * lists are separate constants rather than one filtered list.
  */
 import { isCompletedStatus } from "@/features/accounting/constants";
+import type { StatIconName } from "@/components/ui/StatIcon";
 
 export interface StatusFilterOption {
   /** Stored in the filter state and in the `?status=` link Home sends. */
@@ -110,6 +111,12 @@ export interface StatusSummaryBox {
   /** Option ids this box stands for. Empty = every row. */
   ids: readonly string[];
   tone: "neutral" | "pending" | "ok" | "warning" | "danger" | "muted";
+  /**
+   * Named rather than imported, because this module must stay pure — it
+   * cannot hold a React element. `@/components/ui/StatIcon` maps the name,
+   * and its own header says why each one was chosen.
+   */
+  icon: StatIconName;
 }
 
 /**
@@ -138,12 +145,13 @@ export interface StatusSummaryBox {
 export function statusSummaryBoxes(kind: "mine" | "work"): readonly StatusSummaryBox[] {
   const inProcess: StatusSummaryBox =
     kind === "work"
-      ? { id: "inProcess", label: "รออนุมัติจากคุณ", ids: ["pending"], tone: "pending" }
+      ? { id: "inProcess", label: "รออนุมัติจากคุณ", ids: ["pending"], tone: "pending", icon: "pending" }
       : {
           id: "inProcess",
           label: "กำลังดำเนินการ",
           ids: ["Submitted", "ManagerApproved"],
           tone: "pending",
+          icon: "pending",
         };
   /* **Last, and named for what it holds** (the user, 2026-09-24). On
      คำขอของฉัน it is ร่าง / ตีกลับ and carries both — the same pair Home's
@@ -157,14 +165,23 @@ export function statusSummaryBoxes(kind: "mine" | "work"): readonly StatusSummar
      request in flight. */
   const unfinished: StatusSummaryBox =
     kind === "work"
-      ? { id: "returned", label: "ส่งกลับแก้ไข", ids: ["Returned"], tone: "warning" }
-      : { id: "returned", label: "ร่าง / ตีกลับ", ids: ["Draft", "Returned"], tone: "warning" };
+      /* `returned` on งานของฉัน and `draft` on คำขอของฉัน: that box carries
+         drafts there and leads its own label with ร่าง, so the pen is what it
+         is mostly about. */
+      ? { id: "returned", label: "ส่งกลับแก้ไข", ids: ["Returned"], tone: "warning", icon: "returned" }
+      : {
+          id: "returned",
+          label: "ร่าง / ตีกลับ",
+          ids: ["Draft", "Returned"],
+          tone: "warning",
+          icon: "draft",
+        };
   return [
-    { id: "all", label: "ทั้งหมด", ids: [], tone: "neutral" },
+    { id: "all", label: "ทั้งหมด", ids: [], tone: "neutral", icon: "all" },
     inProcess,
-    { id: "approved", label: "อนุมัติแล้ว", ids: ["Approved"], tone: "ok" },
-    { id: "rejected", label: "ไม่อนุมัติ", ids: ["Rejected"], tone: "danger" },
-    { id: "cancelled", label: "ยกเลิก", ids: ["Cancelled"], tone: "muted" },
+    { id: "approved", label: "อนุมัติแล้ว", ids: ["Approved"], tone: "ok", icon: "approved" },
+    { id: "rejected", label: "ไม่อนุมัติ", ids: ["Rejected"], tone: "danger", icon: "rejected" },
+    { id: "cancelled", label: "ยกเลิก", ids: ["Cancelled"], tone: "muted", icon: "cancelled" },
     unfinished,
   ];
 }

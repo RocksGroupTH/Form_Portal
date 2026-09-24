@@ -40,6 +40,7 @@ import {
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
+import { StatIcon, type StatIconName } from "@/components/ui/StatIcon";
 import {
   defaultStatusFilter,
   isSummaryBoxActive,
@@ -182,12 +183,14 @@ function SummaryStat({
   label,
   value,
   tone,
+  icon,
   active,
   onClick,
 }: {
   label: string;
   value: string | number;
   tone: keyof typeof SUMMARY_TONES;
+  icon?: StatIconName;
   active?: boolean;
   onClick?: () => void;
 }) {
@@ -198,15 +201,22 @@ function SummaryStat({
     boxShadow: active ? `0 0 0 2px color-mix(in srgb, ${t.fg} 35%, transparent)` : undefined,
     textAlign: "left" as const,
   };
+  /* The icon sits to the RIGHT of the figure rather than above the label:
+     these boxes are two lines tall and a third row would push the number
+     out of a glance. Held back in the tile's own colour — it is a signpost
+     for the eye scanning six boxes, never a thing to read. */
   const body = (
-    <>
-      <div className="text-[20px] font-bold leading-none tabular-nums" style={{ color: t.fg }}>
-        {value}
+    <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0">
+        <div className="text-[20px] font-bold leading-none tabular-nums" style={{ color: t.fg }}>
+          {value}
+        </div>
+        <div className="text-[10px] font-medium mt-1 truncate" style={{ color: t.fg, opacity: 0.85 }}>
+          {label}
+        </div>
       </div>
-      <div className="text-[10px] font-medium mt-1" style={{ color: t.fg, opacity: 0.85 }}>
-        {label}
-      </div>
-    </>
+      {icon && <StatIcon name={icon} color={t.fg} />}
+    </div>
   );
   if (!onClick) {
     return (
@@ -666,6 +676,7 @@ function RequestRowList({
             label={b.label}
             value={b.count}
             tone={b.tone}
+            icon={b.icon}
             active={isSummaryBoxActive(statusFilter, b)}
             onClick={() => setStatusFilter([...b.ids])}
           />
