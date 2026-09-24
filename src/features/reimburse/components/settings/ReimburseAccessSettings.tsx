@@ -542,11 +542,13 @@ function TabGrantCells({
  * fail-open this table deliberately does not reproduce. Zero brand ticks on
  * this grid means zero brands and zero approval authority, full stop.
  *
- * **Two commissioning states get an alarm banner, carried over from the
- * deleted ผู้อนุมัติบัญชี tab's own panel:** nobody able to approve (every
- * AP-4 claim stops dead at the accounting step) and exactly one person able
- * to approve (the two-person rule then stalls every claim at the final
- * step — "the one that looks fine until it is tried"). Both count
+ * **ONE commissioning state gets an alarm banner:** nobody able to approve,
+ * which stops every AP-4 claim dead at the accounting step. There used to be a
+ * second, for exactly one approver — the two-person rule then stalled every
+ * claim at the final step, "the one that looks fine until it is tried". That
+ * banner is gone with the step it predicted: `ACCOUNT_FINAL` was retired on
+ * 2026-09-24 (see `STATE_AFTER_APPROVE`) after it did exactly what the banner
+ * said it would, and **one approver is now a working configuration**. It counts
  * `approverActive`, the real `AccReimburseApprover.IsActive` flag — NOT
  * `brandTargets.length > 0`, which would undercount a row created before
  * `setReimburseApproverBrands` existed (see that field's own comment).
@@ -676,20 +678,7 @@ export function ReimburseAccessSettings() {
           <AlertTriangle size={15} className="shrink-0 mt-0.5" />
           <p className="text-[12px] leading-relaxed">
             ยังไม่มีผู้อนุมัติฝ่ายบัญชีที่เปิดใช้งาน (ยังไม่มีใครติ๊กแบรนด์เลยสักคน) — คำขอ AP-4
-            ทุกใบจะค้างที่ขั้นตรวจสอบของบัญชี และไม่มีใครกดอนุมัติได้ กรุณาติ๊กแบรนด์ให้ผู้มีสิทธิ์เข้าถึงอย่างน้อย 2 คน
-          </p>
-        </div>
-      )}
-      {!isLoading && !loadError && approverActiveCount === 1 && (
-        <div
-          className="rounded-xl px-4 py-3 flex items-start gap-2.5"
-          style={{ background: "var(--status-pending-bg)", color: "var(--status-pending-text)" }}
-        >
-          <AlertTriangle size={15} className="shrink-0 mt-0.5" />
-          <p className="text-[12px] leading-relaxed">
-            มีผู้อนุมัติฝ่ายบัญชีที่เปิดใช้งานเพียง 1 คน — AP-4 กำหนดให้ผู้ที่ตรวจสอบ (ขั้นบัญชี)
-            กับผู้ที่อนุมัติขั้นสุดท้ายต้องไม่ใช่คนเดียวกัน คำขอจะค้างที่ขั้นอนุมัติสุดท้าย
-            จนกว่าจะมีผู้อนุมัติที่เปิดใช้งานอย่างน้อย 2 คน
+            ทุกใบจะค้างที่ขั้นตรวจสอบของบัญชี และไม่มีใครกดอนุมัติได้ กรุณาติ๊กแบรนด์ให้ผู้มีสิทธิ์เข้าถึงอย่างน้อย 1 คน
           </p>
         </div>
       )}

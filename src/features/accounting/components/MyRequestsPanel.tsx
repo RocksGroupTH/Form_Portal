@@ -4,12 +4,42 @@ import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-c
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { hrPhotoUrl } from "@/lib/hr/photo-url";
-import { Search, Inbox, Loader2, ChevronRight, Send, ClipboardCheck } from "lucide-react";
+import {
+  Search,
+  Inbox,
+  Loader2,
+  ChevronRight,
+  ChevronDown,
+  Check,
+  Send,
+  ClipboardCheck,
+  List,
+  Table as TableIcon,
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/DropdownMenu";
 import type { ReportRow } from "@/lib/acc/report-service";
+import { MyRequestsTable } from "@/features/accounting/components/MyRequestsTable";
+import { formFilterLabel } from "@/lib/acc/form-names";
+import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
+import {
+  DEFAULT_PAGE_SIZE,
+  MY_REQUEST_PAGE_SIZES,
+  clampPage,
+  pageCount,
+  pageSlice,
+  pageWindow,
+  statusDisplay,
+  statusDisplayForBucket,
+} from "@/lib/acc/my-request-view";
 import type { AccRequest } from "@/features/accounting/types";
-import { formatNextApprovalDetail, getMyWorkStatusBucket, myWorkStatusLabel, myWorkStatusStyle, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
+import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
-import { isPendingApprovalStatus, statusLabelDisplay } from "@/features/accounting/constants";
+import { isPendingApprovalStatus } from "@/features/accounting/constants";
 import { MultiSelectFilter, inDateRange, isMultiSelectActive, matchesMultiSelectValue } from "@/features/accounting/components/ApprovalQueueFilters";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
@@ -61,22 +91,44 @@ function fmtMoney(n: number | null | undefined): string {
 // one of about twenty identical copies across this app.
 const fmtDate = (raw: string | null | undefined) => formatEnDate(raw);
 
-/** Status → chip colors (tokens). */
-function statusStyle(status: string): React.CSSProperties {
-  switch (status) {
-    case "Approved":
-      return { background: "var(--bg-info-green)", color: "var(--text-info-green)", border: "1px solid var(--border-info-green)" };
-    case "Submitted":
-    case "ManagerApproved":
-      return { background: "var(--bg-info-yellow)", color: "var(--text-info-yellow)", border: "1px solid var(--border-info-yellow)" };
-    case "Returned":
-      return { background: "color-mix(in srgb, var(--color-warning) 14%, transparent)", color: "var(--color-warning)", border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)" };
-    case "Rejected":
-    case "Cancelled":
-      return { background: "color-mix(in srgb, var(--color-danger) 10%, transparent)", color: "var(--color-danger)", border: "1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)" };
-    default:
-      return { background: "var(--bg-badge)", color: "var(--text-muted)", border: "1px solid var(--border-light)" };
-  }
+/**
+ * One pager button.
+ *
+ * `aria-label` on every one of them, because the row is otherwise a line of
+ * bare digits and two chevrons — readable on screen and meaningless to a screen
+ * reader. `aria-current` marks the page in view, which colour alone does not.
+ */
+function PagerButton({
+  children,
+  label,
+  onClick,
+  disabled,
+  active,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      aria-current={active ? "page" : undefined}
+      className="min-w-[26px] h-[26px] px-1.5 rounded-lg text-[11px] font-semibold border-none transition-colors"
+      style={{
+        background: active ? "var(--color-action)" : "var(--bg-badge)",
+        color: active ? "#fff" : "var(--text-secondary)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
 }
 
 function SummaryStat({
@@ -94,18 +146,26 @@ function SummaryStat({
   );
 }
 
+/**
+ * One vocabulary across both views (the user, 2026-09-24: "ใช้ชุดเดียวกัน").
+ *
+ * The QUESTION each page asks is unchanged and still differs — งานของฉัน
+ * labels a row by what it means to the viewer, คำขอของฉัน by the request's own
+ * status — but the words and the colours are now the table's, so toggling the
+ * view never changes the word on a row.
+ *
+ * `myWorkStatusLabel` / `myWorkStatusStyle` / `statusStyle` /
+ * `statusLabelDisplay` are no longer read here. The first two have no other
+ * caller and stay in `approval-display.ts` beside the bucket logic that is
+ * still very much in use; the last two are `RequestStatusBadge`'s vocabulary,
+ * which six other surfaces render and which this change deliberately left
+ * alone.
+ */
 function StatusBadge({ status, workBucket }: { status: string; workBucket?: MyWorkStatusBucket }) {
-  if (workBucket) {
-    return (
-      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0" style={myWorkStatusStyle(workBucket)}>
-        {myWorkStatusLabel(workBucket)}
-      </span>
-    );
-  }
   return (
-    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0" style={statusStyle(status)}>
-      {statusLabelDisplay(status)}
-    </span>
+    <MyRequestStatusChip
+      display={workBucket ? statusDisplayForBucket(workBucket) : statusDisplay(status)}
+    />
   );
 }
 
@@ -172,6 +232,48 @@ function RequestRowList({
   const [caDetail, setCaDetail] = useState<ClearAdvanceRequest | null>(null);
   const [drawerFormCode, setDrawerFormCode] = useState<string | null>(null);
   const [loadingDrawer, setLoadingDrawer] = useState(false);
+  /**
+   * list or table, remembered per page.
+   *
+   * **The table is the default** (the user's call, 2026-09-24 — reversing their
+   * own earlier choice of list once they had seen it). A stored preference
+   * still wins: this is what somebody who has never touched the switch gets,
+   * not what everybody gets.
+   *
+   * Read after mount rather than seeded into `useState`, for the reason every
+   * localStorage read in this app is: it does not exist on the server, so
+   * seeding from it makes the first client render disagree with the server's
+   * and hydrate wrong. The cost is that a reader who chose `list` sees one
+   * frame of table first — the same trade the theme's no-flash script exists
+   * to avoid and which is not worth a cookie here.
+   */
+  const [view, setView] = useState<"list" | "table">("table");
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(`form-portal-myreq-view-${kind}`);
+      if (raw === "table" || raw === "list") setView(raw);
+    } catch {
+      // Private window or blocked storage: the default stands.
+    }
+  }, [kind]);
+  const chooseView = useCallback(
+    (next: "list" | "table") => {
+      setView(next);
+      try {
+        window.localStorage.setItem(`form-portal-myreq-view-${kind}`, next);
+      } catch {
+        // Losing the preference costs one click, so it is not worth reporting.
+      }
+    },
+    [kind],
+  );
+
+  /* Paging is applied to `filtered` BEFORE either renderer sees it, so the
+     list and the table show the same page — a page size that changed meaning
+     when you pressed the view switch would be its own small lie. */
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(1);
+
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>(
     () => (kind === "work" ? DEFAULT_WORK_STATUS_FILTER : DEFAULT_MINE_STATUS_FILTER),
@@ -340,12 +442,17 @@ function RequestRowList({
 
   const formLabelByCode = useMemo(() => {
     const map: Record<string, string> = {};
+    /* A form the viewer could file but has not: its name cannot come from a
+       row, because there is no row. It used to fall through to the bare code,
+       so AP-2 and AP-3 sat unnamed beside four named entries — `form-names.ts`
+       is the fallback, and AccFormMaster's own name still wins below wherever
+       a row supplies one. */
     for (const c of REQUEST_CARDS) {
-      if (c.badge && isFormAvailable(c.badge)) map[c.badge] = c.badge;
+      if (c.badge && isFormAvailable(c.badge)) map[c.badge] = formFilterLabel(c.badge);
     }
     for (const r of rows) {
       if (!r.formCode) continue;
-      map[r.formCode] = r.formName ? `${r.formCode} · ${r.formName}` : r.formCode;
+      map[r.formCode] = formFilterLabel(r.formCode, r.formName);
     }
     return map;
   }, [rows, isFormAvailable]);
@@ -399,6 +506,18 @@ function RequestRowList({
     return { total: rows.length, inProcess, approved, rejected };
   }, [rows, kind, rowWorkBucket]);
 
+  /* The page is clamped rather than reset, so narrowing a filter while deep in
+     the pages lands on the LAST page instead of an empty one — which reads as
+     "no results" over a filter that matched plenty. Derived rather than stored:
+     a `page` that only a `useEffect` corrects renders the empty slice once
+     first. */
+  const pages = pageCount(filtered.length, pageSize);
+  const currentPage = clampPage(page, filtered.length, pageSize);
+  const paged = useMemo(
+    () => pageSlice(filtered, currentPage, pageSize),
+    [filtered, currentPage, pageSize],
+  );
+
   return (
     <div className="flex flex-col gap-3">
       {/* Summary totals */}
@@ -429,6 +548,40 @@ function RequestRowList({
         <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>
           {filtered.length} รายการ
         </span>
+        {/* Both views read the same filtered rows and open the same drawer, so
+            this switches the shape and nothing else. `aria-pressed` carries
+            which one is live to a screen reader, which the fill alone does
+            not — the same segmented control Brand Configuration uses. */}
+        <div
+          className="inline-flex gap-1 p-1 rounded-xl shrink-0"
+          style={{ background: "var(--bg-badge)" }}
+          role="group"
+          aria-label="รูปแบบการแสดงผล"
+        >
+          {([
+            { value: "list", label: "รายการ", Icon: List },
+            { value: "table", label: "ตาราง", Icon: TableIcon },
+          ] as const).map((v) => {
+            const active = view === v.value;
+            return (
+              <button
+                key={v.value}
+                type="button"
+                aria-pressed={active}
+                aria-label={v.label}
+                title={v.label}
+                onClick={() => chooseView(v.value)}
+                className="px-2 py-1 rounded-lg border-none cursor-pointer transition-colors inline-flex items-center"
+                style={{
+                  background: active ? "var(--color-action)" : "transparent",
+                  color: active ? "#fff" : "var(--text-muted)",
+                }}
+              >
+                <v.Icon size={14} />
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Form + submitted date range */}
@@ -520,9 +673,27 @@ function RequestRowList({
             {rows.length === 0 ? "ยังไม่มีรายการ" : "ไม่พบรายการที่ตรงกับตัวกรอง"}
           </p>
         </div>
+      ) : view === "table" ? (
+        /* Same rows, same filters, same drawer — only the shape differs. The
+           columns and every cell's text live in `@/lib/acc/my-request-view`,
+           which is pure and tested; this passes rows and a click target. */
+        <MyRequestsTable
+          rows={paged}
+          exportRows={filtered}
+          kind={kind}
+          onOpen={(row) => {
+            setDrawerId(row.id);
+            setDrawerFormCode(row.formCode ?? null);
+          }}
+          statusFor={
+            kind === "work"
+              ? (row) => statusDisplayForBucket(rowWorkBucket(row))
+              : undefined
+          }
+        />
       ) : (
         <div className="flex flex-col gap-2">
-          {filtered.map((row) => {
+          {paged.map((row) => {
             const nextApproval = formatNextApprovalDetail(row);
             const workBucket = kind === "work" ? rowWorkBucket(row) : undefined;
             return (
@@ -614,6 +785,107 @@ function RequestRowList({
             </button>
             );
           })}
+        </div>
+      )}
+
+      {/* The pager sits BELOW both views and outside the empty/loading arms, so
+          it is absent exactly when there is nothing to page — a "1 / 1" under
+          an empty list is a control that cannot do anything. */}
+      {!loading && viewerReady && filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          {/* A native <select> paints its own panel from the OS — a white
+              sheet with a blue highlight that belongs to neither theme, and
+              which no CSS here can reach. This is the app's own
+              `DropdownMenu`: Radix, themed from the same tokens as everything
+              around it, and PORTALLED, so it cannot be clipped by an ancestor
+              the way the คอลัมน์ menu was.
+
+              It had no callers at all before this — a leftover from the Rocks
+              Fast clone. Reviving it beat writing a third dropdown pattern
+              beside `ColumnToggleMenu` and `SearchableSelect`. */}
+          <div className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span>แสดง</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`จำนวนรายการต่อหน้า — ขณะนี้ ${pageSize}`}
+                  className="inline-flex items-center gap-1 rounded-lg pl-2.5 pr-1.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors"
+                  style={{
+                    background: "var(--bg-input)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--border-input)",
+                  }}
+                >
+                  {pageSize}
+                  <ChevronDown size={13} style={{ color: "var(--text-muted)" }} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[88px]">
+                {MY_REQUEST_PAGE_SIZES.map((n) => (
+                  <DropdownMenuItem
+                    key={n}
+                    onSelect={() => {
+                      setPageSize(n);
+                      /* Back to the first page. Keeping the number would land
+                         a reader on page 6 of 2 after switching 10 -> 100, and
+                         the clamp would then move them somewhere they never
+                         asked to go. Page 1 is the one answer that is never a
+                         surprise. */
+                      setPage(1);
+                    }}
+                    className="justify-between rounded-md mx-1 text-[12px] data-[highlighted]:bg-[var(--bg-card-alt)]"
+                  >
+                    <span style={{ fontWeight: n === pageSize ? 700 : 400 }}>{n}</span>
+                    {/* The tick rather than a filled row: this menu opens over
+                        the table, and a solid highlight reads as a hover
+                        somebody is about to click. */}
+                    {n === pageSize && <Check size={13} style={{ color: "var(--color-action)" }} />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <span>รายการ · ทั้งหมด {filtered.length}</span>
+          </div>
+
+          {pages > 1 && (
+            <div className="flex items-center gap-1">
+              <PagerButton
+                label="ก่อนหน้า"
+                disabled={currentPage <= 1}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                ‹
+              </PagerButton>
+              {pageWindow(currentPage, pages).map((p, i) =>
+                p === "gap" ? (
+                  <span
+                    key={`gap-${i}`}
+                    className="px-1 text-[11px] select-none"
+                    style={{ color: "var(--text-faint)" }}
+                  >
+                    …
+                  </span>
+                ) : (
+                  <PagerButton
+                    key={p}
+                    label={`หน้า ${p}`}
+                    active={p === currentPage}
+                    onClick={() => setPage(p)}
+                  >
+                    {p}
+                  </PagerButton>
+                ),
+              )}
+              <PagerButton
+                label="ถัดไป"
+                disabled={currentPage >= pages}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                ›
+              </PagerButton>
+            </div>
+          )}
         </div>
       )}
 
@@ -745,12 +1017,22 @@ export function MyRequestsCard({ kind, header = true }: { kind: "mine" | "work";
   const Icon = s.icon;
   return (
     <div
-      className="acc-theme rounded-2xl overflow-hidden"
+      /* **No `overflow-hidden`**, and that is load-bearing rather than a
+         tidy-up. The คอลัมน์ menu is an absolutely-positioned panel with its
+         own scroll (`ColumnToggleMenu`, max-h-[360px]); clipped to this card
+         it was cut off at the card's own bottom edge, so on a page with one
+         or two rows the list of columns was mostly invisible — which is
+         exactly when somebody opens it.
+
+         The rounding it protected belongs to the header, which now rounds its
+         own top corners. Both live callers pass `header={false}` anyway, so
+         nothing inside paints to the edge at all. */
+      className="acc-theme rounded-2xl"
       style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)" }}
     >
       {header && (
         <div
-          className="flex items-center gap-2.5 px-5 py-3"
+          className="flex items-center gap-2.5 px-5 py-3 rounded-t-2xl"
           style={{ borderBottom: "1px solid var(--border-card)", background: "var(--bg-card-header)" }}
         >
           <span
