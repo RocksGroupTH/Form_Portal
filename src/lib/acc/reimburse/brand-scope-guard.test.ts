@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { buildMyWorkManagerQuery } from "@/lib/acc/my-work-manager-sql";
 
 /**
  * Brand scoping is only a control if it holds on the paths that ACT, not
@@ -254,30 +255,37 @@ test("listMyWorkRows lists NO AP-4 accounting claim, so it needs no brand scope"
    * accounting row. If that ever changes, this test fails and whoever changed
    * it has to restore a scope clause — which is the same protection, pinned at
    * the condition that makes it necessary.
+   *
+   * **The WHERE moved on 2026-09-24 and is now asserted rather than scanned.**
+   * It used to be built inline in `listMyWorkRows`, so this test sliced that
+   * function's source out of `report-service.ts`. The manager resolution went
+   * live the same day and the query is now assembled from templates by the pure
+   * `buildMyWorkManagerQuery`, which this can simply call — so the premise is
+   * checked against the finished SQL of BOTH environments instead of against
+   * one function's text. Strictly stronger, and it no longer breaks when the
+   * builder is refactored.
    */
-  const src = code(REPORT_SERVICE_FILE);
-  const marker = "export async function listMyWorkRows(";
-  const start = src.indexOf(marker);
-  assert.ok(start >= 0, "listMyWorkRows not found in report-service.ts — has it been renamed?");
-  const rest = src.slice(start + marker.length);
-  const next = rest.search(/\nexport async function /);
-  const body = next === -1 ? src.slice(start) : src.slice(start, start + marker.length + next);
+  for (const environment of ["Production", "UAT"] as const) {
+    const { where, select } = buildMyWorkManagerQuery(environment);
+    const sql = where + select;
 
-  for (const roster of ["AccReimburseApprover", "AccReimburseApproverBrand"]) {
-    assert.equal(
-      body.includes(roster),
-      false,
-      `listMyWorkRows reads ${roster} again, so it is listing AP-4 accounting claims once more — ` +
-        "restore the brand-scope EXISTS clause with it (AccBrandErpInterface + perFormPredicate, " +
-        "AND EXISTS and never AND NOT EXISTS), or those approvers see claims outside their scope",
+    for (const roster of ["AccReimburseApprover", "AccReimburseApproverBrand"]) {
+      assert.equal(
+        sql.includes(roster),
+        false,
+        `My Work (${environment}) reads ${roster} again, so it is listing AP-4 accounting claims ` +
+          "once more — restore the brand-scope EXISTS clause with it (AccBrandErpInterface + " +
+          "perFormPredicate, AND EXISTS and never AND NOT EXISTS), or those approvers see claims " +
+          "outside their scope",
+      );
+    }
+
+    assert.ok(
+      sql.includes("a.StepCode = N'MANAGER'"),
+      `My Work (${environment}) no longer pins the MANAGER step — without that pin an ACCOUNT row ` +
+        "assigned to the viewer pulls AP-4 claims back in, and nothing here scopes them any more",
     );
   }
-
-  assert.ok(
-    body.includes("a.StepCode = N'MANAGER'"),
-    "listMyWorkRows no longer pins the MANAGER step — without that pin an ACCOUNT row assigned to " +
-      "the viewer pulls AP-4 claims back in, and nothing here scopes them any more",
-  );
 });
 
 /* ─────────── Round 7: what the CALL-SITE pin above cannot reach ───────────

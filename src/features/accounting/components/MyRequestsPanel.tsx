@@ -2,6 +2,7 @@
 import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import {
@@ -39,7 +40,15 @@ import {
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
-import { isPendingApprovalStatus } from "@/features/accounting/constants";
+import { StatIcon, type StatIconName } from "@/components/ui/StatIcon";
+import {
+  defaultStatusFilter,
+  isSummaryBoxActive,
+  statusFilterKey,
+  statusFilterOptions,
+  statusSummaryBoxes,
+  sumTotalAmount,
+} from "@/features/accounting/lib/request-status-filter";
 import { MultiSelectFilter, inDateRange, isMultiSelectActive, matchesMultiSelectValue } from "@/features/accounting/components/ApprovalQueueFilters";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
@@ -131,18 +140,101 @@ function PagerButton({
   );
 }
 
+/** The four summary tones, as the three CSS values each needs. */
+const SUMMARY_TONES: Record<
+  "neutral" | "pending" | "ok" | "warning" | "danger" | "muted",
+  { bg: string; fg: string; border: string }
+> = {
+  neutral: { bg: "var(--bg-card-alt)", fg: "var(--text-heading)", border: "var(--border-card)" },
+  pending: {
+    bg: "var(--bg-info-yellow)",
+    fg: "var(--text-info-yellow)",
+    border: "var(--border-info-yellow)",
+  },
+  ok: { bg: "var(--bg-info-green)", fg: "var(--text-info-green)", border: "var(--border-info-green)" },
+  /* ส่งกลับแก้ไข is the warning token, not the danger one: the requester has
+     something to do and nothing has been refused. Same distinction
+     `myWorkStatusStyle` already draws between Returned and Rejected. */
+  warning: {
+    bg: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+    fg: "var(--color-warning)",
+    border: "color-mix(in srgb, var(--color-warning) 35%, transparent)",
+  },
+  danger: {
+    bg: "color-mix(in srgb, var(--color-danger) 10%, transparent)",
+    fg: "var(--color-danger)",
+    border: "color-mix(in srgb, var(--color-danger) 30%, transparent)",
+  },
+  /* ยกเลิก is withdrawn work, not failed work — it earns no colour at all. */
+  muted: { bg: "var(--bg-badge)", fg: "var(--text-muted)", border: "var(--border-light)" },
+};
+
+/**
+ * One summary box — and, since 2026-09-24, the status filter itself.
+ *
+ * Pressing it selects that box's statuses; the chip row underneath is gone.
+ * **The highlight is a ring and a heavier border, not a colour change**: each
+ * box already carries its own tone, so recolouring the selected one would
+ * either lose the tone that says what it is or produce four different
+ * selected looks. `aria-pressed` carries the same fact to a screen reader,
+ * which a ring does not.
+ */
 function SummaryStat({
-  label, value, bg, fg, border,
-}: { label: string; value: number; bg: string; fg: string; border: string }) {
-  return (
-    <div className="rounded-xl px-3 py-2" style={{ background: bg, border: `1px solid ${border}` }}>
-      <div className="text-[20px] font-bold leading-none tabular-nums" style={{ color: fg }}>
-        {value}
+  label,
+  value,
+  tone,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: string | number;
+  tone: keyof typeof SUMMARY_TONES;
+  icon?: StatIconName;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const t = SUMMARY_TONES[tone];
+  const style = {
+    background: t.bg,
+    border: `1px solid ${active ? t.fg : t.border}`,
+    boxShadow: active ? `0 0 0 2px color-mix(in srgb, ${t.fg} 35%, transparent)` : undefined,
+    textAlign: "left" as const,
+  };
+  /* The icon sits to the RIGHT of the figure rather than above the label:
+     these boxes are two lines tall and a third row would push the number
+     out of a glance. Held back in the tile's own colour — it is a signpost
+     for the eye scanning six boxes, never a thing to read. */
+  const body = (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0">
+        <div className="text-[20px] font-bold leading-none tabular-nums" style={{ color: t.fg }}>
+          {value}
+        </div>
+        <div className="text-[10px] font-medium mt-1 truncate" style={{ color: t.fg, opacity: 0.85 }}>
+          {label}
+        </div>
       </div>
-      <div className="text-[10px] font-medium mt-1" style={{ color: fg, opacity: 0.85 }}>
-        {label}
-      </div>
+      {icon && <StatIcon name={icon} color={t.fg} />}
     </div>
+  );
+  if (!onClick) {
+    return (
+      <div className="rounded-xl px-3 py-2" style={style}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!active}
+      className="rounded-xl px-3 py-2 cursor-pointer transition-shadow"
+      style={style}
+    >
+      {body}
+    </button>
   );
 }
 
@@ -169,24 +261,16 @@ function StatusBadge({ status, workBucket }: { status: string; workBucket?: MyWo
   );
 }
 
-const MINE_STATUS_FILTER_GROUPS = [
-  { id: "pending", label: "รออนุมัติ", match: isPendingApprovalStatus },
-  { id: "Approved", label: "อนุมัติแล้ว", match: (s: string) => s === "Approved" },
-  { id: "Returned", label: "ส่งกลับแก้ไข", match: (s: string) => s === "Returned" },
-  { id: "Rejected", label: "ไม่อนุมัติ", match: (s: string) => s === "Rejected" },
-  { id: "Cancelled", label: "ยกเลิก", match: (s: string) => s === "Cancelled" },
-] as const;
+/* The status vocabulary these filters offer, the sets the summary boxes stand
+   for and the row-to-option mapping all live in
+   `@/features/accounting/lib/request-status-filter` — one module, because the
+   boxes and the dropdown are two controls over one value and the highlight
+   lies the moment they disagree.
 
-const WORK_STATUS_FILTER_GROUPS = [
-  { id: "pending", label: "รออนุมัติ", bucket: "pending" as const },
-  { id: "Approved", label: "อนุมัติแล้ว", bucket: "Approved" as const },
-  { id: "Returned", label: "ส่งกลับแก้ไข", bucket: "Returned" as const },
-  { id: "Rejected", label: "ไม่อนุมัติ", bucket: "Rejected" as const },
-  { id: "Cancelled", label: "ยกเลิก", bucket: "Cancelled" as const },
-] as const;
-
-const DEFAULT_MINE_STATUS_FILTER = "pending";
-const DEFAULT_WORK_STATUS_FILTER = "pending";
+   The default is now **no filter at all**, where it used to be รออนุมัติ. A
+   page that silently hides your finished requests is a page whose totals
+   nobody can reconcile, and the ยอดรวม box added beside these makes that
+   worse rather than better: a sum over a filter nobody chose. */
 
 /* ── List for one source (mine / work) ── */
 
@@ -274,13 +358,61 @@ function RequestRowList({
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState(1);
 
+  /* Home's stat tiles open this page with the filter they counted already
+     applied — `?status=Rejected` from ไม่อนุมัติ, `?status=all&from=…&to=…`
+     from คำขอเดือนนี้ — so the number on the tile and the list it opens are
+     the same set of rows.
+
+     **Seed only, never a controlled value.** The filter chips below are the
+     authority once the page is up; re-reading the URL on every render would
+     snap a chip the user just pressed back to whatever Home linked to. `?date`
+     matches on `submittedAt`, which is what `countHomeStats` measured. */
+  const searchParams = useSearchParams();
+  const initialStatus = useMemo(() => {
+    const raw = searchParams.get("status");
+    /* No link, no filter named: the page opens on the box somebody came to
+       work from — รออนุมัติจากคุณ on My Work, กำลังดำเนินการ on My Requests
+       (the user, 2026-09-24). `all` is an explicit ask for everything and
+       must not be read as an absent parameter. */
+    if (!raw) return defaultStatusFilter(kind);
+    if (raw === "all") return [];
+    const known = statusFilterOptions(kind).map((o) => o.id);
+    /* Home links with a single coarse id. `pending` is the one that is not an
+       option id of its own — it spans both approval steps on My Requests, which
+       is exactly what `isPendingApprovalStatus` counted on the tile — so it is
+       translated rather than dropped. */
+    if (raw === "pending") {
+      return kind === "work" ? ["pending"] : ["Submitted", "ManagerApproved"];
+    }
+    // A comma list is accepted so a link can name the exact selection; an id
+    // this page does not know is dropped rather than filtering every row out,
+    // which would read as an empty list rather than as a bad link.
+    const wanted = raw.split(",").filter((id) => known.includes(id));
+    return wanted;
+    // Deliberately keyed on nothing: the seed is read once, at mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const initialDates = useMemo(() => {
+    const isYmd = (v: string | null) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    return { from: isYmd(from) ? from! : "", to: isYmd(to) ? to! : "" };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>(
-    () => (kind === "work" ? DEFAULT_WORK_STATUS_FILTER : DEFAULT_MINE_STATUS_FILTER),
-  );
+  /* A multi-select now, not one id: the summary boxes above and the สถานะ
+     dropdown below are two controls over this one value (the user,
+     2026-09-24), and a box lights when the selection is exactly its set. `[]`
+     is every row — `MultiSelectFilter`'s own convention, so no translation
+     sits between the two controls. See `request-status-filter.ts`. */
+  const [statusFilter, setStatusFilter] = useState<string[]>(initialStatus);
+  const [brandFilter, setBrandFilter] = useState<string[]>([]);
+  const [payFrom, setPayFrom] = useState("");
+  const [payTo, setPayTo] = useState("");
   const [formFilter, setFormFilter] = useState<string[]>([]);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(initialDates.from);
+  const [dateTo, setDateTo] = useState(initialDates.to);
   const [workViewer, setWorkViewer] = useState<MyWorkViewerContext>({
     staffId: null,
     email: null,
@@ -421,14 +553,39 @@ function RequestRowList({
     [workViewer],
   );
 
-  const statusGroups = useMemo(() => {
-    if (kind === "work") {
-      return WORK_STATUS_FILTER_GROUPS.filter((g) =>
-        rows.some((r) => rowWorkBucket(r) === g.bucket),
-      );
+  /* Which option id a row belongs to — the request's own status on คำขอของฉัน,
+     the viewer-relative bucket on งานของฉัน. One function so the dropdown, the
+     summary boxes and the row filter cannot disagree about where a row sits. */
+  const statusKeyOf = useCallback(
+    (r: ReportRow) =>
+      statusFilterKey(kind, kind === "work" ? rowWorkBucket(r) : r.status),
+    [kind, rowWorkBucket],
+  );
+
+  /* Every option, not only the ones present today. A status filter that
+     appears and disappears as rows arrive cannot be linked to or explained,
+     and the count beside each summary box already says which are empty. */
+  const statusOptions = useMemo(() => statusFilterOptions(kind), [kind]);
+  const statusLabelById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const o of statusOptions) map[o.id] = o.label;
+    return map;
+  }, [statusOptions]);
+
+  /* The boxes count EVERY row, never the filtered ones. A count that shrank to
+     zero the moment you pressed another box would make the strip useless as a
+     way of moving between statuses — which is what it now is. */
+  const boxes = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      const key = statusKeyOf(r);
+      counts[key] = (counts[key] ?? 0) + 1;
     }
-    return MINE_STATUS_FILTER_GROUPS.filter((g) => rows.some((r) => g.match(r.status)));
-  }, [rows, kind, rowWorkBucket]);
+    return statusSummaryBoxes(kind).map((b) => ({
+      ...b,
+      count: b.ids.length === 0 ? rows.length : b.ids.reduce((n, id) => n + (counts[id] ?? 0), 0),
+    }));
+  }, [rows, kind, statusKeyOf]);
 
   const formOptions = useMemo(() => {
     // Seeded from available forms only — a form the viewer cannot use right
@@ -439,6 +596,17 @@ function RequestRowList({
     const fromRows = rows.map((r) => r.formCode).filter(Boolean);
     return Array.from(new Set([...fromCards, ...fromRows])).sort();
   }, [rows, isFormAvailable]);
+
+  /* From the rows alone, unlike `formOptions`, which seeds itself from the
+     forms this viewer could file. There is no equivalent seed for a brand:
+     `BRANDS` in @/lib/brand is the four this app draws logos for, and AP-4
+     ships claimable under `ROCKS`, which is not one of them — offering a fixed
+     list would both omit a brand in use and offer three nobody has filed
+     under. */
+  const brandOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.brandCode).filter(Boolean) as string[])).sort(),
+    [rows],
+  );
 
   const formLabelByCode = useMemo(() => {
     const map: Record<string, string> = {};
@@ -457,22 +625,26 @@ function RequestRowList({
     return map;
   }, [rows, isFormAvailable]);
 
-  const hasExtraFilters = isMultiSelectActive(formFilter) || !!dateFrom || !!dateTo;
+  const hasExtraFilters =
+    isMultiSelectActive(formFilter) ||
+    isMultiSelectActive(brandFilter) ||
+    !!dateFrom ||
+    !!dateTo ||
+    !!payFrom ||
+    !!payTo;
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
     return rows.filter((r) => {
-      if (statusFilter !== "all") {
-        if (kind === "work") {
-          const group = WORK_STATUS_FILTER_GROUPS.find((g) => g.id === statusFilter);
-          if (group && rowWorkBucket(r) !== group.bucket) return false;
-        } else {
-          const group = MINE_STATUS_FILTER_GROUPS.find((g) => g.id === statusFilter);
-          if (group && !group.match(r.status)) return false;
-        }
-      }
+      if (!matchesMultiSelectValue(statusKeyOf(r), statusFilter)) return false;
       if (!matchesMultiSelectValue(r.formCode, formFilter)) return false;
+      if (!matchesMultiSelectValue(r.brandCode, brandFilter)) return false;
       if (!inDateRange(r.submittedAt, dateFrom, dateTo)) return false;
+      /* A request with no payment date yet is OUT once a payment range is set,
+         which `inDateRange` already answers — its `!from && !to` arm keeps such
+         a row while the range is empty and drops it once one is given. Asking
+         for a pay window is asking for rows that have one. */
+      if (!inDateRange(r.paymentDate, payFrom, payTo)) return false;
       if (!term) return true;
       return (
         (r.requestNo ?? "").toLowerCase().includes(term) ||
@@ -480,31 +652,7 @@ function RequestRowList({
         (r.brandCode ?? "").toLowerCase().includes(term)
       );
     });
-  }, [rows, q, statusFilter, formFilter, dateFrom, dateTo, kind, rowWorkBucket]);
-
-  const summary = useMemo(() => {
-    if (kind === "work") {
-      let inProcess = 0;
-      let approved = 0;
-      let rejected = 0;
-      for (const r of rows) {
-        const bucket = rowWorkBucket(r);
-        if (bucket === "Approved") approved++;
-        else if (bucket === "Rejected") rejected++;
-        else if (bucket === "pending" || bucket === "Returned") inProcess++;
-      }
-      return { total: rows.length, inProcess, approved, rejected };
-    }
-    let inProcess = 0;
-    let approved = 0;
-    let rejected = 0;
-    for (const r of rows) {
-      if (r.status === "Approved") approved++;
-      else if (r.status === "Rejected") rejected++;
-      else if (r.status === "Submitted" || r.status === "ManagerApproved" || r.status === "Returned") inProcess++;
-    }
-    return { total: rows.length, inProcess, approved, rejected };
-  }, [rows, kind, rowWorkBucket]);
+  }, [rows, q, statusFilter, formFilter, brandFilter, dateFrom, dateTo, payFrom, payTo, statusKeyOf]);
 
   /* The page is clamped rather than reset, so narrowing a filter while deep in
      the pages lands on the LAST page instead of an empty one — which reads as
@@ -520,17 +668,19 @@ function RequestRowList({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Summary totals */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <SummaryStat label="ทั้งหมด" value={summary.total}
-          bg="var(--bg-card-alt)" fg="var(--text-heading)" border="var(--border-card)" />
-        <SummaryStat label="กำลังดำเนินการ" value={summary.inProcess}
-          bg="var(--bg-info-yellow)" fg="var(--text-info-yellow)" border="var(--border-info-yellow)" />
-        <SummaryStat label="อนุมัติแล้ว" value={summary.approved}
-          bg="var(--bg-info-green)" fg="var(--text-info-green)" border="var(--border-info-green)" />
-        <SummaryStat label="ไม่อนุมัติ" value={summary.rejected}
-          bg="color-mix(in srgb, var(--color-danger) 10%, transparent)" fg="var(--color-danger)"
-          border="color-mix(in srgb, var(--color-danger) 30%, transparent)" />
+      {/* Summary totals — and the status filter (the user, 2026-09-24). */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        {boxes.map((b) => (
+          <SummaryStat
+            key={b.id}
+            label={b.label}
+            value={b.count}
+            tone={b.tone}
+            icon={b.icon}
+            active={isSummaryBoxActive(statusFilter, b)}
+            onClick={() => setStatusFilter([...b.ids])}
+          />
+        ))}
       </div>
 
       {/* Search + count */}
@@ -584,8 +734,21 @@ function RequestRowList({
         </div>
       </div>
 
-      {/* Form + submitted date range */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {/* Status / form / brand, then the two date ranges.
+
+          สถานะ is a multi-select over the SAME words the chip in each row
+          shows — Submitted / Pending / Complete / Rejected / Revise /
+          Cancelled — because you filter by what you can see. It replaces the
+          chip row that used to sit under these, which grouped Submitted and
+          Pending together and could not tell them apart at all. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <MultiSelectFilter
+          label="สถานะ"
+          options={statusOptions.map((o) => o.id)}
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          formatLabel={(id) => statusLabelById[id] ?? id}
+        />
         <MultiSelectFilter
           label="ฟอร์ม"
           options={formOptions}
@@ -593,6 +756,15 @@ function RequestRowList({
           onChange={setFormFilter}
           formatLabel={(code) => formLabelByCode[code] ?? code}
         />
+        <MultiSelectFilter
+          label="แบรนด์"
+          options={brandOptions}
+          selected={brandFilter}
+          onChange={setBrandFilter}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FilterDateRangePicker
           label="วันที่ส่ง"
           from={dateFrom}
@@ -603,15 +775,32 @@ function RequestRowList({
           }}
           placeholder="เลือกช่วงวันที่ส่ง..."
         />
+        {/* Accounting sets this when it approves, so a request still in the
+            chain has none — and asking for a pay window is asking for the rows
+            that have one, which is what `inDateRange` already answers. */}
+        <FilterDateRangePicker
+          label="วันที่จ่าย"
+          from={payFrom}
+          to={payTo}
+          onChange={(from, to) => {
+            setPayFrom(from);
+            setPayTo(to);
+          }}
+          placeholder="เลือกช่วงวันที่จ่าย..."
+        />
       </div>
 
-      {hasExtraFilters && (
+      {(hasExtraFilters || isMultiSelectActive(statusFilter)) && (
         <button
           type="button"
           onClick={() => {
+            setStatusFilter([]);
             setFormFilter([]);
+            setBrandFilter([]);
             setDateFrom("");
             setDateTo("");
+            setPayFrom("");
+            setPayTo("");
           }}
           className="self-start text-[11px] font-semibold px-2.5 py-1 rounded-lg cursor-pointer"
           style={{
@@ -620,45 +809,8 @@ function RequestRowList({
             border: "1px solid var(--border-card)",
           }}
         >
-          ล้างตัวกรองฟอร์ม / วันที่
+          ล้างตัวกรองทั้งหมด
         </button>
-      )}
-
-      {/* Status filter chips */}
-      {statusGroups.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            key="all"
-            type="button"
-            onClick={() => setStatusFilter("all")}
-            className="text-[11px] font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors"
-            style={{
-              background: statusFilter === "all" ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
-              color: statusFilter === "all" ? "var(--nav-active-text)" : "var(--text-muted)",
-              border: `1px solid ${statusFilter === "all" ? "var(--nav-active-text)" : "var(--border-card)"}`,
-            }}
-          >
-            ทั้งหมด
-          </button>
-          {statusGroups.map((g) => {
-            const active = statusFilter === g.id;
-            return (
-              <button
-                key={g.id}
-                type="button"
-                onClick={() => setStatusFilter(g.id)}
-                className="text-[11px] font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors"
-                style={{
-                  background: active ? "var(--nav-active-bg)" : "var(--bg-card-alt)",
-                  color: active ? "var(--nav-active-text)" : "var(--text-muted)",
-                  border: `1px solid ${active ? "var(--nav-active-text)" : "var(--border-card)"}`,
-                }}
-              >
-                {g.label}
-              </button>
-            );
-          })}
-        </div>
       )}
 
       {/* List */}
@@ -785,6 +937,30 @@ function RequestRowList({
             </button>
             );
           })}
+        </div>
+      )}
+
+      {/* The filtered total, under the table where a total belongs (the user,
+          2026-09-24 — it was a fifth summary box for one commit).
+
+          It sums EVERY filtered row, not the page on screen: a total that
+          changed when you turned the page would answer no question anybody
+          asks. Baht whatever currency a claim was entered in, which is why
+          these figures can be added at all — see `sumTotalAmount`. */}
+      {!loading && viewerReady && filtered.length > 0 && (
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            ยอดรวมที่กรอง ({filtered.length} รายการ)
+          </span>
+          <span
+            className="text-[15px] font-bold tabular-nums"
+            style={{ color: "var(--text-heading)" }}
+          >
+            {fmtMoney(sumTotalAmount(filtered))}
+          </span>
+          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+            บาท
+          </span>
         </div>
       )}
 

@@ -47,49 +47,111 @@ export function isAssignedManager(
   );
 }
 
-/** True when the actor may action the pending MANAGER approval step. */
-export function canActManagerStep(
-  actorStaffId: number | null | undefined,
-  actorEmail: string | null | undefined,
-  requestManagerStaffId: number | null | undefined,
-  managerApproval: {
-    assignedTo: number | null;
-    assignedEmail: string | null;
-    status: string;
-  } | null | undefined,
-  viewerRole?: string | null,
-  devHostBypass = false,
-): boolean {
-  if (managerApproval && managerApproval.status !== "Pending") return false;
-  if (devHostBypass) return true;
-  if (isAssignedManager(actorStaffId, requestManagerStaffId)) return true;
-  if (actorStaffId != null && managerApproval?.assignedTo === actorStaffId) return true;
-  const actor = actorEmail?.trim().toLowerCase();
-  const assigned = managerApproval?.assignedEmail?.trim().toLowerCase();
-  if (actor && assigned && actor === assigned) return true;
-  return false;
+/**
+ * The manager a request is addressed to **today**, as it travels to the client.
+ *
+ * Declared here rather than in `@/lib/acc/current-manager` because the detail
+ * pages import it: that module reaches `@/env` and a pool, and this one
+ * deliberately reaches neither, which is what lets a `"use client"` component
+ * hold the type and call the predicate below without dragging a database
+ * driver into the browser bundle — the build break CLAUDE.md records for
+ * `api-keys/codes.ts`. `CurrentManager` over there is structurally identical
+ * on purpose.
+ */
+export interface CurrentManagerRef {
+  staffId: number;
+  email: string | null;
 }
 
-export function canActManagerApi(
-  actorStaffId: number | null | undefined,
-  requestManagerStaffId: number | null | undefined,
-  _role: string | null | undefined,
-  host?: string | null,
-  managerApproval?: {
-    assignedTo: number | null;
-    assignedEmail: string | null;
-    status: string;
-  } | null,
-  actorEmail?: string | null,
+/** Whoever is asking to act. */
+export interface ManagerStepActor {
+  staffId: number | null | undefined;
+  email: string | null | undefined;
+}
+
+/**
+ * Everything known about who this request's manager step belongs to.
+ *
+ * Three sources, and the order they are consulted in is the whole rule — see
+ * `mayActOnManagerStep`.
+ */
+export interface ManagerStepAssignment {
+  /**
+   * HR's answer **today** (`UatTester`'s, in UAT), or `null` when it has
+   * nothing usable to say. Resolved by `resolveCurrentManagerForRequest`
+   * (`@/lib/acc/current-manager`), whose header explains why `null` abstains
+   * rather than refuses. Structural rather than imported, so this module keeps
+   * its "reaches no pool, imports no environment" property and stays
+   * unit-testable.
+   */
+  current: CurrentManagerRef | null | undefined;
+  /** `AccRequest.ManagerStaffId` — what HR said when the request was submitted. */
+  snapshotStaffId: number | null | undefined;
+  /** The `MANAGER` approval row, carrying the same snapshot plus its status. */
+  approval:
+    | { assignedTo: number | null; assignedEmail: string | null; status: string }
+    | null
+    | undefined;
+}
+
+/**
+ * True when the actor may action the pending MANAGER approval step.
+ *
+ * **The current manager wins outright.** When `assignment.current` names
+ * somebody, that person is the only one admitted and the two snapshot arms are
+ * not consulted at all — so a manager replaced in HR loses the pending action
+ * immediately, which is the point of resolving it live (the user's decision,
+ * 2026-09-24). They keep *read* access through `request-acl-policy`, which is a
+ * different question and answered separately.
+ *
+ * **A `null` current manager falls back to the snapshot**, reproducing the
+ * behaviour this function had before the live resolution existed. That arm is
+ * reached when HR holds no active row for the requester, no `ManagerStaffId` on
+ * it, or a `ManagerStaffId` naming somebody who has left. Missing data must not
+ * be read as "nobody may approve this" — see `current-manager.ts`'s header.
+ *
+ * Taken as objects rather than six positional arguments deliberately: every
+ * one of the ids is `number | null`, so `snapshotStaffId` and `assignedTo`
+ * transpose without a type error, and this decides who may approve money. The
+ * rename off `canActManagerStep` is part of the same change — it turns all
+ * thirteen call sites into compile errors rather than letting one keep the old
+ * snapshot-only behaviour in silence, the tactic
+ * `erp-interface-brand-source-guard.test.ts` records for `isErpInterfaceBrand`.
+ */
+export function mayActOnManagerStep(
+  actor: ManagerStepActor,
+  assignment: ManagerStepAssignment,
+  opts?: { devHostBypass?: boolean },
 ): boolean {
-  return canActManagerStep(
-    actorStaffId,
-    actorEmail ?? null,
-    requestManagerStaffId,
-    managerApproval,
-    null,
-    isManagerDevBypassHost(host),
-  );
+  const { current, snapshotStaffId, approval } = assignment;
+  if (approval && approval.status !== "Pending") return false;
+  if (opts?.devHostBypass) return true;
+
+  const actorEmail = actor.email?.trim().toLowerCase() || null;
+
+  if (current) {
+    if (isAssignedManager(actor.staffId, current.staffId)) return true;
+    // The email arm covers an actor whose own HR lookup came back empty: they
+    // still sign in as somebody, and that somebody may be the manager HR names.
+    const live = current.email?.trim().toLowerCase() || null;
+    return !!(actorEmail && live && actorEmail === live);
+  }
+
+  if (isAssignedManager(actor.staffId, snapshotStaffId)) return true;
+  if (actor.staffId != null && approval?.assignedTo === actor.staffId) return true;
+  const assigned = approval?.assignedEmail?.trim().toLowerCase() || null;
+  return !!(actorEmail && assigned && actorEmail === assigned);
+}
+
+/** `mayActOnManagerStep` with the dev-host bypass folded in, for route handlers. */
+export function mayActOnManagerStepApi(
+  actor: ManagerStepActor,
+  assignment: ManagerStepAssignment,
+  host?: string | null,
+): boolean {
+  return mayActOnManagerStep(actor, assignment, {
+    devHostBypass: isManagerDevBypassHost(host),
+  });
 }
 
 export const MANAGER_AUTH_ERROR =

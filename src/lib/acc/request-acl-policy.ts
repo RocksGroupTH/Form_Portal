@@ -59,6 +59,18 @@ export interface AccRequestAclRow {
   /** HR StaffId of the requester (ผู้ขอเบิก) — differs from the creator on an on-behalf request. */
   staffId: number | null;
   managerStaffId: number | null;
+  /**
+   * HR's answer today, or null when it has nothing usable to say — the same
+   * value `resolveCurrentManager` returns, read here in the loader's own query.
+   *
+   * **Read access is the UNION of this and `managerStaffId`, not a replacement**
+   * — which is the opposite of how the two combine when deciding whether
+   * somebody may *act* (`mayActOnManagerStep`, where a live answer decides
+   * alone). A manager replaced in HR must stop approving immediately; they must
+   * not stop being able to open the request they were reviewing, or an approval
+   * trail ends with a document its own participant cannot read.
+   */
+  currentManagerStaffId: number | null;
 }
 
 /** Mirrors `FormEnvironmentValue`; redeclared so this module imports nothing. */
@@ -109,10 +121,15 @@ function isRequestSubject(row: AccRequestAclRow, viewer: AccAclViewer): boolean 
   return viewer.staffId != null && row.staffId != null && row.staffId === viewer.staffId;
 }
 
+/**
+ * Either manager this request has had: the one stamped at submit, or the one
+ * HR names today. See `currentManagerStaffId`'s own note for why this is a
+ * union here and a replacement in `mayActOnManagerStep`.
+ */
 function isAssignedManager(row: AccRequestAclRow, viewer: AccAclViewer): boolean {
-  return (
-    viewer.staffId != null && row.managerStaffId != null && row.managerStaffId === viewer.staffId
-  );
+  if (viewer.staffId == null) return false;
+  if (row.managerStaffId != null && row.managerStaffId === viewer.staffId) return true;
+  return row.currentManagerStaffId != null && row.currentManagerStaffId === viewer.staffId;
 }
 
 /** A UAT record is invisible to anyone outside the tester group — see the header. */

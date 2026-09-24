@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { buildAccActor, resolveAccActorForAction } from "@/lib/acc/actor-context";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
-import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStepApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
 import { statusForAccError } from "@/lib/acc/request-errors";
@@ -77,19 +77,25 @@ export async function POST(
 
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
 
+  // Who HR (or UatTester, in UAT) says is the requester's manager RIGHT NOW.
+  // Null means HR has nothing usable to say, and the snapshot below answers
+  // instead — see `current-manager.ts` for why absence abstains.
+  const currentManager = request.currentManager;
+
   if (step === "MANAGER") {
     // AP-1's rule: the assigned manager only, plus the default-off dev bypass.
     const host = await getRequestHost();
     const pending =
       request.approvals?.find((a) => a.stepCode === "MANAGER" && a.status === "Pending") ?? null;
     if (
-      !canActManagerApi(
-        actor.staffId,
-        request.managerStaffId,
-        session.user.role,
+      !mayActOnManagerStepApi(
+        { staffId: actor.staffId, email: actor.email },
+        {
+          current: currentManager,
+          snapshotStaffId: request.managerStaffId,
+          approval: pending,
+        },
         host,
-        pending,
-        actor.email,
       )
     ) {
       return NextResponse.json({ ok: false, error: MANAGER_AUTH_ERROR }, { status: 403 });
@@ -99,7 +105,7 @@ export async function POST(
   try {
     const actionActor =
       step === "MANAGER"
-        ? await resolveAccActorForAction(actor, session.user.role, request.managerStaffId)
+        ? await resolveAccActorForAction(actor, session.user.role, currentManager?.staffId ?? request.managerStaffId,)
         : actor;
 
     // The accounting pool and the two-person rule are asserted inside the

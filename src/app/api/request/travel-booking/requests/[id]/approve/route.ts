@@ -7,6 +7,7 @@ import { isAdminRole } from "@/lib/roles";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { isManagerDevBypassHost } from "@/lib/acc/manager-auth";
+import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { approveByManager, type Actor } from "@/lib/acc/travel-booking/approval";
 import { processQueue } from "@/lib/acc/email-queue";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
@@ -36,11 +37,25 @@ export async function POST(
   const own = await pool.request()
     .input("id", sql.Int, id)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
-    .query(`SELECT ManagerStaffId FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
+    .query(`SELECT ManagerStaffId, StaffId, RequesterEmail FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
   if (own.recordset.length === 0) {
     return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   }
-  const managerStaffId = (own.recordset[0]?.ManagerStaffId as number | null) ?? null;
+  const snapshotManagerStaffId = (own.recordset[0]?.ManagerStaffId as number | null) ?? null;
+
+  // Who HR (or `UatTester`, in UAT) says the requester's manager is TODAY.
+  // It decides alone when it is set, so a manager replaced in HR loses this
+  // step at once; `null` means HR has nothing usable to say and the
+  // submit-time snapshot answers instead. `managerStaffId` below is the
+  // effective answer, so `isManager`, the on-behalf record and the
+  // dev-bypass StaffId fallback all follow it without restating the rule.
+  // See `@/lib/acc/current-manager`.
+  const currentManager = await resolveCurrentManagerForRequest({
+    id,
+    staffId: (own.recordset[0]?.StaffId as number | null) ?? null,
+    requesterEmail: (own.recordset[0]?.RequesterEmail as string | null) ?? null,
+  });
+  const managerStaffId = currentManager?.staffId ?? snapshotManagerStaffId;
 
   const loginEmail = resolveLoginEmail(session.user, null, { email: session.user.email });
   const { employee } = await findActiveEmployeeByEmail(loginEmail);

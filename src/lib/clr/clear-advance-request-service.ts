@@ -2,6 +2,7 @@ import { env } from "@/env";
 import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { listClrErpBranchOptions, resolveClrCompany } from "@/lib/clr/clear-advance-admin-service";
 import { allowedDimensionTypes } from "@/lib/clr/clear-advance-gl-filter";
@@ -88,6 +89,10 @@ function mapRequestRow(r: Record<string, unknown>): ClearAdvanceRequest {
     requesterDepartmentCode: (r.RequesterDepartmentCode as string) ?? null,
     managerStaffId: (r.ManagerStaffId as number) ?? null,
     managerEmail: (r.ManagerEmail as string) ?? null,
+    // Defaulted here and filled in by the detail read, which is the only
+    // caller that can await HR. A list row keeps null and falls back to the
+    // snapshot, which is what every list has always shown.
+    currentManager: null,
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
     submittedBy: (r.SubmittedBy as number) ?? null,
@@ -218,6 +223,13 @@ export async function getRequest(id: number): Promise<ClearAdvanceRequest | null
   if (head.recordset.length === 0) return null;
   const req = mapRequestRow(head.recordset[0] as Record<string, unknown>);
 
+
+  // Who HR says this requester's manager is TODAY, resolved once here so the
+  // three surfaces that ask cannot disagree: the approve/reject/return routes,
+  // the object ACL, and the detail page's own button gate — which runs in the
+  // browser and could not resolve it for itself. `null` means HR has nothing
+  // usable to say and `managerStaffId` answers instead; see `current-manager.ts`.
+  req.currentManager = await resolveCurrentManagerForRequest(req);
   const clear = await loadClear(pool, id);
   if (clear) req.clear = clear;
 

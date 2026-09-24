@@ -29,6 +29,7 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import type { VendorMatchStatus } from "./vendor-match-core";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { findById } from "@/lib/team-member/service";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { resolveManagerEmail, resolveRequesterForActor } from "@/lib/acc/employee-context";
@@ -147,6 +148,10 @@ function mapReimburseRow(
     requesterDepartmentName: (row.RequesterDepartmentName as string) ?? null,
     managerStaffId: (row.ManagerStaffId as number) ?? null,
     managerEmail: (row.ManagerEmail as string) ?? null,
+    // Defaulted here and filled in by the detail read, which is the only
+    // caller that can await HR. A list row keeps null and falls back to the
+    // snapshot, which is what every list has always shown.
+    currentManager: null,
     companyName: (row.CompanyName as string) ?? null,
     purpose: (row.Purpose as string) ?? null,
     totalAmount: num(row.TotalAmount),
@@ -347,6 +352,12 @@ export async function getReimburseRequest(id: number): Promise<ReimburseDetail |
 
   const detail = mapReimburseRow(row, items, ackedRuleIds, attachments.excelFile, attachments.receiptFiles);
   detail.approvals = approvals;
+  // Who HR says this requester's manager is TODAY, resolved once here so the
+  // three surfaces that ask cannot disagree: the approve/reject/return routes,
+  // the object ACL, and the detail page's own button gate — which runs in the
+  // browser and could not resolve it for itself. `null` means HR has nothing
+  // usable to say and `managerStaffId` answers instead; see `current-manager.ts`.
+  detail.currentManager = await resolveCurrentManagerForRequest(detail);
   return detail;
 }
 

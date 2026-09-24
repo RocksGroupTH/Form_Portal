@@ -4,13 +4,21 @@ import { amountInBaht, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { paymentRoundsForApprovals } from "@/lib/acc/payment-calendar";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
+import { buildMyWorkManagerQuery } from "@/lib/acc/my-work-manager-sql";
 import { perFormOrderBy } from "@/lib/acc/per-form-config";
 import {
+  resolveFormEnvironment,
   resolveViewerEnvironmentMap,
   type FormEnvironmentValue,
 } from "@/lib/form-environment";
 import { keepRowsInCurrentEnvironment } from "@/lib/form-environment/current-rows";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import {
+  currentManagerEmailSql,
+  currentManagerIsPredicate,
+  currentManagerNameSql,
+  hasCurrentManagerPredicate,
+} from "@/lib/acc/current-manager";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import {
   fmtTravelSpanLabel,
@@ -192,6 +200,13 @@ export interface ReportRow {
   suggestedPaymentDate?: string | null;
   /** HR department code (`AccRequest.RequesterDepartmentCode`), falling back to HR. */
   requesterDepartmentCode?: string | null;
+  /**
+   * True when the signed-in user is the requester's manager **today** — HR's
+   * answer, computed in SQL by the My Work query alone (absent everywhere
+   * else). Read by `getMyWorkStatusBucket`, which runs in the browser and
+   * cannot ask HR for itself.
+   */
+  viewerIsCurrentManager?: boolean;
   /** True when the signed-in user already approved the MANAGER step (My Work API). */
   viewerManagerApproved?: boolean;
   /**
@@ -346,7 +361,23 @@ export const TRAVEL_DAYS_CSV_SELECT = `(SELECT STRING_AGG(
    ) dayVehicles
    WHERE te.RequestId = r.Id AND te.TravelDate IS NOT NULL) AS TravelDaysCsv`;
 
-const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName, r.RequesterDepartmentName,
+/**
+ * The shared request-row projection.
+ *
+ * A function of the environment since 2026-09-24, for one column pair only:
+ * **รออนุมัติโดย on a pending MANAGER step now names the manager HR gives
+ * today**, not the assignee the submit stamped. Naming the assignee tells a
+ * requester their claim is waiting on somebody who can no longer act on it —
+ * the routes stopped admitting that person the moment HR moved the requester.
+ * Who the manager is comes from HR in production and from
+ * `Fast_Core.UatTester` in UAT, which is the whole reason this takes a
+ * parameter rather than staying a constant.
+ *
+ * Every other column is unchanged, and the accounting steps are untouched:
+ * their assignee is a pool, not a person, and `AssignedTo` is null on them.
+ */
+function requestRowSelect(environment: FormEnvironmentValue): string {
+  return `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName, r.RequesterDepartmentName,
   r.BrandCode,
   -- Stamped on the request at submit, but older rows predate the column
   -- (migration 047), so fall back to the employee's current department.
@@ -429,6 +460,10 @@ const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.Staff
    WHERE a.RequestId = r.Id AND a.Status = N'Pending'
    ORDER BY a.StepOrder, a.Id) AS PendingStepCode,
   (SELECT TOP 1 COALESCE(
+     -- The manager step follows HR, so the name on it must too. NULL here
+     -- (HR has nothing usable to say, or this is an accounting step) falls
+     -- through to the assignee, which is what every row showed before.
+     CASE WHEN a.StepCode = N'MANAGER' THEN ${currentManagerNameSql(environment, "r")} END,
      NULLIF(LTRIM(RTRIM(CONCAT(e.FirstName, N' ', e.LastName))), N''),
      e.FullName
    )
@@ -436,10 +471,15 @@ const REQUEST_ROW_SELECT = `r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.Staff
    LEFT JOIN ${hrEmployeeTable()} e ON e.StaffId = a.AssignedTo AND e.Status = N'Active'
    WHERE a.RequestId = r.Id AND a.Status = N'Pending'
    ORDER BY a.StepOrder, a.Id) AS PendingApproverName,
-  (SELECT TOP 1 COALESCE(NULLIF(LTRIM(RTRIM(a.AssignedEmail)), N''), r.ManagerEmail)
+  (SELECT TOP 1 COALESCE(
+     CASE WHEN a.StepCode = N'MANAGER' THEN ${currentManagerEmailSql(environment, "r")} END,
+     NULLIF(LTRIM(RTRIM(a.AssignedEmail)), N''),
+     r.ManagerEmail
+   )
    FROM [dbo].[AccApproval] a
    WHERE a.RequestId = r.Id AND a.Status = N'Pending'
    ORDER BY a.StepOrder, a.Id) AS PendingApproverEmail`;
+}
 
 function parseCsvList(raw: unknown): string[] | undefined {
   if (typeof raw !== "string" || !raw.trim()) return undefined;
@@ -619,13 +659,24 @@ function mapRow(
       x.ViewerManagerApproved != null
         ? Number(x.ViewerManagerApproved) === 1
         : undefined,
+    viewerIsCurrentManager:
+      x.ViewerIsCurrentManager != null
+        ? Number(x.ViewerIsCurrentManager) === 1
+        : undefined,
   };
 }
 
+/**
+ * `environment` is required rather than defaulted: it decides which table
+ * names the requester's manager on the รออนุมัติโดย column, and a default
+ * would silently resolve a UAT list against production's HR — the caller
+ * always knows, so make it say so.
+ */
 function buildListQuery(
   view: "request" | "day",
   where: string,
   order: string,
+  environment: FormEnvironmentValue,
   extraSelect = "",
 ): string {
   if (view === "day") {
@@ -637,10 +688,10 @@ function buildListQuery(
     `;
   }
   return `
-    SELECT ${REQUEST_ROW_SELECT}${extraSelect}
+    SELECT ${requestRowSelect(environment)}${extraSelect}
     ${FROM_JOINS}
     WHERE ${where}
-    -- Every non-aggregated column of REQUEST_ROW_SELECT belongs here. The
+    -- Every non-aggregated column of requestRowSelect() belongs here. The
     -- correlated subqueries do not: they are scalar and keyed on r.Id, which is
     -- grouped. RequesterDepartmentCode is a plain column and does.
     GROUP BY r.Id, r.RequestNo, r.FormCode, f.FormNameTh, r.StaffId, r.RequesterFullName,
@@ -696,15 +747,26 @@ async function viewerEnvironmentMapOrProduction(): Promise<
 
 /** Requests the user submitted/owns (excludes drafts) — aggregated per request. */
 export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
-  const rows = await queryBothPools(async (pool) => {
+  const rows = await queryBothPools(async (pool, environment) => {
     const res = await pool
       .request()
       .input("uid", sql.Int, userId)
       .query(
         buildListQuery(
           "request",
-          `r.Status <> 'Draft' AND (r.CreatedBy = @uid OR r.SubmittedBy = @uid)`,
+          /* **Drafts included since 2026-09-24** (the user). Home's ร่าง /
+             ตีกลับ tile had to open a list that actually contains what it
+             counted, and `Status <> 'Draft'` meant it could not: the tile
+             counted drafts and returns, the page could show only returns.
+
+             A draft carries no `RequestNo` and no `SubmittedAt`, so it prints
+             — in both columns and drops out of any วันที่ส่ง range, which is
+             correct rather than merely tolerable: it has not been sent.
+             `listMyWorkRows` is unaffected — it matches on an approval row,
+             and a draft has none. */
+          `r.CreatedBy = @uid OR r.SubmittedBy = @uid`,
           "r.SubmittedAt DESC, r.Id DESC",
+          environment,
         ),
       );
     return (res.recordset as Record<string, unknown>[]).map((x) =>
@@ -717,25 +779,16 @@ export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
   ).sort(bySubmittedAtDesc);
 }
 
-/** Requests the user has a part in approving (manager or account) — aggregated per request. */
 export async function listMyWorkRows(
   staffId: number | null,
   email: string | null,
 ): Promise<ReportRow[]> {
-  const viewerManagerSelect = `,
-  (SELECT TOP 1 CASE WHEN a.Status = N'Approved' THEN 1 ELSE 0 END
-   FROM [dbo].[AccApproval] a
-   WHERE a.RequestId = r.Id AND a.StepCode = N'MANAGER'
-     AND (
-       (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
-       OR (
-         @email <> N''
-         AND LOWER(LTRIM(RTRIM(COALESCE(a.AssignedEmail, N''))))
-           = LOWER(LTRIM(RTRIM(@email)))
-       )
-     )
-  ) AS ViewerManagerApproved`;
-  const rows = await queryBothPools(async (pool) => {
+  const rows = await queryBothPools(async (pool, environment) => {
+    // Which table answers "who manages this requester" depends on the database
+    // being queried, and a pool and an environment are the same fact here —
+    // every request in Rocks_Portal_Form_UAT is a UAT request.
+    const { where, select: viewerManagerSelect } = buildMyWorkManagerQuery(environment);
+
     const res = await pool
       .request()
       .input("staffId", sql.Int, staffId)
@@ -743,81 +796,13 @@ export async function listMyWorkRows(
       .query(
         buildListQuery(
           "request",
-          `r.Status <> 'Draft' AND (
-          /* **My Work is the MANAGER's inbox, and nothing else** (the user's
-             decision, 2026-09-24). It used to be "anything you have a part in
-             approving", which for somebody who is both a manager and an
-             accountant meant one list holding two unrelated jobs — measured
-             that day, the viewer was on AP-1's seven-strong AccApprover roster
-             as well as being a manager, so their queue was mostly other
-             people's claims sitting at the accounting step.
-
-             Every accounting ROSTER arm is gone with it: AP-1's AccApprover,
-             AP-4's AccReimburseApprover (and its per-brand scope), AP-3's
-             AccClearAdvanceApprover and AP-2's AccAdvanceApprover. Nothing
-             becomes unreachable — each of those has its own queue page, which
-             is the authority on that work anyway:
-               AP-1  /request/accounting            -> คิวอนุมัติ
-               AP-4  /request/reimburse/approvals
-               AP-2  /request/advance               -> คิวอนุมัติ
-               AP-3  /request/clear-advance         -> คิวอนุมัติ
-
-             **AP-2 leaves My Work entirely, and that follows rather than being
-             overlooked.** Its chain is HEAD_ACC / DIRECTOR / ACC_OFFICER — an
-             amount matrix of accounting and executive steps with no manager
-             step at all (AP-2's own HEAD_DEPT is retired). A form with no
-             MANAGER step has nothing a manager's inbox can hold.
-
-             **History is kept, which is what makes the narrowing safe.** The
-             match is on the manager's own approval ROW, not on it still being
-             Pending, so a claim stays visible after the manager approves,
-             rejects or returns it — it moves to the อนุมัติแล้ว / ไม่อนุมัติ /
-             ส่งกลับแก้ไข tab through getMyWorkStatusBucket rather than
-             vanishing. That was the second half of the same instruction: once
-             the manager has acted it must leave รออนุมัติ, which the bucket
-             already did and still does. */
-          EXISTS (
-            /* AP-1, AP-4 and AP-17 share [dbo].[AccApproval]. StepCode pins
-               the manager step, so an ACCOUNT row assigned to this same person
-               in their OTHER capacity cannot pull the claim back in — which is
-               exactly the mixing this change removes. */
-            SELECT 1 FROM [dbo].[AccApproval] a
-            WHERE a.RequestId = r.Id
-              AND a.StepCode = N'MANAGER'
-              AND (
-                (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
-                OR (
-                  @email <> N''
-                  AND LOWER(LTRIM(RTRIM(COALESCE(a.AssignedEmail, N''))))
-                    = LOWER(LTRIM(RTRIM(@email)))
-                )
-              )
-          )
-          OR EXISTS (
-            /* AP-3 writes its own table and DOES have a manager step
-               (CK_AccClearAdvanceApproval_Step permits MANAGER/ACCOUNT/HEAD),
-               so its managers keep their inbox while its accountants move to
-               the AP-3 queue. */
-            SELECT 1 FROM [dbo].[AccClearAdvanceApproval] ca
-            WHERE ca.RequestId = r.Id
-              AND ca.StepCode = N'MANAGER'
-              AND (
-                (@staffId IS NOT NULL AND ca.AssignedStaffId = @staffId)
-                OR (
-                  @email <> N''
-                  AND LOWER(LTRIM(RTRIM(COALESCE(ca.AssignedEmail, N''))))
-                    = LOWER(LTRIM(RTRIM(@email)))
-                )
-              )
-          )
-        )`,
+          where,
           "r.SubmittedAt DESC, r.Id DESC",
+          environment,
           viewerManagerSelect,
         ),
       );
-    return (res.recordset as Record<string, unknown>[]).map((x) =>
-      mapRow(x, "request"),
-    );
+    return (res.recordset as Record<string, unknown>[]).map((x) => mapRow(x, "request"));
   });
   return keepRowsInCurrentEnvironment(
     rows,
@@ -836,6 +821,11 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
   const view = f.view ?? "request";
   const rows = await (async () => {
     const pool = await getAccPool();
+    // The report reads ONE database — whichever this form resolved to — so its
+    // รออนุมัติโดย column must name the manager from that same environment's
+    // source. `getAccPool()` and this resolve answer the same question, which is
+    // why they cannot disagree here the way a merged list's two halves could.
+    const reportEnvironment = await resolveFormEnvironment();
     const req = pool.request();
     // AP-1 only. Every Acc* form writes to the same AccRequest table, so
     // `Status <> 'Draft'` alone hands this query every accounting request there
@@ -904,6 +894,7 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
         view,
         where.join(" AND "),
         "r.SubmittedAt DESC, r.Id DESC",
+        reportEnvironment,
       ),
     );
 

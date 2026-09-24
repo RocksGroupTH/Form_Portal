@@ -6,6 +6,7 @@ import {
   type MyWorkRowInput,
   type MyWorkViewerContext,
 } from "@/lib/acc/approval-display";
+import { countHomeStats, monthRange } from "@/features/home/lib/home-stats";
 
 /**
  * Throwing fetcher — the app's API routes answer a failure with HTTP 500 *and* a
@@ -68,12 +69,6 @@ function latest(items: Array<{ updatedAt: string }>): string | null {
   return best;
 }
 
-function isThisMonth(iso: string | null | undefined): boolean {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-}
 
 /**
  * Home reads Accounting only. Form Builder used to contribute a form catalogue
@@ -139,9 +134,16 @@ export function useHomeData() {
   const summaryError =
     mine.error || work.error || ap1.error || ap17.error || employee.error || access.error;
 
+  /* One clock for the whole strip, and one pass over the rows.
+     `countHomeStats` is pure and tested; everything it needs is already on
+     screen, so the six request tiles cost no extra fetch — `/requests/mine` was
+     being read for the month count alone before this. */
+  const stats = countHomeStats(mine.data?.data ?? [], new Date());
+
   return {
     pendingCount: accPendingCount,
-    monthCount: (mine.data?.data ?? []).filter((r) => isThisMonth(r.submittedAt)).length,
+    stats,
+    monthRange: monthRange(new Date()),
     /** Editable rows — drafts **and** returned-for-revision. See `ResumableGroup.returnedCount`. */
     resumableCount: ap1Rows.length + ap17Rows.length,
     resumable,

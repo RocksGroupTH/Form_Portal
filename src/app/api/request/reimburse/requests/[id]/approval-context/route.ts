@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
-import { canActManagerApi, canActManagerStep } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStep, mayActOnManagerStepApi } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { getReimburseRequest } from "@/lib/acc/reimburse/request-service";
 import {
@@ -82,12 +82,18 @@ export async function GET(
       const host = await getRequestHost();
       const pending =
         request.approvals?.find((a) => a.stepCode === "MANAGER" && a.status === "Pending") ?? null;
-      const assigned = canActManagerStep(
-        actor.staffId, actor.email, request.managerStaffId, pending, null, false,
-      );
-      const withBypass = canActManagerApi(
-        actor.staffId, request.managerStaffId, session.user.role, host, pending, actor.email,
-      );
+      // One assignment, asked twice: once plainly, once with the dev-host
+      // bypass, so the page can say *why* the button is live. `current` is the
+      // live manager the detail read resolved — see `current-manager.ts`; when
+      // it is set the snapshot beside it is not consulted at all.
+      const assignment = {
+        current: request.currentManager,
+        snapshotStaffId: request.managerStaffId,
+        approval: pending,
+      };
+      const me = { staffId: actor.staffId, email: actor.email };
+      const assigned = mayActOnManagerStep(me, assignment);
+      const withBypass = mayActOnManagerStepApi(me, assignment, host);
       return NextResponse.json({
         ok: true,
         data: { ...empty, canAct: withBypass, viaManagerDevBypass: withBypass && !assigned },

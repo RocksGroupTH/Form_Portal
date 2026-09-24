@@ -62,7 +62,12 @@ function FileTile({ file, onOpen }: { file: AccFileMeta; onOpen: (f: AccFileMeta
   );
 }
 import { UatDataBanner } from "@/components/UatDataBanner";
-import { canActManagerStep } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
+import {
+  approvalActorPrefixFor,
+  isWithdrawnApproval,
+  withdrawnApprovalLabel,
+} from "@/features/accounting/lib/withdrawn-approval";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useRole } from "@/lib/hooks/useRole";
 import { computeTotalAmount, computeTotalDistance, dayCostBreakdown } from "@/lib/acc/calc";
@@ -162,12 +167,7 @@ function approvalActorLabel(approval: AccApproval): string | null {
   return email ?? null;
 }
 
-function approvalActorPrefix(status: AccApproval["status"]): string {
-  if (status === "Approved") return "อนุมัติโดย";
-  if (status === "Rejected") return "ไม่อนุมัติโดย";
-  if (status === "Returned") return "ส่งกลับโดย";
-  return "รอดำเนินการโดย";
-}
+
 
 const TRAVEL_ITEM_LABEL: Record<string, string> = {
   fare: "ค่าโดยสาร",
@@ -405,9 +405,15 @@ function buildExpenseLines(day: TravelExpenseDetail): ExpenseLine[] {
 
 interface StatusBadgeProps {
   status: AccApproval["status"];
+  /**
+   * The REQUEST's status, which is what tells a cancellation from a return:
+   * a self-cancel closes the pending row as `Returned` because
+   * `CK_AccApproval_Status` has no `Cancelled`. See `withdrawn-approval.ts`.
+   */
+  requestStatus?: string | null;
 }
 
-function ApprovalStatusBadge({ status }: StatusBadgeProps) {
+function ApprovalStatusBadge({ status, requestStatus }: StatusBadgeProps) {
   const configs: Record<
     AccApproval["status"],
     { label: string; icon: React.ReactNode; bg: string; text: string; border: string }
@@ -442,7 +448,13 @@ function ApprovalStatusBadge({ status }: StatusBadgeProps) {
     },
   };
 
-  const cfg = configs[status];
+  const base = configs[status];
+  // Same colours, honest wording — the row IS the record of the withdrawal,
+  // so it is relabelled rather than hidden.
+  const withdrawnLabel = withdrawnApprovalLabel(requestStatus, status);
+  const cfg = withdrawnLabel
+    ? { ...base, label: withdrawnLabel, icon: <Ban size={12} /> }
+    : base;
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full"
@@ -1404,36 +1416,31 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
   );
 
   /**
-   * Whether the viewer is the manager this request was actually assigned to —
-   * no host bypass involved.
+   * Whether the viewer is this request's manager — no host bypass involved.
    *
-   * For a UAT request that means the requester's configured UAT manager: the
-   * submit resolves `UatTester.ManagerStaffId` and writes it into
-   * `request.managerStaffId`, so the snapshot compared here already *is* the
-   * UAT manager. A tester who is their own manager matches it too.
+   * `current` is the live answer the server resolved on this read: whoever HR
+   * (or `UatTester`, in UAT) names as the requester's manager **today**. When
+   * it is set it decides alone, so a manager replaced in HR stops seeing the
+   * buttons here at the same moment the routes stop accepting them — which is
+   * the whole point of resolving it server-side and shipping it down rather
+   * than letting this component compare a snapshot. `null` means HR had
+   * nothing usable to say and `managerStaffId` answers, exactly as before.
    */
+  const managerAssignment = {
+    current: request.currentManager,
+    snapshotStaffId: request.managerStaffId,
+    approval: pendingManagerApproval,
+  };
+  const viewerAsActor = { staffId: viewerStaffId, email: viewerEmail };
+
   const isAssignedManagerViewer =
     request.currentStepCode === "MANAGER" &&
-    canActManagerStep(
-      viewerStaffId,
-      viewerEmail,
-      request.managerStaffId,
-      pendingManagerApproval,
-      role,
-      false,
-    );
+    mayActOnManagerStep(viewerAsActor, managerAssignment);
 
   const canActManager =
     isAssignedManagerViewer ||
     (request.currentStepCode === "MANAGER" &&
-      canActManagerStep(
-        viewerStaffId,
-        viewerEmail,
-        request.managerStaffId,
-        pendingManagerApproval,
-        role,
-        isDevHost,
-      ));
+      mayActOnManagerStep(viewerAsActor, managerAssignment, { devHostBypass: isDevHost }));
 
   const [mgAction, setMgAction] = useState<"approve" | "return" | "reject" | null>(null);
   const [mgComment, setMgComment] = useState("");
@@ -1759,7 +1766,17 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                         ) : approval.status === "Rejected" ? (
                           <XCircle size={14} />
                         ) : approval.status === "Returned" ? (
-                          <RotateCcw size={13} />
+                          /* One icon per event, not two: the chip beside this
+                             dot already says ยกเลิกโดยผู้ขอ with a Ban, and a
+                             ↺ in the circle next to it reads as a second,
+                             different thing having happened. The colours stay
+                             the return tones on purpose — the row IS still a
+                             `Returned` row, and only its meaning changed. */
+                          isWithdrawnApproval(request.status, approval.status) ? (
+                            <Ban size={13} />
+                          ) : (
+                            <RotateCcw size={13} />
+                          )
                         ) : (
                           <Clock size={13} />
                         )}
@@ -1775,7 +1792,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                     {/* Content */}
                     <div className="flex-1 pb-4">
                       <div className="mb-1">
-                        <ApprovalStatusBadge status={approval.status} />
+                        <ApprovalStatusBadge status={approval.status} requestStatus={request.status} />
                       </div>
                       <div className="mb-0.5">
                         <span className="text-[13px] font-medium" style={{ color: "var(--text-heading)" }}>
@@ -1787,7 +1804,7 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                         if (!actor) return null;
                         return (
                           <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-                            {approvalActorPrefix(approval.status)} {actor}
+                            {approvalActorPrefixFor(approval.status, request.status)} {actor}
                           </p>
                         );
                       })()}

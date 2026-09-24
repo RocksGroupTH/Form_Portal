@@ -34,6 +34,7 @@ import {
   upcomingPaymentRounds,
 } from "./approval-policy";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
+import { buildMyWorkManagerQuery } from "@/lib/acc/my-work-manager-sql";
 import { AP4_FORM_CODE, REIMBURSE_STEP_CODES } from "@/features/reimburse/constants";
 import type { ReimburseApproval, ReimburseApprover } from "@/features/reimburse/types";
 
@@ -410,103 +411,118 @@ test("AP-1's action routes authorize against an AP-1 row, not any row", () => {
 
 /* ───────────── the accounting queues do not cross forms (finding 3) ───────────── */
 
-test("My Work consults NO approver roster — it is the manager's inbox", () => {
-  /**
-   * **This assertion is the inverse of the one it replaces**, and the history
-   * is why it is worth keeping rather than deleting.
-   *
-   * It used to pin that each form's accounting roster answered for that form
-   * and no other — written after an AP-1 accountant was handed every pending
-   * AP-4 accounting step, and clicking one opened it over an AP-1 URL. That
-   * defect is now unreachable by construction rather than by careful pinning:
-   * **My Work asks about the MANAGER step only** (the user's decision,
-   * 2026-09-24), so no roster is consulted at all and no form's queue can leak
-   * into another's.
-   *
-   * The rosters still decide who may act — `requireApproverStaffId`,
-   * `requireApproverScopeFor` and AP-1's `canAccessAccountArea` are untouched.
-   * What changed is only which list this page draws.
-   */
-  const report = readSrc("lib/acc/report-service.ts");
-  const start = report.indexOf("export async function listMyWorkRows");
-  const end = report.indexOf("export async function queryReport");
-  assert.ok(start > 0 && end > start, "could not locate listMyWorkRows");
-  const myWork = report.slice(start, end);
+/**
+ * These assert the SQL the My Work list actually sends, not the source that
+ * builds it.
+ *
+ * They used to slice `listMyWorkRows` out of `report-service.ts` and look for
+ * substrings. That stopped working the day the query started being assembled
+ * from templates — the MANAGER pin is written `${t.alias}.StepCode` and appears
+ * nowhere in the source — and the fix is the better shape anyway:
+ * `buildMyWorkManagerQuery` is pure, so a test can hold the finished string.
+ * It is still not a semantic check (only SQL Server can say what a WHERE means,
+ * and both databases were measured by hand when this landed); it is the layer
+ * that catches a dropped arm, a dropped pin or an appended `OR`.
+ */
+for (const environment of ["Production", "UAT"] as const) {
+  test(`My Work (${environment}) matches the MANAGER step, and only that`, () => {
+    /* Two tables, because AP-3 keeps its own: AccApproval carries AP-1, AP-4
+       and AP-17, AccClearAdvanceApproval carries AP-3. Both arms pin the
+       MANAGER step — without the pin, an ACCOUNT row assigned to the same
+       person in their other capacity pulls the claim straight back in, which is
+       exactly the mixing the 2026-09-24 narrowing removed. */
+    const { where } = buildMyWorkManagerQuery(environment);
 
-  for (const roster of [
-    "[dbo].[AccApprover]",
-    "[dbo].[AccReimburseApprover]",
-    "[dbo].[AccReimburseApproverBrand]",
-    "[dbo].[AccClearAdvanceApprover]",
-    "[dbo].[AccAdvanceApprover]",
-  ]) {
-    assert.equal(
-      myWork.indexOf(roster),
-      -1,
-      `My Work reads ${roster} again — that is an accounting queue, and it has its own page`,
+    for (const [table, alias] of [
+      ["[dbo].[AccApproval]", "a"],
+      ["[dbo].[AccClearAdvanceApproval]", "ca"],
+    ] as const) {
+      const at = where.indexOf(table);
+      assert.ok(at > 0, `My Work no longer reads ${table} at all`);
+      assert.ok(
+        where.indexOf(`${alias}.StepCode = N'MANAGER'`, at) > at,
+        `the ${table} arm is not pinned to the MANAGER step`,
+      );
+    }
+
+    for (const step of ["'ACCOUNT'", "'ACCOUNT_FINAL'", "'ACC_OFFICER'", "'HEAD_ACC'"]) {
+      assert.equal(
+        where.indexOf(`StepCode = ${step}`),
+        -1,
+        `My Work matches ${step} again — it is a manager's inbox`,
+      );
+    }
+
+    /* No accounting roster is consulted. The rosters still decide who may ACT
+       — requireApproverStaffId, requireApproverScopeFor and AP-1's
+       canAccessAccountArea are untouched — but none of them decides what this
+       page lists. */
+    for (const roster of [
+      "[dbo].[AccApprover]",
+      "[dbo].[AccReimburseApprover]",
+      "[dbo].[AccReimburseApproverBrand]",
+      "[dbo].[AccClearAdvanceApprover]",
+      "[dbo].[AccAdvanceApprover]",
+    ]) {
+      assert.equal(
+        where.indexOf(roster),
+        -1,
+        `My Work reads ${roster} again — that is an accounting queue with its own page`,
+      );
+    }
+  });
+
+  test(`My Work (${environment}) keeps what a manager has already acted on`, () => {
+    /* Arm 2. The match is on the approval ROW having been actioned, never on
+       the request still being Pending, so approving/rejecting/returning moves a
+       claim between tabs rather than deleting it from the page — the second half
+       of the 2026-09-24 instruction. Since the live resolution landed this arm
+       carries more weight than it used to: it is the ONLY thing keeping a
+       settled claim visible to the manager who signed it, once HR has moved the
+       requester to somebody else. */
+    const { where } = buildMyWorkManagerQuery(environment);
+    for (const alias of ["a", "ca"]) {
+      assert.ok(
+        where.includes(`${alias}.Status <> N'Pending'`),
+        `the ${alias} history arm no longer excludes Pending rows`,
+      );
+      assert.ok(
+        where.includes(`${alias}.ActionedByStaffId = @staffId`),
+        `the ${alias} history arm no longer matches on who actually acted`,
+      );
+    }
+    // A blanket Pending requirement would empty the อนุมัติแล้ว tab outright.
+    assert.equal(where.indexOf("a.Status = N'Pending'"), -1);
+    assert.equal(where.indexOf("ca.Status = N'Pending'"), -1);
+  });
+
+  test(`My Work (${environment}) resolves the manager LIVE, snapshot only as fallback`, () => {
+    /* The change of 2026-09-24. Arm 1 is the live answer; arm 3 admits the
+       submit-time assignee ONLY where HR has nothing usable to say, which is
+       exactly when mayActOnManagerStep admits it too. Drop the NOT and a
+       replaced manager keeps a queue they can no longer act on; drop arm 3 and a
+       requester with no HR manager row has a request nobody can see. */
+    const { where, select } = buildMyWorkManagerQuery(environment);
+    const source =
+      environment === "UAT" ? "[dbo].[UatTester]" : "[Rocks_Portal_HR].[dbo].[Employee]";
+
+    assert.ok(where.includes(source), `the live arm does not read ${source}`);
+    assert.ok(
+      where.includes("live_m.StaffId = @staffId"),
+      "the live arm no longer asks whether the viewer is the requester's manager",
     );
-  }
-});
-
-test("My Work matches the MANAGER step, and only that", () => {
-  /* Two tables, because AP-3 keeps its own: `AccApproval` carries AP-1, AP-4
-     and AP-17, `AccClearAdvanceApproval` carries AP-3. Both arms pin
-     StepCode='MANAGER' — without the pin, an ACCOUNT row assigned to the same
-     person in their other capacity pulls the claim straight back in, which is
-     exactly the mixing this change removed. */
-  const report = readSrc("lib/acc/report-service.ts");
-  const start = report.indexOf("export async function listMyWorkRows");
-  const end = report.indexOf("export async function queryReport");
-  const myWork = report.slice(start, end);
-
-  const a = myWork.indexOf("[dbo].[AccApproval]");
-  assert.ok(a > 0, "My Work no longer reads AccApproval at all");
-  assert.ok(
-    myWork.indexOf("a.StepCode = N'MANAGER'", a) > a,
-    "the AccApproval arm is not pinned to the MANAGER step",
-  );
-
-  const ca = myWork.indexOf("[dbo].[AccClearAdvanceApproval]");
-  assert.ok(ca > 0, "AP-3's managers have lost their inbox");
-  assert.ok(
-    myWork.indexOf("ca.StepCode = N'MANAGER'", ca) > ca,
-    "the AP-3 arm is not pinned to the MANAGER step",
-  );
-
-  // Every step name that is NOT the manager's must be absent from the predicate.
-  for (const step of ["'ACCOUNT'", "'ACCOUNT_FINAL'", "'ACC_OFFICER'", "'HEAD_ACC'"]) {
-    assert.equal(
-      myWork.indexOf(`StepCode = ${step}`),
-      -1,
-      `My Work matches ${step} again — it is a manager's inbox`,
+    assert.ok(
+      /NOT\s+EXISTS/.test(where),
+      "arm 3 lost its NOT — the snapshot now answers even when HR disagrees",
     );
-  }
-});
-
-test("a manager keeps what they have already acted on", () => {
-  /* The match is on the manager's approval ROW, never on it still being
-     Pending, so approving/rejecting/returning moves a claim between the tabs
-     rather than deleting it from the page. That was the second half of the
-     same instruction — once the manager has acted it must leave รออนุมัติ,
-     which `getMyWorkStatusBucket` does — and pinning it here is what stops a
-     later "tidy-up" adding `AND a.Status = 'Pending'` and silently emptying
-     the อนุมัติแล้ว tab. */
-  const report = readSrc("lib/acc/report-service.ts");
-  const start = report.indexOf("export async function listMyWorkRows");
-  const end = report.indexOf("export async function queryReport");
-  const myWork = report.slice(start, end);
-
-  assert.equal(
-    myWork.indexOf("a.Status = N'Pending'"),
-    -1,
-    "the manager arm now requires a Pending row — approved claims will vanish from My Work",
-  );
-  assert.equal(
-    myWork.indexOf("ca.Status = N'Pending'"),
-    -1,
-    "AP-3's manager arm now requires a Pending row — approved claims will vanish",
-  );
-});
+    // The flag the browser buckets rows with has to come from the same predicate.
+    assert.ok(
+      select.includes("AS ViewerIsCurrentManager"),
+      "the list no longer tells the client who the current manager is",
+    );
+    assert.ok(select.includes(source));
+  });
+}
 
 /* ────────── the constant every pin is written against (task 8a, step 8) ────────── */
 

@@ -1,5 +1,6 @@
 import type { Direction, RequestStatus, StepCode, TravelItemType } from "./constants";
 import type { BrandCurrencyEntry } from "@/lib/acc/currency";
+import type { CurrentManagerRef } from "@/lib/acc/manager-auth";
 
 export interface TravelExpenseItem {
   id?: number;
@@ -149,6 +150,18 @@ export interface AccRequest {
   staffId: number | null; requesterFullName: string | null; requesterEmail: string | null;
   requesterPosition: string | null;
   requesterDepartmentName: string | null; managerStaffId: number | null; managerEmail: string | null;
+  /**
+   * Who HR says the requester's manager is **today** — resolved on every detail
+   * read, not stamped at submit like `managerStaffId` beside it.
+   *
+   * It is what decides the MANAGER step: `mayActOnManagerStep` admits this
+   * person and nobody else whenever it is set, so a manager replaced in HR
+   * loses the pending action at once. `null` means HR has nothing usable to say
+   * (no active row for the requester, no `ManagerStaffId`, or one naming
+   * somebody who has left) and the snapshot answers instead. See
+   * `src/lib/acc/current-manager.ts`.
+   */
+  currentManager: CurrentManagerRef | null;
   companyName: string | null;
   /**
    * **`totalAmount` is Thai baht, always** — whatever currency the claim was

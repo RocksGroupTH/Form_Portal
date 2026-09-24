@@ -27,13 +27,23 @@ export type WithEnvironment<T> = T & { environment: FormEnvironmentValue };
  * anything was missing.
  */
 export async function queryBothPools<T>(
-  fn: (pool: ConnectionPool) => Promise<T[]>,
+  fn: (pool: ConnectionPool, environment: FormEnvironmentValue) => Promise<T[]>,
 ): Promise<WithEnvironment<T>[]> {
   const [prod, uat] = await Promise.all([
     getProductionFormPool(),
     getUatFormPool(),
   ]);
-  const [prodRows, uatRows] = await Promise.all([fn(prod), fn(uat)]);
+  // The environment is handed to the callback as well as stamped on the rows,
+  // because a pool and an environment are the same fact here — every request in
+  // `Rocks_Portal_Form_UAT` is a UAT request — and some reads need it while
+  // building their SQL rather than only afterwards. `listMyWorkRows` is the
+  // first: who a requester's manager is comes from HR in production and from
+  // `Fast_Core.UatTester` in UAT, so the two halves of the merge join different
+  // tables. Callers that do not care simply ignore the second argument.
+  const [prodRows, uatRows] = await Promise.all([
+    fn(prod, "Production"),
+    fn(uat, "UAT"),
+  ]);
 
   const tagged: WithEnvironment<T>[] = [];
   for (const r of prodRows)

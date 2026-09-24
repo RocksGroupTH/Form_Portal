@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { StepCode } from "@/features/accounting/constants";
 import { REIMBURSE_STEP_LABEL } from "@/features/reimburse/constants";
 import { isAssignedManager } from "@/lib/acc/manager-auth";
+import { isCompletedStatus } from "@/features/accounting/constants";
 
 export const APPROVAL_STEP_LABEL: Record<StepCode, string> = {
   MANAGER: "ผู้จัดการ",
@@ -55,14 +56,32 @@ export interface MyWorkRowInput extends NextApprovalInput {
   managerStaffId?: number | null;
   managerEmail?: string | null;
   viewerManagerApproved?: boolean;
+  /**
+   * The list already decided, in SQL, that this viewer is the requester's
+   * manager **today** (`currentManagerIsPredicate`). Trusted rather than
+   * recomputed, exactly as `viewerManagerApproved` beside it is: the browser
+   * holds a snapshot of who the manager was at submit and cannot ask HR who it
+   * is now.
+   */
+  viewerIsCurrentManager?: boolean;
   /** Which form the row belongs to — AP-4's accounting steps bucket differently. */
   formCode?: string | null;
 }
 
+/**
+ * Either manager this request has had — today's, or the one stamped at submit.
+ *
+ * The union matters in one direction each way. Without the live half, a manager
+ * HR has just handed the request to reads a `ManagerApproved` row as still
+ * pending on them, because their StaffId is on neither snapshot column. Without
+ * the snapshot half, the manager who actually approved it loses the row out of
+ * their อนุมัติแล้ว tab the moment HR moves the requester elsewhere.
+ */
 function viewerIsRequestManager(
   row: MyWorkRowInput,
   viewer: MyWorkViewerContext,
 ): boolean {
+  if (row.viewerIsCurrentManager) return true;
   if (isAssignedManager(viewer.staffId, row.managerStaffId ?? null)) return true;
   const email = viewer.email?.trim().toLowerCase();
   const mgr = row.managerEmail?.trim().toLowerCase();
@@ -82,7 +101,11 @@ export function getMyWorkStatusBucket(
   if (status === "Rejected") return "Rejected";
   if (status === "Returned") return "Returned";
   if (status === "Cancelled") return "Cancelled";
-  if (status === "Approved") return "Approved";
+  // `Completed` is AP-17's spelling of the same terminal state, and without
+  // it such a row falls all the way through to `pending` below — so a
+  // finished booking would sit in My Work's รออนุมัติ tab wearing a chip that
+  // reads Complete, the page contradicting itself. See `isCompletedStatus`.
+  if (isCompletedStatus(status)) return "Approved";
 
   const pending = row.pendingStepCode ?? row.currentStepCode ?? null;
 
@@ -172,7 +195,10 @@ export function myWorkStatusStyle(bucket: MyWorkStatusBucket): CSSProperties {
 /** Short label for list rows — next approval step and assignee when in progress. */
 export function formatNextApprovalDetail(input: NextApprovalInput & { viewerManagerApproved?: boolean }): string | null {
   const { status } = input;
-  if (status === "Approved" || status === "Rejected" || status === "Cancelled" || status === "Draft") {
+  // `isCompletedStatus` rather than `=== "Approved"`: a finished AP-17 booking
+  // is `Completed`, and without it this goes looking for a next step on a
+  // request that has none.
+  if (isCompletedStatus(status) || status === "Rejected" || status === "Cancelled" || status === "Draft") {
     return null;
   }
   if (status === "Returned") {

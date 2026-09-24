@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { buildAccActor, resolveAccActorForAction } from "@/lib/acc/actor-context";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
-import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStepApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
 import { statusForAccError } from "@/lib/acc/request-errors";
@@ -75,6 +75,11 @@ export async function POST(
 
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
 
+  // Who HR (or UatTester, in UAT) says is the requester's manager RIGHT NOW.
+  // Null means HR has nothing usable to say, and the snapshot below answers
+  // instead — see `current-manager.ts` for why absence abstains.
+  const currentManager = request.currentManager;
+
   try {
     if (request.currentStepCode === "MANAGER") {
       // AP-1's rule, not AP-17's: an admin may not action the manager step on
@@ -85,21 +90,22 @@ export async function POST(
       const pending =
         request.approvals?.find((a) => a.stepCode === "MANAGER" && a.status === "Pending") ?? null;
       if (
-        !canActManagerApi(
-          actor.staffId,
-          request.managerStaffId,
-          session.user.role,
-          host,
-          pending,
-          actor.email,
-        )
+        !mayActOnManagerStepApi(
+        { staffId: actor.staffId, email: actor.email },
+        {
+          current: currentManager,
+          snapshotStaffId: request.managerStaffId,
+          approval: pending,
+        },
+        host,
+      )
       ) {
         return NextResponse.json({ ok: false, error: MANAGER_AUTH_ERROR }, { status: 403 });
       }
       const actionActor = await resolveAccActorForAction(
         actor,
         session.user.role,
-        request.managerStaffId,
+        currentManager?.staffId ?? request.managerStaffId,
       );
       await approveReimburseManager(id, actionActor);
     } else if (request.currentStepCode === "ACCOUNT") {

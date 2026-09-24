@@ -15,7 +15,7 @@ import {
 } from "@/lib/acc/erp-prep-service";
 import { authorizeAccRequest } from "@/lib/acc/request-acl";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
-import { canActManagerApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStepApi, MANAGER_AUTH_ERROR } from "@/lib/acc/manager-auth";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { processQueue } from "@/lib/acc/email-queue";
 
@@ -53,27 +53,33 @@ export async function POST(
 
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
 
+  // Who HR (or UatTester, in UAT) says is the requester's manager RIGHT NOW.
+  // Null means HR has nothing usable to say, and the snapshot below answers
+  // instead — see `current-manager.ts` for why absence abstains.
+  const currentManager = accReq.currentManager;
+
   try {
     if (accReq.currentStepCode === "MANAGER") {
       const host = await getRequestHost();
       const pendingMgr =
         accReq.approvals?.find((a) => a.stepCode === "MANAGER" && a.status === "Pending") ?? null;
       if (
-        !canActManagerApi(
-          actor.staffId,
-          accReq.managerStaffId,
-          session.user.role,
-          host,
-          pendingMgr,
-          actor.email,
-        )
+        !mayActOnManagerStepApi(
+        { staffId: actor.staffId, email: actor.email },
+        {
+          current: currentManager,
+          snapshotStaffId: accReq.managerStaffId,
+          approval: pendingMgr,
+        },
+        host,
+      )
       ) {
         return NextResponse.json({ ok: false, error: MANAGER_AUTH_ERROR }, { status: 403 });
       }
       const actionActor = await resolveAccActorForAction(
         actor,
         session.user.role,
-        accReq.managerStaffId,
+        currentManager?.staffId ?? accReq.managerStaffId,
       );
       await approveManager(id, actionActor);
     } else if (accReq.currentStepCode === "ACCOUNT") {

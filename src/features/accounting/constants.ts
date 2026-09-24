@@ -38,6 +38,32 @@ export function isPendingApprovalStatus(status: string): boolean {
   return status === "Submitted" || status === "ManagerApproved";
 }
 
+/**
+ * Finished and payable — **and that is two words in the database, not one**.
+ *
+ * `CK_AccRequest_Status` permits both `Approved` and `Completed`, and AP-17
+ * writes the second: `approveByAccount` sets `Status='Completed'` because that
+ * form renamed the terminal state for its own semantics. Everything else writes
+ * `Approved`.
+ *
+ * `statusDisplay` has mapped both to **Complete** since the shared status
+ * vocabulary shipped, so the *chip* has always been right. The filters were
+ * not: `s === "Approved"` alone silently drops every completed AP-17 request
+ * from the อนุมัติแล้ว list, which nobody has seen yet only because no AP-17
+ * request has ever reached it — measured 2026-09-24, its 22 live rows all sit
+ * at `ManagerApproved` and neither form database holds a single `Completed`
+ * row. The day one lands it would read "Complete" on its own chip and be
+ * missing from the filter that names that word.
+ *
+ * So the predicate is shared rather than spelled per call site. **The AP-1
+ * report deliberately does not use it** — `queryReport` pins `FormCode='AP-1'`,
+ * which cannot write `Completed`, and widening a filter to a value its own
+ * query can never return says something false about what that page contains.
+ */
+export function isCompletedStatus(status: string): boolean {
+  return status === "Approved" || status === "Completed";
+}
+
 /** Report status filter — one option per UI label (pending = both approval steps). */
 export const REPORT_STATUS_FILTER_GROUPS = [
   { id: "pending", label: "รออนุมัติ", match: isPendingApprovalStatus },

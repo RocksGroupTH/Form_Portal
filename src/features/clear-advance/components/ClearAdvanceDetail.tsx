@@ -25,6 +25,8 @@ import { CLR_STEP_LABEL_TH, type ClrAnyStepCode } from "@/features/clear-advance
 import { clrTimelineSteps } from "@/lib/clr/clear-advance-timeline";
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
+import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
+import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { linesMissingTaxVendor } from "@/lib/clr/tax-vendor-core";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
 import { tinsNeedingRdCheck } from "@/lib/clr/rd-vat-core";
@@ -219,6 +221,43 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   const inApproval = request.status === "Submitted" && step != null;
   const isManagerStep = inApproval && step === "MANAGER";
   const isAccountStep = inApproval && step === "ACCOUNT";
+
+  /* Whether THIS viewer may work the manager step, not merely whether the
+     request is parked on it.
+     The three buttons below used to render for anybody who could open the page
+     — the account area and both managers included — and every click that was
+     not the manager's own came back 403 from the route's own check. That was
+     always wrong and became visible on 2026-09-24, when the step started
+     following HR: a manager replaced in HR can still READ the request (the
+     object ACL admits either manager, deliberately) and would sit looking at
+     three controls guaranteed to refuse them.
+     Same rule the route applies, off the same payload — `currentManager` is
+     HR's answer today, and when it is set the submit-time snapshot beside it is
+     not consulted. `email: null` because this page resolves the viewer through
+     `/api/me/employee`, which answers a StaffId; a manager always has an HR row,
+     since that is where `ManagerStaffId` points. The dev-host bypass is carried
+     so localhost keeps behaving as the route does — see `isManagerDevBypassHost`,
+     which is off on any deployed build. */
+  const isDevHost = useErpSandboxDevHost();
+  const pendingManagerApproval =
+    request.approvals?.find((a) => a.stepCode === "MANAGER" && a.status === "Pending") ?? null;
+  const canActManagerStep =
+    isManagerStep &&
+    mayActOnManagerStep(
+      { staffId: viewerStaffId, email: null },
+      {
+        current: request.currentManager,
+        snapshotStaffId: request.managerStaffId,
+        approval: pendingManagerApproval
+          ? {
+              assignedTo: pendingManagerApproval.assignedStaffId,
+              assignedEmail: pendingManagerApproval.assignedEmail,
+              status: pendingManagerApproval.status,
+            }
+          : null,
+      },
+      { devHostBypass: isDevHost },
+    );
 
   /* Input tax is claimed against a vendor, so a VAT line has to name one before
      it leaves the account step, which is the last step there is — so this is
@@ -553,8 +592,9 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
 
       {/* Approval timeline + actions */}
       <Section title="ขั้นตอนการอนุมัติ" icon={<CheckCircle size={15} />}>
-        {/* Manager step action buttons */}
-        {isManagerStep && (
+        {/* Manager step action buttons — the manager's own, not everyone who
+            can open the page. See `canActManagerStep` above. */}
+        {canActManagerStep && (
           <div className="mb-4 pb-4 flex flex-wrap gap-2" style={{ borderBottom: "1px solid var(--border-light)" }}>
             <button type="button" onClick={() => { setMgAction("approve"); setMgComment(""); }} disabled={busy}
               className="inline-flex items-center gap-2 text-[13px] font-medium px-4 py-2 rounded-lg cursor-pointer"

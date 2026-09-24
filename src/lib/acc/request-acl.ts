@@ -8,6 +8,8 @@
  */
 
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { currentManagerStaffIdSql } from "@/lib/acc/current-manager";
+import { isUatId } from "@/lib/form-environment/uat-identity";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { resolveFormEnvironment } from "@/lib/form-environment";
 import { getActiveUatTesterFor } from "@/lib/uat-tester/service";
@@ -50,10 +52,17 @@ export async function loadAccRequestAcl(
     where += " AND FormCode = @form";
   }
 
+  // The live manager comes back in the SAME statement rather than from a second
+  // read: this loader runs on every request-scoped route in the application,
+  // and it is answering an authorization question the form database can join
+  // its way to. The environment is taken from the id, the way every decision
+  // about an existing record is — see `current-manager.ts`.
   const res = await req.query(`
-    SELECT Id, FormCode, Status, CreatedBy, SubmittedBy, StaffId, ManagerStaffId
-    FROM [dbo].[AccRequest]
-    WHERE ${where}
+    SELECT r.Id, r.FormCode, r.Status, r.CreatedBy, r.SubmittedBy, r.StaffId, r.ManagerStaffId,
+           ${currentManagerStaffIdSql(isUatId(requestId) ? "UAT" : "Production", "r")}
+             AS CurrentManagerStaffId
+    FROM [dbo].[AccRequest] r
+    WHERE ${where.replace(/\bId = @id\b/, "r.Id = @id").replace(/\bFormCode = @form\b/, "r.FormCode = @form")}
   `);
   const row = res.recordset[0] as Record<string, unknown> | undefined;
   if (!row) return null;
@@ -66,6 +75,7 @@ export async function loadAccRequestAcl(
     submittedBy: (row.SubmittedBy as number | null) ?? null,
     staffId: (row.StaffId as number | null) ?? null,
     managerStaffId: (row.ManagerStaffId as number | null) ?? null,
+    currentManagerStaffId: (row.CurrentManagerStaffId as number | null) ?? null,
   };
 }
 

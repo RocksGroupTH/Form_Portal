@@ -11,6 +11,7 @@
     "test": "tsx scripts/run-tests.ts",
     "typecheck": "tsc --noEmit",
     "check:alignment": "tsx scripts/checks/verify-master-alignment.ts",
+    "check:manager-drift": "tsx scripts/checks/report-manager-drift.ts",
     "check:dept-map-home": "tsx scripts/checks/verify-department-erp-map-move.ts",
     "check:erp-data-home": "tsx scripts/checks/verify-erp-data-move.ts",
     "check:erp-vendors": "tsx scripts/checks/verify-erp-vendors.ts",

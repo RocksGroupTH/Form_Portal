@@ -118,10 +118,17 @@ export function columnsForKind(kind: MyRequestKind): MyRequestColumn[] {
  * waiting for me", so it leads with who filed it and how long it has sat.
  */
 export function defaultVisibleKeys(kind: MyRequestKind): MyRequestColKey[] {
+  /* The two sets the user drew on 2026-09-24. Both now lead with **ชื่อฟอร์ม
+     rather than the AP-nn code**: the code is what the form filter offers and
+     what a URL carries, but a person reading their own list wants to know it
+     is the booking form, not that it is AP-17.
+
+     They are a starting point only — `MyRequestsTable` remembers whatever
+     the viewer picks afterwards, per page, in localStorage. */
   return kind === "work"
     ? [
         "requestNo",
-        "formCode",
+        "formName",
         "requesterName",
         "status",
         "pendingBy",
@@ -131,14 +138,13 @@ export function defaultVisibleKeys(kind: MyRequestKind): MyRequestColKey[] {
       ]
     : [
         "requestNo",
-        "formCode",
+        "formName",
         "brandCode",
         "status",
         "pendingBy",
         "submittedAt",
-        "managerApprovedAt",
-        "totalAmount",
         "paymentDate",
+        "totalAmount",
       ];
 }
 
@@ -303,6 +309,7 @@ export function departmentLabel(code: string | null | undefined): string {
  * rather than silently reading as the last arm of a switch.
  */
 export type MyRequestStatusTone =
+  | "draft"
   | "submitted"
   | "pending"
   | "complete"
@@ -317,6 +324,13 @@ export interface MyRequestStatusDisplay {
 }
 
 const STATUS_DISPLAY: Record<string, MyRequestStatusDisplay> = {
+  /* A draft reaches this page since 2026-09-24: `listMyRequestRows` stopped
+     pinning `Status <> 'Draft'` so the ร่าง / ตีกลับ tile on Home could open
+     a list that actually contains what it counted. Before that no row here
+     could be one, and an unmapped status renders as itself — so this read
+     `Draft` in the fallback tone rather than being wrong, which is why
+     nothing broke and also why nothing said it was missing. */
+  Draft: { label: "Draft", tone: "draft" },
   Submitted: { label: "Submitted", tone: "submitted" },
   ManagerApproved: { label: "Pending", tone: "pending" },
   Approved: { label: "Complete", tone: "complete" },
