@@ -398,10 +398,14 @@ Replace that opening tag with:
 The header at `:1574` is already a flex row holding the label and a `<div className="flex items-center gap-2">` of controls (the ตรวจสรรพากร button lives there). Add this as the **last** child of that inner `<div>`:
 
 ```tsx
-            {lines.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setLinesWide((v) => !v)}
+            {/* No `lines.length` guard, unlike AP-4's: this form always holds at
+                least one row — the initial state seeds a blank one and removeLine
+                puts it back — so the widened card never shows the blank page
+                AP-4's guard exists to prevent. */}
+            <button
+              type="button"
+              onClick={() => setLinesWide((v) => !v)}
+              aria-pressed={linesWide}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
                 style={{
                   background: "var(--bg-card-alt)",
@@ -422,8 +426,13 @@ The header at `:1574` is already a flex row holding the label and a `<div classN
             )}
 ```
 
-The `lines.length > 0` guard is AP-4's, and its reason is AP-4's: an empty table at full
-width is a blank page.
+**AP-4's `items.length > 0` guard does NOT cross over.** Its table can genuinely be empty;
+this one cannot — `:224-226` seeds `[emptyLine()]` on load and `removeLine` at `:476-480` puts
+a blank row back when the last is removed. Copying the guard here gives you a condition that
+is always true and a commit message that claims a behaviour nobody can observe. `aria-pressed`
+is not optional either: `SidePanel.tsx:60` uses it for this exact gesture, and
+`MyRequestsPanel.tsx:552` and `brand-config/page.tsx:628` both write down why the changing
+verb alone is not enough.
 
 - [ ] **Step 5: Verify**
 
