@@ -773,9 +773,14 @@ same is true of the narrow-screen cards at a phone width.
 
 - [ ] **Step 2: The card widens**
 
-With at least one expense row, press **ขยายเต็มความกว้าง**. The card should reach the
-viewport's edges less 12px each side and stay centred; **ย่อกลับ** restores it. With no rows
-the button must not be there at all.
+Press **ขยายเต็มความกว้าง**. The card should reach the viewport's edges less 12px each
+side and stay centred; **ย่อกลับ** restores it. Check the right edge is not cropped —
+`html:has(.acc-theme)` clips overflow rather than scrolling it, so a miscalculated width shows
+as a quietly missing column, not as a page scrollbar.
+
+**The button is always present**, including on a brand-new form. An earlier draft of this plan
+carried AP-4's `items.length > 0` guard, which cannot fire here: this form seeds a blank row on
+load and puts one back when the last is removed. Do not expect the button to be hidden.
 
 - [ ] **Step 3: A raw attach uploads and reads nothing**
 
