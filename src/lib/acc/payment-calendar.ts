@@ -2,12 +2,9 @@ import { getCorePool, sql } from "@/lib/db/mssql";
 import {
   defaultPaymentRound,
   nthFridayOfMonth,
-  paymentRoundsInMonth,
   ymd,
 } from "@/lib/acc/payment-calendar-core";
-
-/** AP-1 pays on the 2nd and 4th Friday. AP-4 pays on the 1st and 3rd. */
-const ROUNDS = [2, 4];
+import { paydaysInMonth, type PaydayForm } from "@/lib/acc/payment-rounds";
 
 // Re-exported for src/lib/acc/reimburse/payment-calendar.ts (AP-4), which needs
 // the same building blocks but a different round (1st/3rd Friday instead of
@@ -41,8 +38,15 @@ export function shiftPaymentDay(d: Date, holidays: Set<string>): Date {
   return cur;
 }
 
-/** Valid payment dates (2nd & 4th Friday, holiday-shifted) for the next `months`. */
+/**
+ * Valid payment dates (holiday-shifted) for the next `months`.
+ *
+ * `form` has no default on purpose: every caller must say which form it is
+ * asking for, so the compiler — not a review — finds anyone still assuming
+ * the old shared 2nd/4th-Friday calendar.
+ */
 export async function getPaymentDates(
+  form: PaydayForm,
   from: Date = new Date(),
   months = 4,
   /**
@@ -65,8 +69,7 @@ export async function getPaymentDates(
   const out: string[] = [];
   for (let m = -monthsBack; m <= months; m++) {
     const anchor = new Date(from.getFullYear(), from.getMonth() + m, 1);
-    for (const nth of [2, 4]) {
-      const base = nthFridayOfMonth(anchor.getFullYear(), anchor.getMonth(), nth);
+    for (const base of paydaysInMonth(form, anchor.getFullYear(), anchor.getMonth())) {
       const shifted = shiftPaymentDay(base, holidays);
       const s = ymd(shifted);
       // Past rounds only when explicitly backfilling. A requester's picker asks
@@ -101,19 +104,20 @@ export async function getPaymentDates(
  * decides what to do rather than this inventing a date.
  */
 export async function getDefaultPaymentDate(
+  form: PaydayForm,
   approvedAt: Date = new Date(),
   months = 4,
 ): Promise<string | null> {
-  const only = await paymentRoundsForApprovals([approvedAt], months);
+  const only = await paymentRoundsForApprovals(form, [approvedAt], months);
   return only[0];
 }
 
 /** Every round from `from`'s month through `months` later, UNSHIFTED, ascending. */
-function unshiftedRounds(from: Date, months: number): Date[] {
+function unshiftedRounds(form: PaydayForm, from: Date, months: number): Date[] {
   const out: Date[] = [];
   for (let m = 0; m <= months; m++) {
     const anchor = new Date(from.getFullYear(), from.getMonth() + m, 1);
-    for (const r of paymentRoundsInMonth(anchor.getFullYear(), anchor.getMonth(), ROUNDS)) {
+    for (const r of paydaysInMonth(form, anchor.getFullYear(), anchor.getMonth())) {
       out.push(r);
     }
   }
@@ -142,6 +146,7 @@ function unshiftedRounds(from: Date, months: number): Date[] {
  * `payment-calendar-core.ts`.
  */
 export async function paymentRoundsForApprovals(
+  form: PaydayForm,
   approvedAts: readonly (Date | null | undefined)[],
   months = 4,
 ): Promise<(string | null)[]> {
@@ -155,7 +160,7 @@ export async function paymentRoundsForApprovals(
   const start = new Date(earliest.getFullYear(), earliest.getMonth(), 1);
   const end = new Date(earliest.getFullYear(), earliest.getMonth() + months + 1, 0);
   const holidays = await getHolidaySet(start, end);
-  const rounds = unshiftedRounds(earliest, months);
+  const rounds = unshiftedRounds(form, earliest, months);
 
   return approvedAts.map((a) => {
     if (!a || Number.isNaN(a.getTime())) return null;

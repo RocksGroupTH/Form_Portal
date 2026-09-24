@@ -79,9 +79,9 @@ export async function approveCurrentStep(
   if (!step) throw new Error("คำขอไม่อยู่ในขั้นรออนุมัติ");
 
   if (needsPayment(step.stepType)) {
-    const valid = await getPaymentDates();
+    const valid = await getPaymentDates("AP-2");
     if (!opts.paymentDate || !valid.includes(opts.paymentDate)) {
-      throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
+      throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด — ต้องเป็นวันศุกร์");
     }
     // AP-2: the debit posts to a Vendor, so the Accounting Officer must have a
     // confirmed vendor before this step can complete. (Belt: the send guard and

@@ -920,7 +920,10 @@ export async function queryReport(f: ReportFilters): Promise<ReportRow[]> {
          dates: a claim approved 03/09 still names 11/09 on the 14th, which is
          the truth about the claim — and why `approveAccount` takes a month's
          backward window rather than only future rounds. */
+      // This report is AP-1's — a report covering several forms would need a
+      // per-row answer, and this one does not.
       const suggested = await paymentRoundsForApprovals(
+        "AP-1",
         (res.recordset as Record<string, unknown>[]).map(
           (x) => x.ManagerApprovedAt as Date | null,
         ),

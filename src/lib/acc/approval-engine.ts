@@ -94,7 +94,7 @@ export async function approveAccount(
      the round the claim actually made — otherwise the suggestion beside the
      control names a date this line refuses, and only an admin can then set it
      through the correction route, which has taken a backward window all along. */
-  const valid = await getPaymentDates(new Date(), 4, 1);
+  const valid = await getPaymentDates("AP-1", new Date(), 4, 1);
   if (!valid.includes(paymentDate)) throw new Error("วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)");
 
   const pool = await getAccPool();
