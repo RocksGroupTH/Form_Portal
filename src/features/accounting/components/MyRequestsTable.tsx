@@ -23,6 +23,8 @@ import {
   type MyRequestKind,
   type MyRequestStatusDisplay,
 } from "@/lib/acc/my-request-view";
+import { approverNamesFor, stepApproverTooltip, type StepApproverPayload } from "@/lib/acc/step-approvers";
+import { useStepApprovers } from "@/lib/hooks/useStepApprovers";
 import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
 
 /**
@@ -243,6 +245,10 @@ export function MyRequestsTable({
    * the reader was looking at when they pressed the button.
    */
   const nowIso = useMemo(() => new Date().toISOString(), [rows]);
+  /* One fetch for the whole table — the rosters are per form, not per request.
+     Undefined while it loads and after a failure, which the tooltip reads as
+     "nothing known" rather than "nobody can act". */
+  const stepApprovers = useStepApprovers();
 
   const statusOf = useCallback(
     (row: ReportRow) => statusFor?.(row) ?? statusDisplay(row.status),
@@ -375,7 +381,7 @@ export function MyRequestsTable({
                       fontVariantNumeric: col.align === "right" ? "tabular-nums" : undefined,
                       fontWeight: col.key === "requestNo" || col.key === "totalAmount" ? 700 : 400,
                     }}
-                    title={cellTitle(row, col.key, nowIso)}
+                    title={cellTitle(row, col.key, nowIso, stepApprovers)}
                   >
                     {col.key === "status" ? (
                       <MyRequestStatusChip display={statusOf(row)} />
@@ -400,9 +406,33 @@ export function MyRequestsTable({
  * the address, which is the only thing naming the person when HR has no row
  * for them, lives here rather than being lost.
  */
-function cellTitle(row: ReportRow, key: MyRequestColKey, nowIso: string): string | undefined {
+function cellTitle(
+  row: ReportRow,
+  key: MyRequestColKey,
+  nowIso: string,
+  stepApprovers: StepApproverPayload | undefined,
+): string | undefined {
   if (key === "workDetail") return cellText(row, key, nowIso);
-  if (key === "pendingBy") return row.pendingApproverEmail?.trim() || undefined;
+  if (key === "pendingBy") {
+    /* A pool step names a department in the cell — `บัญชี`, `Admin` — which
+       answers "who is this with" and nothing about who can actually act.
+       Measured 2026-09-24, `AccApproval` carries an assignee on every pending
+       MANAGER row and on none of the pool rows, so the names come from the
+       rosters instead (the user: "เอาเมาส์ไปชี้ได้ว่าคนที่มีสิทธิ์ในการอนุมัติ
+       นั้นคือใคร"). Scoped to this claim's own brand, because an approver
+       scoped elsewhere cannot act on it. */
+    const names = approverNamesFor(stepApprovers, {
+      environment: row.environment,
+      formCode: row.formCode,
+      stepCode: row.pendingStepCode ?? row.currentStepCode ?? null,
+      brandCode: row.brandCode,
+    });
+    const pool = stepApproverTooltip(names, row.brandCode);
+    /* The manager step answers null and keeps what this tooltip has always
+       carried: the assignee's address, which is the only thing naming them
+       when HR has no row. */
+    return pool ?? row.pendingApproverEmail?.trim() ?? undefined;
+  }
   return undefined;
 }
 
