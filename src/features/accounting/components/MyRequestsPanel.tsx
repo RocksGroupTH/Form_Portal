@@ -178,13 +178,19 @@ function RequestRowList({
   /**
    * list or table, remembered per page.
    *
-   * **list stays the default** (the user's call, 2026-09-24): it is what
-   * everybody already uses, and a table that arrives uninvited on a phone is
-   * a horizontal scrollbar where a readable list used to be. Read after mount
-   * for the reason every localStorage read in this app is — it does not exist
-   * on the server, and seeding state from it hydrates wrong.
+   * **The table is the default** (the user's call, 2026-09-24 — reversing their
+   * own earlier choice of list once they had seen it). A stored preference
+   * still wins: this is what somebody who has never touched the switch gets,
+   * not what everybody gets.
+   *
+   * Read after mount rather than seeded into `useState`, for the reason every
+   * localStorage read in this app is: it does not exist on the server, so
+   * seeding from it makes the first client render disagree with the server's
+   * and hydrate wrong. The cost is that a reader who chose `list` sees one
+   * frame of table first — the same trade the theme's no-flash script exists
+   * to avoid and which is not worth a cookie here.
    */
-  const [view, setView] = useState<"list" | "table">("list");
+  const [view, setView] = useState<"list" | "table">("table");
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(`form-portal-myreq-view-${kind}`);

@@ -4,7 +4,7 @@ import { amountInBaht, rateAsOfYmd } from "@/lib/acc/currency-display";
 import { paymentRoundsForApprovals } from "@/lib/acc/payment-calendar";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queryBothPools } from "@/lib/acc/query-both";
-import { perFormOrderBy, perFormPredicate } from "@/lib/acc/per-form-config";
+import { perFormOrderBy } from "@/lib/acc/per-form-config";
 import {
   resolveViewerEnvironmentMap,
   type FormEnvironmentValue,
@@ -12,7 +12,6 @@ import {
 import { keepRowsInCurrentEnvironment } from "@/lib/form-environment/current-rows";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
-import { AP4_FORM_CODE } from "@/features/reimburse/constants";
 import {
   fmtTravelSpanLabel,
   fmtTravelDatesList,
@@ -741,143 +740,73 @@ export async function listMyWorkRows(
       .request()
       .input("staffId", sql.Int, staffId)
       .input("email", sql.NVarChar, email ?? "")
-      // For the AP-4 brand-scope subquery below — `perFormPredicate` binds
-      // `@formCode` by name, so it must be an `.input()` here regardless of
-      // every other FormCode test in this query being a plain literal.
-      .input("formCode", sql.NVarChar, AP4_FORM_CODE)
       .query(
         buildListQuery(
           "request",
           `r.Status <> 'Draft' AND (
+          /* **My Work is the MANAGER's inbox, and nothing else** (the user's
+             decision, 2026-09-24). It used to be "anything you have a part in
+             approving", which for somebody who is both a manager and an
+             accountant meant one list holding two unrelated jobs — measured
+             that day, the viewer was on AP-1's seven-strong AccApprover roster
+             as well as being a manager, so their queue was mostly other
+             people's claims sitting at the accounting step.
+
+             Every accounting ROSTER arm is gone with it: AP-1's AccApprover,
+             AP-4's AccReimburseApprover (and its per-brand scope), AP-3's
+             AccClearAdvanceApprover and AP-2's AccAdvanceApprover. Nothing
+             becomes unreachable — each of those has its own queue page, which
+             is the authority on that work anyway:
+               AP-1  /request/accounting            -> คิวอนุมัติ
+               AP-4  /request/reimburse/approvals
+               AP-2  /request/advance               -> คิวอนุมัติ
+               AP-3  /request/clear-advance         -> คิวอนุมัติ
+
+             **AP-2 leaves My Work entirely, and that follows rather than being
+             overlooked.** Its chain is HEAD_ACC / DIRECTOR / ACC_OFFICER — an
+             amount matrix of accounting and executive steps with no manager
+             step at all (AP-2's own HEAD_DEPT is retired). A form with no
+             MANAGER step has nothing a manager's inbox can hold.
+
+             **History is kept, which is what makes the narrowing safe.** The
+             match is on the manager's own approval ROW, not on it still being
+             Pending, so a claim stays visible after the manager approves,
+             rejects or returns it — it moves to the อนุมัติแล้ว / ไม่อนุมัติ /
+             ส่งกลับแก้ไข tab through getMyWorkStatusBucket rather than
+             vanishing. That was the second half of the same instruction: once
+             the manager has acted it must leave รออนุมัติ, which the bucket
+             already did and still does. */
           EXISTS (
+            /* AP-1, AP-4 and AP-17 share [dbo].[AccApproval]. StepCode pins
+               the manager step, so an ACCOUNT row assigned to this same person
+               in their OTHER capacity cannot pull the claim back in — which is
+               exactly the mixing this change removes. */
             SELECT 1 FROM [dbo].[AccApproval] a
             WHERE a.RequestId = r.Id
+              AND a.StepCode = N'MANAGER'
               AND (
                 (@staffId IS NOT NULL AND a.AssignedTo = @staffId)
-                OR (@email <> '' AND a.AssignedEmail = @email)
-                /* AP-1's accounting queue. [dbo].[AccApprover] is AP-1's roster
-                   and every Acc* form shares [dbo].[AccApproval], so without the
-                   form pin an AP-1 accountant is handed every other form's
-                   pending accounting step — and clicking one opened it over an
-                   AP-1 URL. Only AP-1 and AP-4 write AccApproval rows at all;
-                   AP-2 and AP-3 have their own tables, below. */
                 OR (
-                  r.FormCode = 'AP-1'
-                  AND @staffId IS NOT NULL
-                  AND a.StepCode = 'ACCOUNT'
-                  AND a.Status = 'Pending'
-                  AND EXISTS (
-                    SELECT 1 FROM [dbo].[AccApprover] ap
-                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1
-                  )
-                )
-                /* AP-4's, which answers to its own roster and has two accounting
-                   steps rather than one. Matched on StaffId first and login
-                   email second, the same two ways findActiveApprover() resolves
-                   an actor — an approver with no Rocks_Portal_HR.Employee row
-                   may act, so their queue has to find them too.
-
-                   The inner EXISTS against AccReimburseApproverBrand is the
-                   per-brand scope (migration 144, 2026-09-10): a row on the
-                   roster is not enough on its own any more, the claim's own
-                   BrandCode must also resolve (through AccBrandErpInterface's
-                   per-form default/override) to one of this approver's ticked
-                   Interface targets. An admin with no roster row at all still
-                   finds no 'ra' row and so still finds nothing here — unchanged
-                   from before this table existed.
-
-                   *** DEPLOYMENT HAZARD, not a degradation ***
-                   listMyWorkRows runs through queryBothPools against BOTH
-                   Rocks_Portal_Form and Rocks_Portal_Form_UAT, and SQL Server
-                   binds object names at COMPILE time. AccReimburseApproverBrand
-                   missing from EITHER database is "Invalid object name", not an
-                   empty result — this whole query throws, which breaks
-                   /my-work and Home's pending count for EVERY user of EVERY
-                   form, not only AP-4's. Exactly the hazard CLAUDE.md already
-                   records for migration 090 (AccReimburseApprover itself).
-                   Migration 144 MUST reach both form databases before this
-                   code deploys. */
-                OR (
-                  r.FormCode = 'AP-4'
-                  AND a.StepCode IN ('ACCOUNT', 'ACCOUNT_FINAL')
-                  AND a.Status = 'Pending'
-                  AND EXISTS (
-                    SELECT 1 FROM [dbo].[AccReimburseApprover] ra
-                    WHERE ra.IsActive = 1
-                      AND (
-                        (@staffId IS NOT NULL AND ra.StaffId = @staffId)
-                        OR (
-                          @email <> N''
-                          AND LOWER(LTRIM(RTRIM(COALESCE(ra.Email, N''))))
-                            = LOWER(LTRIM(RTRIM(@email)))
-                        )
-                      )
-                      AND EXISTS (
-                        SELECT 1 FROM [dbo].[AccReimburseApproverBrand] rab
-                        WHERE rab.ApproverId = ra.Id
-                          AND rab.InterfaceBrandCode = (
-                            SELECT TOP 1 abei.InterfaceBrandCode
-                            FROM [dbo].[AccBrandErpInterface] abei
-                            WHERE abei.BrandCode = r.BrandCode AND ${perFormPredicate("abei")}
-                            ORDER BY ${perFormOrderBy("abei")}
-                          )
-                      )
-                  )
+                  @email <> N''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(a.AssignedEmail, N''))))
+                    = LOWER(LTRIM(RTRIM(@email)))
                 )
               )
           )
           OR EXISTS (
+            /* AP-3 writes its own table and DOES have a manager step
+               (CK_AccClearAdvanceApproval_Step permits MANAGER/ACCOUNT/HEAD),
+               so its managers keep their inbox while its accountants move to
+               the AP-3 queue. */
             SELECT 1 FROM [dbo].[AccClearAdvanceApproval] ca
             WHERE ca.RequestId = r.Id
+              AND ca.StepCode = N'MANAGER'
               AND (
                 (@staffId IS NOT NULL AND ca.AssignedStaffId = @staffId)
                 OR (
-                  @email <> ''
-                  AND LOWER(LTRIM(RTRIM(COALESCE(ca.AssignedEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
-                )
-                OR (
-                  @staffId IS NOT NULL
-                  AND ca.StepCode = 'ACCOUNT'
-                  AND ca.Status = 'Pending'
-                  AND EXISTS (
-                    SELECT 1 FROM [dbo].[AccClearAdvanceApprover] ap
-                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1 AND ap.Role = 'ACCOUNT'
-                  )
-                )
-              )
-          )
-          OR EXISTS (
-            SELECT 1 FROM [dbo].[AccAdvanceApproval] aa
-            WHERE aa.RequestId = r.Id
-              AND (
-                (@staffId IS NOT NULL AND aa.AssignedStaffId = @staffId)
-                OR (
-                  @email <> ''
-                  AND LOWER(LTRIM(RTRIM(COALESCE(aa.AssignedEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
-                )
-                OR (
-                  @staffId IS NOT NULL
-                  AND aa.Status = 'Pending'
-                  AND aa.StepType = r.CurrentStepCode
-                  AND EXISTS (
-                    SELECT 1 FROM [dbo].[AccAdvanceApprover] ap
-                    WHERE ap.StaffId = @staffId AND ap.IsActive = 1
-                      AND ap.ApproverRole = aa.StepType
-                  )
-                )
-                /* A step this viewer actually acted on. Without it an AP-2
-                   request vanishes from My Work the moment it is approved:
-                   AP-2 leaves AssignedStaffId and AssignedEmail null and is
-                   matched through the roster clause above, which only holds
-                   while the step is Pending. AP-3 keeps its rows because it
-                   stamps AssignedEmail, so the same list behaved differently
-                   for the two forms — one kept what you approved, the other
-                   dropped it.
-                   ActionedBy was already being recorded and simply never read. */
-                OR (@staffId IS NOT NULL AND aa.ActionedByStaffId = @staffId)
-                OR (
-                  @email <> ''
-                  AND LOWER(LTRIM(RTRIM(COALESCE(aa.ActionedByEmail, N'')))) = LOWER(LTRIM(RTRIM(@email)))
+                  @email <> N''
+                  AND LOWER(LTRIM(RTRIM(COALESCE(ca.AssignedEmail, N''))))
+                    = LOWER(LTRIM(RTRIM(@email)))
                 )
               )
           )

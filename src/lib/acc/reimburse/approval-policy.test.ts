@@ -410,34 +410,101 @@ test("AP-1's action routes authorize against an AP-1 row, not any row", () => {
 
 /* ───────────── the accounting queues do not cross forms (finding 3) ───────────── */
 
-test("My Work asks each form's own approver roster", () => {
+test("My Work consults NO approver roster — it is the manager's inbox", () => {
+  /**
+   * **This assertion is the inverse of the one it replaces**, and the history
+   * is why it is worth keeping rather than deleting.
+   *
+   * It used to pin that each form's accounting roster answered for that form
+   * and no other — written after an AP-1 accountant was handed every pending
+   * AP-4 accounting step, and clicking one opened it over an AP-1 URL. That
+   * defect is now unreachable by construction rather than by careful pinning:
+   * **My Work asks about the MANAGER step only** (the user's decision,
+   * 2026-09-24), so no roster is consulted at all and no form's queue can leak
+   * into another's.
+   *
+   * The rosters still decide who may act — `requireApproverStaffId`,
+   * `requireApproverScopeFor` and AP-1's `canAccessAccountArea` are untouched.
+   * What changed is only which list this page draws.
+   */
   const report = readSrc("lib/acc/report-service.ts");
   const start = report.indexOf("export async function listMyWorkRows");
   const end = report.indexOf("export async function queryReport");
   assert.ok(start > 0 && end > start, "could not locate listMyWorkRows");
   const myWork = report.slice(start, end);
 
-  // AP-1's roster answers for AP-1 only. It used to answer for every form, so
-  // an AP-1 accountant was handed every pending AP-4 accounting step — and
-  // clicking one opened it over an AP-1 URL, which is the id handover the pin
-  // above closes.
-  const ap1 = myWork.indexOf("r.FormCode = 'AP-1'");
-  assert.ok(ap1 > 0, "the AccApprover sub-select is not pinned to AP-1");
+  for (const roster of [
+    "[dbo].[AccApprover]",
+    "[dbo].[AccReimburseApprover]",
+    "[dbo].[AccReimburseApproverBrand]",
+    "[dbo].[AccClearAdvanceApprover]",
+    "[dbo].[AccAdvanceApprover]",
+  ]) {
+    assert.equal(
+      myWork.indexOf(roster),
+      -1,
+      `My Work reads ${roster} again — that is an accounting queue, and it has its own page`,
+    );
+  }
+});
+
+test("My Work matches the MANAGER step, and only that", () => {
+  /* Two tables, because AP-3 keeps its own: `AccApproval` carries AP-1, AP-4
+     and AP-17, `AccClearAdvanceApproval` carries AP-3. Both arms pin
+     StepCode='MANAGER' — without the pin, an ACCOUNT row assigned to the same
+     person in their other capacity pulls the claim straight back in, which is
+     exactly the mixing this change removed. */
+  const report = readSrc("lib/acc/report-service.ts");
+  const start = report.indexOf("export async function listMyWorkRows");
+  const end = report.indexOf("export async function queryReport");
+  const myWork = report.slice(start, end);
+
+  const a = myWork.indexOf("[dbo].[AccApproval]");
+  assert.ok(a > 0, "My Work no longer reads AccApproval at all");
   assert.ok(
-    myWork.indexOf("[dbo].[AccApprover]", ap1) > ap1,
-    "the AP-1 pin does not sit in front of the AccApprover sub-select",
+    myWork.indexOf("a.StepCode = N'MANAGER'", a) > a,
+    "the AccApproval arm is not pinned to the MANAGER step",
   );
 
-  // …and AP-4's own pool answers for AP-4, at both of its accounting steps.
-  const ap4 = myWork.indexOf("r.FormCode = 'AP-4'");
-  assert.ok(ap4 > 0, "My Work has no AP-4 clause");
+  const ca = myWork.indexOf("[dbo].[AccClearAdvanceApproval]");
+  assert.ok(ca > 0, "AP-3's managers have lost their inbox");
   assert.ok(
-    myWork.indexOf("[dbo].[AccReimburseApprover]", ap4) > ap4,
-    "the AP-4 clause does not consult AccReimburseApprover",
+    myWork.indexOf("ca.StepCode = N'MANAGER'", ca) > ca,
+    "the AP-3 arm is not pinned to the MANAGER step",
   );
-  assert.ok(
-    myWork.indexOf("'ACCOUNT', 'ACCOUNT_FINAL'", ap4) > ap4,
-    "the AP-4 clause leaves ACCOUNT_FINAL in nobody's queue",
+
+  // Every step name that is NOT the manager's must be absent from the predicate.
+  for (const step of ["'ACCOUNT'", "'ACCOUNT_FINAL'", "'ACC_OFFICER'", "'HEAD_ACC'"]) {
+    assert.equal(
+      myWork.indexOf(`StepCode = ${step}`),
+      -1,
+      `My Work matches ${step} again — it is a manager's inbox`,
+    );
+  }
+});
+
+test("a manager keeps what they have already acted on", () => {
+  /* The match is on the manager's approval ROW, never on it still being
+     Pending, so approving/rejecting/returning moves a claim between the tabs
+     rather than deleting it from the page. That was the second half of the
+     same instruction — once the manager has acted it must leave รออนุมัติ,
+     which `getMyWorkStatusBucket` does — and pinning it here is what stops a
+     later "tidy-up" adding `AND a.Status = 'Pending'` and silently emptying
+     the อนุมัติแล้ว tab. */
+  const report = readSrc("lib/acc/report-service.ts");
+  const start = report.indexOf("export async function listMyWorkRows");
+  const end = report.indexOf("export async function queryReport");
+  const myWork = report.slice(start, end);
+
+  assert.equal(
+    myWork.indexOf("a.Status = N'Pending'"),
+    -1,
+    "the manager arm now requires a Pending row — approved claims will vanish from My Work",
+  );
+  assert.equal(
+    myWork.indexOf("ca.Status = N'Pending'"),
+    -1,
+    "AP-3's manager arm now requires a Pending row — approved claims will vanish",
   );
 });
 

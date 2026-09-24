@@ -224,7 +224,37 @@ test("the two accumulators take REQUIRED scope and claimTargets parameters, with
  * a source-shape pin is the only defence available at all, not merely the
  * outer layer beside a stronger inner one.
  */
-test("listMyWorkRows' AP-4 arm still resolves brand scope through AccBrandErpInterface", () => {
+test("listMyWorkRows lists NO AP-4 accounting claim, so it needs no brand scope", () => {
+  /**
+   * **This replaces a pin, and the thing it pinned is gone rather than
+   * weakened** — which is the one way a guard may be retired without leaving a
+   * hole behind it.
+   *
+   * It used to assert that My Work's AP-4 arm resolved brand scope through
+   * `AccReimburseApproverBrand` → `AccBrandErpInterface`, and that the clause
+   * was `AND EXISTS` rather than `AND NOT EXISTS` — a one-word inversion a
+   * re-review had measured green, filling every approver's queue with exactly
+   * the claims outside their scope. That mattered because My Work LISTED AP-4
+   * accounting claims and, uniquely among the three surfaces, had no
+   * accumulator to hand a shaped row to, so a source pin was the only defence
+   * available.
+   *
+   * **My Work stopped listing them on 2026-09-24** (the user's decision): it is
+   * the manager's inbox and consults no approver roster at all. A scope clause
+   * on rows that are not selected would be dead code, and pinning dead code
+   * teaches the next reader that the surface still carries the risk.
+   *
+   * The scope control itself is untouched and still pinned where it lives: the
+   * five action paths above, and the two accumulators that the AP-4 approval
+   * and ERP queues feed — `queue-service.test.ts` and
+   * `erp-queue-service.test.ts` exercise those behaviourally, which is stronger
+   * than anything available here.
+   *
+   * So what is asserted now is the PREMISE: that My Work still selects no AP-4
+   * accounting row. If that ever changes, this test fails and whoever changed
+   * it has to restore a scope clause — which is the same protection, pinned at
+   * the condition that makes it necessary.
+   */
   const src = code(REPORT_SERVICE_FILE);
   const marker = "export async function listMyWorkRows(";
   const start = src.indexOf(marker);
@@ -233,31 +263,20 @@ test("listMyWorkRows' AP-4 arm still resolves brand scope through AccBrandErpInt
   const next = rest.search(/\nexport async function /);
   const body = next === -1 ? src.slice(start) : src.slice(start, start + marker.length + next);
 
-  for (const marker2 of ["AccReimburseApproverBrand", "AccBrandErpInterface", "perFormPredicate("]) {
-    assert.ok(
-      body.includes(marker2),
-      `listMyWorkRows no longer names ${marker2} — its AP-4 arm's brand-scope EXISTS clause has been ` +
-        "weakened or removed. AccReimburseApprover roster membership alone is not enough since " +
-        "migration 144: a roster row must ALSO map to one of the approver's ticked Interface targets, " +
-        "through AccBrandErpInterface's per-form default/override (perFormPredicate/perFormOrderBy) " +
-        "— removing any of the three silently widens /my-work back to pre-scoping behaviour for " +
-        "every AP-4 approver",
+  for (const roster of ["AccReimburseApprover", "AccReimburseApproverBrand"]) {
+    assert.equal(
+      body.includes(roster),
+      false,
+      `listMyWorkRows reads ${roster} again, so it is listing AP-4 accounting claims once more — ` +
+        "restore the brand-scope EXISTS clause with it (AccBrandErpInterface + perFormPredicate, " +
+        "AND EXISTS and never AND NOT EXISTS), or those approvers see claims outside their scope",
     );
   }
 
-  // **Token presence catches deletion and weakening; it does not catch
-  // INVERSION.** A re-review changed `AND EXISTS (` to `AND NOT EXISTS (` —
-  // one word — and all three tokens above stayed put while every AP-4
-  // approver's My Work filled with exactly the claims OUTSIDE their scope and
-  // none of the ones inside it. Measured green. This surface has no
-  // behavioural test at all (the query needs a pool), so the polarity has to
-  // be pinned here or nowhere.
   assert.ok(
-    /AND\s+EXISTS\s*\(\s*\n?\s*SELECT\s+1\s+FROM\s+\[dbo\]\.\[AccReimburseApproverBrand\]/.test(body),
-    "listMyWorkRows' AP-4 brand-scope clause is no longer `AND EXISTS (SELECT 1 FROM " +
-      "[dbo].[AccReimburseApproverBrand] …`. A NOT EXISTS here inverts the whole control: every " +
-      "approver sees precisely the claims they may NOT act on, and none of the ones they may — " +
-      "while the three token assertions above stay green, because inversion removes nothing",
+    body.includes("a.StepCode = N'MANAGER'"),
+    "listMyWorkRows no longer pins the MANAGER step — without that pin an ACCOUNT row assigned to " +
+      "the viewer pulls AP-4 claims back in, and nothing here scopes them any more",
   );
 });
 
