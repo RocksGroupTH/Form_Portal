@@ -9,11 +9,19 @@ import {
   Inbox,
   Loader2,
   ChevronRight,
+  ChevronDown,
+  Check,
   Send,
   ClipboardCheck,
   List,
   Table as TableIcon,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/DropdownMenu";
 import type { ReportRow } from "@/lib/acc/report-service";
 import { MyRequestsTable } from "@/features/accounting/components/MyRequestsTable";
 import { formFilterLabel } from "@/lib/acc/form-names";
@@ -785,33 +793,60 @@ function RequestRowList({
           an empty list is a control that cannot do anything. */}
       {!loading && viewerReady && filtered.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <label className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
-            แสดง
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                // Back to the first page: keeping the number would land a
-                // reader on page 6 of 2 after switching 10 -> 100, and the
-                // clamp would then silently move them somewhere they did not
-                // ask for. Page 1 is the one answer that is never a surprise.
-                setPage(1);
-              }}
-              className="rounded-lg px-2 py-1 text-[11px] outline-none cursor-pointer"
-              style={{
-                background: "var(--bg-input)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border-input)",
-              }}
-            >
-              {MY_REQUEST_PAGE_SIZES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-            รายการ · ทั้งหมด {filtered.length}
-          </label>
+          {/* A native <select> paints its own panel from the OS — a white
+              sheet with a blue highlight that belongs to neither theme, and
+              which no CSS here can reach. This is the app's own
+              `DropdownMenu`: Radix, themed from the same tokens as everything
+              around it, and PORTALLED, so it cannot be clipped by an ancestor
+              the way the คอลัมน์ menu was.
+
+              It had no callers at all before this — a leftover from the Rocks
+              Fast clone. Reviving it beat writing a third dropdown pattern
+              beside `ColumnToggleMenu` and `SearchableSelect`. */}
+          <div className="flex items-center gap-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span>แสดง</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`จำนวนรายการต่อหน้า — ขณะนี้ ${pageSize}`}
+                  className="inline-flex items-center gap-1 rounded-lg pl-2.5 pr-1.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors"
+                  style={{
+                    background: "var(--bg-input)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--border-input)",
+                  }}
+                >
+                  {pageSize}
+                  <ChevronDown size={13} style={{ color: "var(--text-muted)" }} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[88px]">
+                {MY_REQUEST_PAGE_SIZES.map((n) => (
+                  <DropdownMenuItem
+                    key={n}
+                    onSelect={() => {
+                      setPageSize(n);
+                      /* Back to the first page. Keeping the number would land
+                         a reader on page 6 of 2 after switching 10 -> 100, and
+                         the clamp would then move them somewhere they never
+                         asked to go. Page 1 is the one answer that is never a
+                         surprise. */
+                      setPage(1);
+                    }}
+                    className="justify-between rounded-md mx-1 text-[12px] data-[highlighted]:bg-[var(--bg-card-alt)]"
+                  >
+                    <span style={{ fontWeight: n === pageSize ? 700 : 400 }}>{n}</span>
+                    {/* The tick rather than a filled row: this menu opens over
+                        the table, and a solid highlight reads as a hover
+                        somebody is about to click. */}
+                    {n === pageSize && <Check size={13} style={{ color: "var(--color-action)" }} />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <span>รายการ · ทั้งหมด {filtered.length}</span>
+          </div>
 
           {pages > 1 && (
             <div className="flex items-center gap-1">
