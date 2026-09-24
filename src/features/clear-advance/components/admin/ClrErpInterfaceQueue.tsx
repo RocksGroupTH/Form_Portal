@@ -478,10 +478,10 @@ export function ClrErpInterfaceQueue() {
   const [sentMonth, setSentMonth] = useState<string>("");
   const [exporting, setExporting] = useState(false);
 
-  // Payment-date options for the per-row "รอส่ง" picker (loaded once, shared calendar).
+  // Payment-date options for the per-row "รอส่ง" picker (loaded once, AP-3's own calendar).
   const [paymentDateOpts, setPaymentDateOpts] = useState<string[]>([]);
   React.useEffect(() => {
-    fetch("/api/request/advance/payment-dates")
+    fetch("/api/request/clear-advance/payment-dates")
       .then((r) => r.json())
       .then((j: { ok?: boolean; data?: { dates?: string[] } }) => { if (j?.data?.dates) setPaymentDateOpts(j.data.dates); })
       .catch(() => {});

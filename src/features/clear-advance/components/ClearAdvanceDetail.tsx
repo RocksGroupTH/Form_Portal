@@ -279,13 +279,14 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   useEffect(() => {
     if (!isAccountStep || !companyPaysExtra) return;
     let cancelled = false;
-    fetch("/api/request/advance/payment-dates")
+    fetch("/api/request/clear-advance/payment-dates")
       .then((r) => r.json())
       .then((j: { ok?: boolean; data?: { dates?: string[]; default?: string | null } }) => {
         if (cancelled || !j?.data?.dates) return;
         setPaymentRounds(j.data.dates);
-        /* Seeded with the round the claim belongs to, the way AP-2 does, so the
-           common case is confirm-and-approve. Never over an existing pick. */
+        /* Seeded with the round the claim belongs to — the same UX pattern as
+           AP-2, but the dates now come from AP-3's own calendar. Never over an
+           existing pick. */
         setPaymentDate((prev) => prev || j.data?.default || "");
       })
       .catch(() => {
