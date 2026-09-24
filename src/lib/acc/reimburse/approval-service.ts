@@ -354,18 +354,6 @@ async function afterCommit(
   }
 }
 
-/** Every active approver's address, optionally minus the person who just acted. */
-async function approverEmails(exceptStaffId?: number | null): Promise<string[]> {
-  const roster = await listReimburseApprovers();
-  const out: string[] = [];
-  for (const a of roster) {
-    if (!a.isActive) continue;
-    if (exceptStaffId != null && a.staffId === exceptStaffId) continue;
-    if (a.email?.trim()) out.push(a.email.trim());
-  }
-  return out;
-}
-
 /* ─────────────────────────── shared transaction shape ─────────────────────────── */
 
 type AccPool = Awaited<ReturnType<typeof getAccPool>>;
@@ -521,20 +509,9 @@ export async function approveReimburseManager(
     await logActivity(tx, requestId, actor.userId, "manager_approved");
   });
 
-  await afterCommit(requestId, async (updated) => {
-    for (const email of await approverEmails()) {
-      await notifyQuietly(updated, email, "ManagerApproved", "รอฝ่ายบัญชีตรวจสอบ");
-    }
-    // And the requester, who otherwise hears nothing between submitting and the
-    // final approval two steps later, and has to come back and look to find out
-    // their manager said yes.
-    await notifyQuietly(
-      updated,
-      updated.requesterEmail,
-      "ManagerApproved",
-      "ผู้จัดการอนุมัติแล้ว รอฝ่ายบัญชีตรวจสอบ",
-    );
-  });
+  /* No mail when the manager approves (the user, 2026-09-24) — neither to the
+     accounting pool, whose queue page is where that work is found, nor to the
+     requester, who hears next at the accounting approval. */
 }
 
 /* ─────────────────────────── step 2 — the accounting check ─────────────────────────── */
@@ -651,8 +628,9 @@ export async function approveReimburseAccountCheck(
        named a step that no longer follows; leaving it would have asked people
        to do something nothing was waiting for, and told the requester nothing
        at all. */
+    /* The requester alone — the manager's copy went with the rest of the
+       step-advance mail. */
     await notifyQuietly(updated, updated.requesterEmail, "Approved", "อนุมัติแล้ว");
-    await notifyQuietly(updated, updated.managerEmail, "Approved", "อนุมัติแล้ว");
   });
 }
 
@@ -841,8 +819,9 @@ export async function approveReimburseFinal(
   });
 
   await afterCommit(requestId, async (updated) => {
+    /* The requester alone — the manager's copy went with the rest of the
+       step-advance mail. */
     await notifyQuietly(updated, updated.requesterEmail, "Approved", "อนุมัติแล้ว");
-    await notifyQuietly(updated, updated.managerEmail, "Approved", "อนุมัติแล้ว");
   });
 }
 

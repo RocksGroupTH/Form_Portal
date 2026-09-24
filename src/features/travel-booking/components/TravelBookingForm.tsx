@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useFormOwnerNotice } from "@/components/FormOwnerNotice";
 import { toast } from "sonner";
 import { AlertTriangle, Check, Circle, History, Info, Loader2, Mail, Phone, Plus, Save, Send, Trash2, User, UserCog, Wallet } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
@@ -48,6 +49,9 @@ function scrollToField(key: string) {
 }
 
 export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBookingFormProps) {
+  /* Read off `/api/form-environment`, which this page already fetches. */
+  const ownerNotice = useFormOwnerNotice("AP-17");
+
   const form = useTravelBookingForm(initial);
   const {
     anchorRequestId,
@@ -203,6 +207,12 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
               {line}
             </p>
           ))}
+          {/* Who to ask about a cancellation, on every form (the user,
+              2026-09-24). Falls back to the bare sentence while nobody is
+              named — see `formOwnerNotice`. */}
+          <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
+            {ownerNotice}
+          </p>
         </div>
       </div>
 

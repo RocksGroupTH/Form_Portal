@@ -1,7 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { getRequest } from "@/lib/acc/request-service";
-import { listApprovers } from "@/lib/acc/settings-service";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildEmail, type AccTrigger } from "@/lib/acc/email-templates";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
@@ -41,7 +40,6 @@ async function notify(requestId: number, trigger: AccTrigger, toEmail: string | 
 export async function approveManager(requestId: number, actor: Actor): Promise<void> {
   const staffId = requireActorStaffId(actor);
   const pool = await getAccPool();
-  const approvers = await listApprovers(true);
   const tx = pool.transaction();
   await tx.begin();
   try {
@@ -72,15 +70,15 @@ export async function approveManager(requestId: number, actor: Actor): Promise<v
     await tx.commit();
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
 
-  // Notify every active accounting approver — and the requester, who otherwise
-  // hears nothing between submitting and final approval and has to come back and
-  // look. The same "รอตรวจสอบ (บัญชี)" template answers for both: it says where
-  // the request now is, which is what each of them wants to know.
-  for (const a of approvers) {
-    await notify(requestId, "ManagerApproved", a.email);
-  }
-  const req = await getRequest(requestId);
-  await notify(requestId, "ManagerApproved", req?.requesterEmail ?? null);
+  /* **Nobody is mailed when a step advances** (the user, 2026-09-24). Mail
+     now marks the three moments a person has something to do or to know:
+     submitting (the manager), the final accounting approval, and a rejection
+     or a return (the requester) — plus the stale sweep's auto-cancellation.
+     An arrival in a queue is not one of them: whoever works that queue opens
+     it, and a message per arrival is a message nobody reads.
+
+     That is a REDUCTION and it has a cost, stated rather than discovered: a
+     queue nobody opens now goes unworked with nothing to prompt anybody. */
 }
 
 /** Step 2 — Account approves: requires Check + a valid PaymentDate. Finalizes the request. */
@@ -128,10 +126,10 @@ export async function approveAccount(
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
 
   const req = await getRequest(requestId);
-  if (req) {
-    await notify(requestId, "Approved", req.requesterEmail);
-    await notify(requestId, "Approved", req.managerEmail);
-  }
+  /* The requester alone. The manager's copy is gone with the rest of the
+     step-advance mail: they acted on this claim and their own queue already
+     shows what became of it. */
+  if (req) await notify(requestId, "Approved", req.requesterEmail);
 }
 
 /** Reject at the given step. Comment required. Stops the workflow. State-guarded. */

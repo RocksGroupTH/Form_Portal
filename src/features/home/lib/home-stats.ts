@@ -1,6 +1,28 @@
 /**
  * Home's stat strip — what each tile counts, as one pure function.
  *
+ * ## The strip itself is GONE (the user, 2026-09-24) — read that first
+ *
+ * Home no longer renders the eight tiles; `HomeCatalogue.tsx` carries the
+ * matching note where they stood. Everything below still describes what these
+ * counts mean, and all of it is still true, because the rules did not go with
+ * the markup:
+ *
+ * - **`countHomeStats` still has a caller.** Home's greeting line reads
+ *   `stats.unfinished` — "คำขอที่ยังทำไม่เสร็จ N รายการ". The other six counts
+ *   are computed and not read today. They stay because this is one pass over a
+ *   list the page already fetches, and narrowing it to one field is a change
+ *   that has to be undone in full the day the strip comes back.
+ * - **`monthRange` has NO caller in `src/` at all.** It existed for the
+ *   เดือนนี้ tile's `?from=&to=` link. It is kept deliberately rather than left
+ *   behind: it is fifteen lines carrying the month-end and leap-year reasoning
+ *   its tests pin, and My Requests still honours every filter the tiles linked
+ *   to, so restoring the strip is putting markup back and nothing else. **Do
+ *   not read its lack of callers as an oversight**, and do not delete it
+ *   without deciding that the strip is never returning.
+ *
+ * ## Why it is a module of its own
+ *
  * It lives apart from `useHomeData` so the counting rule can be unit-tested:
  * that hook is `"use client"` and reaches SWR, and the numbers on the front
  * page are the kind that are wrong in silence, because nothing on screen says

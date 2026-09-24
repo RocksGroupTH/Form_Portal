@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import { FormOwnerNotice } from "@/components/FormOwnerNotice";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -117,7 +118,21 @@ function AdvanceContent() {
       ) : notFound ? (
         <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>ไม่พบคำขอนี้</p>
       ) : (
-        <AdvanceForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} onDirtyChange={setDirty} />
+        <>
+          <AdvanceForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} onDirtyChange={setDirty} />
+          {/* Who to contact about a cancellation — on every form (the user,
+              2026-09-24). Rendered by the page rather than the form: this one
+              carries no footer-notes block of its own, and threading a line
+              through a two-thousand-line component to reach a footer it does
+              not have would be a worse change than putting it here. AP-1 and
+              AP-17 DO have one, and the line joins theirs instead. */}
+          <div
+            className="mt-3 rounded-xl px-4 py-3"
+            style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+          >
+            <FormOwnerNotice formCode="AP-2" />
+          </div>
+        </>
       )}
 
       <Dialog

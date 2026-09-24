@@ -9,6 +9,12 @@ import { countHomeStats, monthRange, type HomeStatRow } from "./home-stats";
  * what a tile measured, so an off-by-one class of row just sits there looking
  * plausible. Each tile also links to My Requests with the matching filter, so a
  * wrong count is a front page that contradicts the page it sends you to.
+ *
+ * **The tiles were removed on 2026-09-24** and these tests were kept — see
+ * `home-stats.ts`'s own header for what still has a caller (`unfinished`, in
+ * the greeting) and why the rest, `monthRange` included, is kept deliberately
+ * rather than left behind. Pinning the rules is what makes restoring the strip
+ * a matter of markup.
  */
 
 const AUG = new Date(2026, 7, 15, 10, 0, 0); // 15 Aug 2026, local

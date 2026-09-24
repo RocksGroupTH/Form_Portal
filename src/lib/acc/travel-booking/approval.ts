@@ -296,8 +296,10 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
   // Nothing is left unnotified that was notified before: the ACCOUNT step has
   // never mailed anybody, and the hand-off from Admin (`completeRequest`) never
   // did either.
-  const requesterEmail = await getRequesterEmail(requestId);
-  await notify(requestId, "Approved", requesterEmail, undefined, actor.email);
+  /* No mail here any more (the user, 2026-09-24): a manager approving moves
+     the request to the Admin desk, and nobody is told a step advanced. The
+     request is finished at `approveByAccount`, which still mails "Completed"
+     to the requester. */
   void processQueue().catch(() => {});
 
   return requireTravelBookingRequest(requestId);

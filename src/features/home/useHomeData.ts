@@ -6,7 +6,7 @@ import {
   type MyWorkRowInput,
   type MyWorkViewerContext,
 } from "@/lib/acc/approval-display";
-import { countHomeStats, monthRange } from "@/features/home/lib/home-stats";
+import { countHomeStats } from "@/features/home/lib/home-stats";
 
 /**
  * Throwing fetcher — the app's API routes answer a failure with HTTP 500 *and* a
@@ -128,22 +128,26 @@ export function useHomeData() {
   const workRows = work.data?.data ?? [];
   const accPendingCount = workRows.filter((r) => getMyWorkStatusBucket(r, viewer) === "pending").length;
 
-  // Every fetch the greeting line and the stat strip read. `employee` / `access`
-  // are in here too: without them the pending rule misclassifies rows, so a
-  // number built on a failed context would be just as wrong as a missing one.
+  // Every fetch the greeting line and the resume list read. `employee` /
+  // `access` are in here too: without them the pending rule misclassifies rows,
+  // so a number built on a failed context would be just as wrong as a missing
+  // one.
   const summaryError =
     mine.error || work.error || ap1.error || ap17.error || employee.error || access.error;
 
-  /* One clock for the whole strip, and one pass over the rows.
-     `countHomeStats` is pure and tested; everything it needs is already on
-     screen, so the six request tiles cost no extra fetch — `/requests/mine` was
-     being read for the month count alone before this. */
+  /* One clock, one pass over the rows. `countHomeStats` is pure and tested,
+     and everything it needs is already on screen.
+
+     The eight-tile strip it was written for was removed on 2026-09-24, so the
+     one field still read from here is `unfinished`, in the greeting line. The
+     call stays whole rather than being narrowed — see `home-stats.ts`, which
+     explains what survives and why. `monthRange` is no longer returned at all:
+     it built the เดือนนี้ tile's link and nothing else. */
   const stats = countHomeStats(mine.data?.data ?? [], new Date());
 
   return {
     pendingCount: accPendingCount,
     stats,
-    monthRange: monthRange(new Date()),
     /** Editable rows — drafts **and** returned-for-revision. See `ResumableGroup.returnedCount`. */
     resumableCount: ap1Rows.length + ap17Rows.length,
     resumable,

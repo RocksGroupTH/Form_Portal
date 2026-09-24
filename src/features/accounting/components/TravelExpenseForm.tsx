@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useFormOwnerNotice } from "@/components/FormOwnerNotice";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { toast } from "sonner";
 import {
   Save,
@@ -203,6 +205,9 @@ export function TravelExpenseForm({
   const [copyPickerOpen, setCopyPickerOpen] = useState(false);
   const [removeDateConfirm, setRemoveDateConfirm] = useState<string | null>(null);
   const [blockedTravelDates, setBlockedTravelDates] = useState<string[]>([]);
+  /* Who to contact about this form. Read off `/api/form-environment`, which
+     this page already fetches, so it costs no request of its own. */
+  const ownerNotice = useFormOwnerNotice(AP1_FORM_CODE);
 
   // Refs for scrolling/focusing the first incomplete field on a submit attempt.
   const brandRef = useRef<HTMLDivElement>(null);
@@ -1969,7 +1974,10 @@ export function TravelExpenseForm({
             "รอบการเบิกจ่ายค่าเดินทาง ตัดรอบวันจันทร์ (แบบฟอร์มที่ได้รับการอนุมัติแล้ว) และจ่ายตามปฏิทินการชำระของบริษัท (ทุกศุกร์ที่ 2 และ 4 ของเดือน)",
             "สำหรับพนักงานออฟฟิศที่กลับบ้านเกิน 21.00 หรือ Working hour > 8h สามารถเบิกค่าเดินทางกลับบ้านได้",
             "หากติดวันหยุดจะเลื่อนการเบิกจ่ายเป็นวันทำการถัดไป",
-            "กรณีต้องการยกเลิกติดต่อเจ้าของฟอร์ม",
+            /* The owners are appended by `useFormOwnerNotice`, which falls
+               back to this exact sentence when nobody is named — so the line
+               reads as it always did until an admin sets one. */
+            ownerNotice,
           ].map((note, i) => (
             <p
               key={i}

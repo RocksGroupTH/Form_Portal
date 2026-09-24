@@ -34,6 +34,34 @@ export function statusLabelDisplay(status: string): string {
   return label;
 }
 
+/**
+ * A request nobody is waiting on and nobody will pay — it holds no claim on
+ * anything.
+ *
+ * **AP-1's unique-travel-date rule is what this exists for.** That rule stops
+ * one person claiming the same day twice, and it excluded `Rejected` from the
+ * day it shipped but never `Cancelled` — so a claim the requester withdrew
+ * went on owning its travel date for ever: the picker greyed the day out and
+ * a resubmit was refused, with nothing on screen saying which request held it.
+ * Reported 2026-09-24 against TOF26-09056, cancelled, holding 24 Sep.
+ *
+ * AP-17 reached the same list independently and calls it `DEAD`
+ * (`room-share-policy.ts`), as does the `NOT IN ('Draft','Cancelled','Rejected')`
+ * in its continuation-predecessor query — a dead trip cannot own a day, so it
+ * must not be named as the reason one was dropped. This is that notion for
+ * AP-1, named once so the picker and the submit cannot disagree about it.
+ *
+ * **`Draft` is deliberately not here.** A draft is not dead, it is unfinished:
+ * its own owner is about to submit it, and letting a second draft take the
+ * same day would produce two claims that cannot both be filed.
+ */
+export const DEAD_REQUEST_STATUSES: readonly string[] = ["Cancelled", "Rejected"];
+
+/** True for a request that has been withdrawn or refused. */
+export function isDeadRequestStatus(status: string): boolean {
+  return DEAD_REQUEST_STATUSES.indexOf(status) !== -1;
+}
+
 export function isPendingApprovalStatus(status: string): boolean {
   return status === "Submitted" || status === "ManagerApproved";
 }

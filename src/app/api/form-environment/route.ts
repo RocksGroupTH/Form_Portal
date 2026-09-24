@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { getFormSwitchMap, isComingSoon, resolveFormAccess } from "@/lib/form-environment";
 import type { FormAccess, FormEnvironmentPayload, ViewerUatStatus } from "@/lib/form-environment/payload-types";
 import { getActiveUatTester } from "@/lib/uat-tester/service";
+import { listFormOwners } from "@/lib/form-environment/form-owner";
 import { UAT_MODE_COOKIE, isUatModeCookieOn } from "@/lib/uat-mode";
 import { REQUEST_CARDS } from "@/lib/constants";
 
@@ -24,10 +25,14 @@ export async function GET() {
   if (session instanceof Response) return session;
   try {
     const email = session.user?.email ?? null;
-    const [switches, tester, cookieStore] = await Promise.all([
+    /* `listFormOwners` is a fourth read on the same Fast_Core pool, and it
+       swallows a missing table so the window before migration 163 is applied
+       costs the contact line and nothing else — see its own header. */
+    const [switches, tester, cookieStore, owners] = await Promise.all([
       getFormSwitchMap(),
       getActiveUatTester(email),
       cookies(),
+      listFormOwners(),
     ]);
 
     // Not just Object.keys(switches): a form with no FormEnvironment row is
@@ -56,7 +61,16 @@ export async function GET() {
       // ordinary user — it is being piloted, so the catalogue shows it as
       // "Soon" instead of dropping it. `switches[code]` is undefined for a form
       // with no row, which isComingSoon reads as production-only.
-      forms[code] = { ...decisions[i], comingSoon: isComingSoon(switches[code] ?? null, uatMode) };
+      forms[code] = {
+        ...decisions[i],
+        comingSoon: isComingSoon(switches[code] ?? null, uatMode),
+        // `[]` rather than undefined: a form with no owner is a fact, and a
+        // client must be able to tell it from a payload that never arrived.
+        owners: [...(owners[code] ?? [])].map((o) => ({
+          email: o.email,
+          displayName: o.displayName,
+        })),
+      };
     });
 
     const viewer: ViewerUatStatus = {

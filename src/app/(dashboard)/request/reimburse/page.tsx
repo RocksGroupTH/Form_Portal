@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { FormOwnerNotice } from "@/components/FormOwnerNotice";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FileText, Loader2, Plus, ChevronRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -465,7 +466,21 @@ function ReimburseContent() {
         backLabel="กลับ"
       />
 
-      <ReimburseForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} />
+      <>
+        <ReimburseForm initial={initial} onSaved={handleSaved} onSubmitted={handleSubmitted} />
+        {/* Who to contact about a cancellation — on every form (the user,
+            2026-09-24). Rendered by the page rather than the form: this one
+            carries no footer-notes block of its own, and threading a line
+            through a two-thousand-line component to reach a footer it does
+            not have would be a worse change than putting it here. AP-1 and
+            AP-17 DO have one, and the line joins theirs instead. */}
+        <div
+          className="mt-3 rounded-xl px-4 py-3"
+          style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
+        >
+          <FormOwnerNotice formCode="AP-4" />
+        </div>
+      </>
     </PageContainer>
   );
 }

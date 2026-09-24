@@ -3,9 +3,11 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, Database, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/Dialog";
+import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
+import type { FormOwnerRef } from "@/lib/form-environment/payload-types";
 // The typed-confirmation rule lives in its own import-free module so it can be
 // unit-tested without loading React, SWR and sonner. See its docblock for why
 // both Production directions are typed and neither UAT direction is.
@@ -168,6 +170,19 @@ export function FormEnvironmentSettings() {
     fetcher,
   );
 
+  /* Its own fetch rather than a field on the row above: the switches route
+     writes one switch at a time by design and an owner list is a whole-row
+     write, so folding them together would force one shape onto the other.
+     See `/api/settings/form-owners`. */
+  const { data: ownerRes, mutate: mutateOwners } = useSWR<{
+    ok: boolean;
+    data: Record<string, FormOwnerRef[]>;
+    error?: string;
+  }>("/api/settings/form-owners", fetcher);
+  const owners = ownerRes?.ok ? ownerRes.data ?? {} : {};
+  /** The form whose owner list the directory search is currently adding to. */
+  const [addingOwnerTo, setAddingOwnerTo] = useState<string | null>(null);
+
   const [saving, setSaving] = useState<string | null>(null);
   /** The switch waits here until confirmed — typed, for either Production direction; clicked, for UAT. */
   const [pending, setPending] = useState<{ row: FormEnvironmentRow; field: SwitchField; next: boolean } | null>(
@@ -178,6 +193,32 @@ export function FormEnvironmentSettings() {
   const rows = data?.ok ? data.data ?? [] : [];
   const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
   const coverage = coverageRes?.ok ? coverageRes.data : null;
+
+  /**
+   * Write one form's owners, whole.
+   *
+   * Saved on every add and every remove rather than behind a Save button,
+   * which is how the switches beside it behave — and an owner list has no
+   * half-finished state a Save button would be protecting.
+   */
+  const saveOwners = async (formCode: string, next: FormOwnerRef[]) => {
+    setSaving(formCode);
+    try {
+      const res = await fetch("/api/settings/form-owners", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ formCode, owners: next }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
+      toast.success(`${formCode} · บันทึกเจ้าของฟอร์มแล้ว`);
+      await mutateOwners();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const setFlag = async (formCode: string, field: SwitchField, next: boolean) => {
     setSaving(formCode);
@@ -251,6 +292,7 @@ export function FormEnvironmentSettings() {
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Production</th>
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>UAT</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Switches</th>
+                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>เจ้าของฟอร์ม</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Last changed</th>
                 </tr>
               </thead>
@@ -322,6 +364,55 @@ export function FormEnvironmentSettings() {
                         {saving === row.formCode && (
                           <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
                         )}
+                      </div>
+                    </td>
+                    {/* Owners. Printed at the foot of every form as the person
+                        to contact about a cancellation — see `formOwnerNotice`.
+                        Naming somebody here grants them nothing. */}
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap items-center gap-1">
+                        {(owners[row.formCode] ?? []).map((o) => (
+                          <span
+                            key={o.email}
+                            className="inline-flex items-center gap-1 text-[10.5px] px-1.5 py-0.5 rounded-full"
+                            style={{
+                              background: "var(--bg-badge)",
+                              color: "var(--text-secondary)",
+                              border: "1px solid var(--border-light)",
+                            }}
+                            title={o.email}
+                          >
+                            {o.displayName || o.email}
+                            <button
+                              type="button"
+                              aria-label={`ลบ ${o.displayName || o.email}`}
+                              disabled={saving === row.formCode}
+                              onClick={() =>
+                                saveOwners(
+                                  row.formCode,
+                                  (owners[row.formCode] ?? []).filter((x) => x.email !== o.email),
+                                )
+                              }
+                              className="border-none bg-transparent p-0 cursor-pointer"
+                              style={{ color: "var(--text-faint)" }}
+                            >
+                              <X size={11} />
+                            </button>
+                          </span>
+                        ))}
+                        <button
+                          type="button"
+                          disabled={saving === row.formCode}
+                          onClick={() => setAddingOwnerTo(row.formCode)}
+                          className="inline-flex items-center gap-1 text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full cursor-pointer"
+                          style={{
+                            background: "var(--bg-card-alt)",
+                            color: "var(--text-muted)",
+                            border: "1px dashed var(--border-card)",
+                          }}
+                        >
+                          <Plus size={11} /> เพิ่ม
+                        </button>
                       </div>
                     </td>
                     <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
@@ -482,6 +573,22 @@ export function FormEnvironmentSettings() {
           </div>
         )}
       </Dialog>
+      {addingOwnerTo && (
+        <ADSearchModal
+          title={`เจ้าของฟอร์ม ${addingOwnerTo}`}
+          subtitle="ค้นหาจากไดเรกทอรีของบริษัท · เจ้าของฟอร์มไม่ได้รับสิทธิ์เพิ่มเติมใด ๆ"
+          existingEmails={(owners[addingOwnerTo] ?? []).map((o) => o.email)}
+          onClose={() => setAddingOwnerTo(null)}
+          onSelect={(u: ADResult) => {
+            const code = addingOwnerTo;
+            setAddingOwnerTo(null);
+            void saveOwners(code, [
+              ...(owners[code] ?? []),
+              { email: u.email, displayName: u.name || null },
+            ]);
+          }}
+        />
+      )}
     </div>
   );
 }
