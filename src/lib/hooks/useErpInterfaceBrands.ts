@@ -9,6 +9,29 @@ export interface ErpInterfaceBrandOption {
   logo: string | null;
 }
 
+/**
+ * The empty answer, as ONE array that never changes identity.
+ *
+ * `return { brands: data ?? [] }` allocates a fresh array on **every render**
+ * while `data` is undefined — which is every render until the fetch lands, and
+ * every render for ever if it fails. Thirteen call sites put this value in a
+ * dependency array, and in `ApproverInterfaceBrandTable` it reaches a
+ * `useEffect` that calls `setChecked`: new array → new `allIds` memo → effect
+ * runs → state set → render → new array. That is an infinite loop, and it is
+ * what AP-1's สิทธิ์เข้าถึง tab threw on 2026-09-24 — *"Maximum update depth
+ * exceeded"*, on every load.
+ *
+ * **It is a regression from the 2026-09-23 conversion**, not an old bug:
+ * `ERP_INTERFACE_BRANDS` was a module constant, so its identity was stable by
+ * construction and no consumer had to think about it. Replacing a constant
+ * with a hook silently withdrew that guarantee from all thirteen.
+ *
+ * Frozen because it is now shared by every caller and every render: a single
+ * `brands.push(...)` anywhere would be seen by all of them at once.
+ */
+const NO_BRANDS: ErpInterfaceBrandOption[] = [];
+Object.freeze(NO_BRANDS);
+
 const fetcher = async (url: string): Promise<ErpInterfaceBrandOption[]> => {
   const res = await fetch(url);
   const json = await res.json().catch(() => null);
@@ -68,7 +91,10 @@ export function useErpInterfaceBrands(): {
     // on an interval.
     { revalidateOnFocus: true, revalidateIfStale: true },
   );
-  return { brands: data ?? [], ready: data !== undefined, error };
+  /* `NO_BRANDS`, never a fresh `[]` — see its own note. An unstable identity
+     here is invisible to the typechecker and to every test in this repo, and
+     it reaches a `setState` in an effect two components away. */
+  return { brands: data ?? NO_BRANDS, ready: data !== undefined, error };
 }
 
 /** The codes alone, which is what most callers actually want. */
