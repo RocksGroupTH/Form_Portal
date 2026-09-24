@@ -54,6 +54,13 @@ test("every line the gate complains about is accounted for", () => {
     line({ amountBeforeVat: 0 }),
     line({ amountBeforeVat: 0, description: "" }),
     line({ description: "", branchCode: "" }),
+    // Two lines the gate does NOT block that are also missing a branch. Without
+    // them the property passes even if the buckets are filled before the
+    // blocked check — mutation testing found exactly that hole. They are the
+    // only inputs that can tell "covers what the gate flags" apart from
+    // "covers at least what the gate flags".
+    line({ glAccountNo: "610322005", branchCode: "" }),
+    line({ amountBeforeVat: 0, branchCode: null }),
   ];
   const p = planGlSuggestions(items);
   const accountedFor = [...p.targets, ...p.noDescription, ...p.noBranch].map((i) => i + 1).sort((a, b) => a - b);
