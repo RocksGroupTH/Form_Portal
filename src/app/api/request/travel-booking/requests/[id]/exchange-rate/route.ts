@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { applyRateOverride } from "@/lib/acc/rate-override";
 import { statusForAccError } from "@/lib/acc/request-errors";
@@ -58,6 +59,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // was narrowed is refused here, where the queue would merely not have shown it.
   const scoped = await requireBookingBrandScope(session.user, id);
   if (scoped) return scoped;
+
+  // This route's own docblock says it is gated the way the form's other
+  // ACCOUNT-step routes are, and since 2026-09-24 that includes the อนุมัติ (HR)
+  // tick — correcting the rate rewrites what every booking figure is worth.
+  const menu = await requireBookingMenu(session.user, "accountApproval");
+  if (menu) return menu;
 
   try {
     const body = (await req.json().catch(() => ({}))) as { rate?: unknown };

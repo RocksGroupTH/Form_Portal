@@ -281,7 +281,7 @@ async function rewritePerDiemRow(
   } else if (!departDate || !returnDate) {
     note = `${causeNo} ${causeLabel} แต่คำขอนี้ไม่มีวันที่เดินทางครบถ้วน — ไม่ได้แก้ยอด ${figures}`;
   } else if (status === "Completed") {
-    note = `${causeNo} ${causeLabel} แต่คำขอนี้ผ่านบัญชีแล้ว — ไม่ได้แก้ยอด ${figures}`;
+    note = `${causeNo} ${causeLabel} แต่คำขอนี้ผ่าน HR แล้ว — ไม่ได้แก้ยอด ${figures}`;
   } else {
     // Dead itself (Cancelled/Rejected) — including the self-referencing case
     // where `requestId === cause.requestId`. Any future terminal status

@@ -661,7 +661,7 @@ Accommodation/ticket booking requests for provincial work travel — supports mu
 - **Pages:** `/request/travel-booking` (fill/resume draft, multi-row), `/request/travel-booking/[id]` (detail), plus office/admin views under `/request/accounting/travel-booking*` (Admin booking queue, the accounting sign-off queue at `/request/accounting/travel-booking/approvals`, report, settings)
 - **Feature code:** `src/features/travel-booking/`; service/lib code under `src/lib/acc/travel-booking/`
 - **`Completed` is AP-17's own spelling of `Approved`, and three shared filters did not know it until 2026-09-24.** `approveByAccount` writes `Status='Completed'`; every other form writes `Approved`, and `CK_AccRequest_Status` permits both. `statusDisplay` has mapped the pair to **Complete** since the shared vocabulary shipped, so the *chip* was always right — but `MINE_STATUS_FILTER_GROUPS`' อนุมัติแล้ว matched `Approved` alone, `getMyWorkStatusBucket` fell all the way through to `pending`, and `formatNextApprovalDetail` went looking for a next step on a finished request. All three now ask `isCompletedStatus` (`src/features/accounting/constants.ts`). **Nobody had seen it** because no AP-17 request has ever reached that state — measured 2026-09-24, its 22 live rows all sit at `ManagerApproved` and neither form database holds a single `Completed` row; the day one lands it would have read Complete on its chip while sitting in My Work's รออนุมัติ tab and missing from the filter that names that word. **The AP-1 report deliberately still matches `Approved` alone**: `queryReport` pins `FormCode='AP-1'`, which cannot write `Completed`, and widening a filter to a value its own query can never return says something false about what that page contains.
-- **Workflow, since 2026-08-27: ผู้จัดการ → Admin จอง → บัญชี (`ACCOUNT`), ending at `Completed`.** The Admin desk used to close the request itself; `completeRequest` now only hands off — `Status` stays `ManagerApproved` and `CurrentStepCode` moves to `ACCOUNT` — and `approveByAccount` (`travel-booking/approval.ts`) is the terminal transition. Accounting works the new queue at `/request/accounting/travel-booking/approvals`, picks a **payout date** (re-derived server-side by `POST .../requests/[id]/payment-date` rather than trusted from the client; it was a *month* until 2026-09-04, which stopped naming one day once a foreign trip could pay on the 10th — see the payout rule below), and signs. From there the amount is read-only — on the page *and* in the route, because a control removed from a page is not a rule. **The step needed no migration**: `CK_AccApproval_Step` has permitted `ACCOUNT` since 091, `CurrentStepCode` is `NVARCHAR(20) NULL` with no CHECK, and `AccActivityLog.Action` has none either.
+- **Workflow, since 2026-08-27: ผู้จัดการ → Admin จอง → HR (`ACCOUNT`), ending at `Completed`.** **That third step was called บัญชี until 2026-09-24** (the user: "AP-17 จะเป็น step ที่ชื่อบัญชีเป็น HR แทน"). The step CODE did not move and cannot cheaply — `CK_AccApproval_Step` has permitted `ACCOUNT` since 091 and every other form uses the same value for its accounting step — so the department a step belongs to is no longer readable off the step alone. `stepLabel` and `departmentLabel` (`my-request-view.ts`) therefore take an optional `formCode` and consult `LABEL_BY_FORM`, which holds one entry: AP-17's `ACCOUNT` is HR. **A caller that passes no form still gets บัญชี**, which is right for the other four; every AP-17 surface — the queue, the hub card, the detail banners, the mail, the timeline notes, the menu's own name — says HR. The Admin desk used to close the request itself; `completeRequest` now only hands off — `Status` stays `ManagerApproved` and `CurrentStepCode` moves to `ACCOUNT` — and `approveByAccount` (`travel-booking/approval.ts`) is the terminal transition. Accounting works the new queue at `/request/accounting/travel-booking/approvals`, picks a **payout date** (re-derived server-side by `POST .../requests/[id]/payment-date` rather than trusted from the client; it was a *month* until 2026-09-04, which stopped naming one day once a foreign trip could pay on the 10th — see the payout rule below), and signs. From there the amount is read-only — on the page *and* in the route, because a control removed from a page is not a rule. **The step needed no migration**: `CK_AccApproval_Step` has permitted `ACCOUNT` since 091, `CurrentStepCode` is `NVARCHAR(20) NULL` with no CHECK, and `AccActivityLog.Action` has none either.
   - **The payout date is computed by `payout-rule.ts`, and it takes TWO dates
     and the country** (2026-09-04). The determining date **D is the later of the
     manager's approval and the trip's return date — for ในประเทศ only.** **For
@@ -1039,15 +1039,80 @@ that split is the whole feature, because `booking-approver-tabs.ts` applies its
 filter on **both** read and write, so before it a menu tick was dropped twice
 over and saved nothing at all.
 
-**The hub filter is roster membership OR the grant, deliberately not the grant
-alone.** Measured 2026-08-27, `AccBookingApproverTab` held **zero** rows while
-`AccBookingApprover` held **two** active ones, one of them a Staff-role
-Accounting Manager — gating on the grant alone would have taken the booking
-queue away from exactly the person it exists for, on the day it shipped. A tick
-therefore *adds* reach, opening a menu to somebody who is not on the roster; it
-is not a second thing a roster member must also be given. Showing a card leaks
-nothing either way: both pages authorize with `canAccessBookingArea`
-server-side, and **roster membership is still what permits the action**.
+**A MENU TICK IS AUTHORITY, NOT SIGHT — since 2026-09-24, and this reverses
+what the rest of this section said until then.** The user's instruction was
+*"ของ รออนุมัติโดย AP-17 Admin จะต้องเป็นคนที่ติ๊ก จองคิว เท่านั้น และ HR จะต้องเห็นคนที่
+ติ๊ก HR"*, and asked whether that was sight alone or real authority they chose
+**"เป็นสิทธิ์จริงด้วย"**. So: the Admin desk is whoever holds `bookingQueue`
+and the HR sign-off whoever holds `accountApproval`, and a roster member
+without the tick keeps their brand scope, keeps their place on the roster,
+and **cannot press the button**.
+
+- **What it replaced, quoted so the reversal is legible**: *"A tick therefore
+  **adds** reach, opening a menu to somebody who is not on the roster; it is
+  not a second thing a roster member must also be given… **roster membership
+  is still what permits the action**."* Every word of that is now false of
+  AP-17. It is kept here rather than deleted because the argument behind it
+  was sound and somebody will re-make it.
+- **`src/lib/acc/travel-booking/require-booking-menu.ts` is the whole gate**,
+  on **eight** call sites across seven route files: `account-approve`,
+  `payment-date` and `exchange-rate` take `accountApproval`; `complete`,
+  `admin/…/booking` and **both** booking branches of `requests/[id]/files`
+  take `bookingQueue`; `reject` and `return` branch on the stage and pass
+  **null at the manager step**, where neither desk is involved.
+  **`payment-date`, `exchange-rate` and the attachment path are not padding**
+  — leaving a desk's own work open while gating only its last click would
+  make the tick govern the button and nothing the button is about.
+- **What forced it was the `รออนุมัติโดย` card**, not tidiness. That card
+  names who may act on a step, and with sight and authority disagreeing there
+  was no honest list to draw: the roster said everyone, the queue those
+  people can actually open said fewer, and the two sets differ *between the
+  two steps*. Filtering the card alone would have been a card that lies —
+  the mistake this repo had already made once with AP-1's fail-open.
+- **Admins pass, and that is load-bearing rather than a leak.**
+  `canAccessBookingArea` keeps its admin arm, `requireBookingBrandScope`
+  grants admins `allAccess`, and the settings grid prints "เห็นทุกเมนูอยู่แล้ว
+  (Super Admin)" where their tick boxes would be — so an admin holds every
+  menu by construction and has **no row** for this read to find. Refusing
+  them would contradict all three and lock the people who administer AP-17
+  out of it.
+- **It is the LAST gate, never the first.** Every caller runs it after
+  `canAccessBookingArea` and `requireBookingBrandScope`, so "not in this area
+  at all" and "not your brand" keep answering first; this one only ever
+  explains the narrower thing. Order is the message, not the outcome.
+- **The card reads the same table the gate reads.**
+  `step-approvers-load.ts` gives AP-17's two steps `withMenu("bookingQueue")`
+  and `withMenu("accountApproval")` over `AccBookingApproverTab`, through its
+  own `menusByApprover` and deliberately **not** `scopeByApprover`, which
+  upper-cases every value because brand codes are case-insensitive — a
+  `TabKey` is a camelCase identifier compared for equality everywhere else.
+  **One residual, the same one the brand scope has**: an ADMIN-role approver
+  passes both gates with no row at all, and this read sees rows rather than
+  roles, so such a person is under-listed. Under-listing is the safe
+  direction for a card whose job is to name who can act, and reading the role
+  would mean joining `TeamMember` in another database for a tooltip.
+- **`require-booking-menu-guard.test.ts` is source-shape**, because
+  `requireBookingMenu` reaches a pool and `@/env` validates the whole
+  environment at import. Beyond presence it pins the things a typechecker
+  cannot see: that each route passes **its own** key (`BookingMenuKey` is a
+  two-member string union, so handing the Admin desk `"accountApproval"`
+  compiles and gates the wrong queue), that the refusal is **returned** rather
+  than computed and dropped, that the gate runs after the other two, that
+  `reject`/`return` do not cross the stages, and — the arm that keeps the
+  lists from going stale — that **no route checks the brand and then skips
+  the menu**. `requests/[id]/route.ts` is the one exemption, with its reason:
+  its scope call is inside the **GET**, and reading is not acting.
+
+**The hub FILTER is still roster membership OR the grant, and that has not
+changed.** Measured 2026-08-27, `AccBookingApproverTab` held **zero** rows
+while `AccBookingApprover` held **two** active ones, one of them a Staff-role
+Accounting Manager — gating the card on the grant alone would have taken the
+booking queue away from exactly the person it exists for, on the day it
+shipped. Showing a card leaks nothing either way: both pages authorize with
+`canAccessBookingArea` server-side. **What a roster member without a tick now
+gets is the door and not the work** — the queue opens and every button on it
+answers 403, which is visible rather than silent, and the fix is one tick at
+Settings → ตั้งค่าแบบฟอร์มขอเดินทาง → สิทธิ์เข้าถึง.
 
 **Do not grant `erpInterface` to a non-admin yet.** `gl-accounts`,
 `bank-accounts`, `journal-batches` and `branch-codes` are tab-gated but **not**
@@ -2488,7 +2553,7 @@ repo — it exists only on the server, and a rebuilt server loses it.
   - **Nothing is seeded.** Every form has no owner on the day it lands and keeps none until an admin ticks somebody in the `เจ้าของฟอร์ม` column on that form's สิทธิ์เข้าถึง tab — and AP-11 and AP-15, which have no settings page, keep none for ever. Unlike migration 154's default, that costs nothing while it lasts: the line falls back to the sentence it always had.
   - **Applied to `Fast_Core` on 2026-09-24, on the user's instruction, and verified against the database rather than from the apply output.** Measured immediately after: `dbo.FormOwner` exists, its seven columns carry the declared types, both `UQ_FormOwner_Form_Email` and `IX_FormOwner_FormCode` are there, and it holds **0 rows** — nothing is seeded, so every form still prints the bare sentence until an admin names somebody. `npm run check:alignment` re-run straight afterwards: **PASS at 30 tables, 197 rows.**
   - **The first apply FAILED, and the bug was in this file rather than in the database.** Its guard called `DB_NAME()` inline as a `RAISERROR` substitution argument, which is a **parse error** — `Incorrect syntax near 'DB_NAME'` — so batch 2 of 6 died and the table was never created. RAISERROR takes constants and variables there, never expressions; migrations 156 and 161 already route it through a `DECLARE`d variable and this one did not. **What made it worth finding rather than merely fixing** is which half broke: the code shipped first and degrades silently by design, so the only symptom anybody saw was `Internal server error` on Settings → Form Environment when an admin pressed Save — `listFormOwners` swallows the missing table and `setFormOwners` does not. The `LIKE` test was also `'Fast_Core%'`, where `_` is a single-character wildcard; it is `'Fast[_]Core%'` now.
-- **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. Membership is what permits the action; an `accountApproval` tick in `AccBookingApproverTab` only decides who is shown the menu, and the hub shows it to roster members regardless.
+- **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. **Since 2026-09-24 that person also needs the `accountApproval` tick** — membership opens the queue and the tick is what permits the action (`require-booking-menu.ts`), so a roster with nobody ticked leaves every AP-17 request stuck at `ACCOUNT` with the queue visible and its buttons answering 403. `AccBookingApproverTab` shipped empty, so this is a real commissioning step: tick อนุมัติ (HR) for at least one person, and คิวจอง for whoever works the Admin desk, at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง → สิทธิ์เข้าถึง.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.
 

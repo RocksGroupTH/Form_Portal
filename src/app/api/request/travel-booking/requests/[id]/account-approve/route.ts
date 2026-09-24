@@ -5,6 +5,7 @@ import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { approveByAccount } from "@/lib/acc/travel-booking/approval";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { processQueue } from "@/lib/acc/email-queue";
 
 /* ── POST /api/request/travel-booking/requests/[id]/account-approve ──
@@ -40,6 +41,12 @@ export async function POST(
   // was narrowed is refused here, where the queue would merely not have shown it.
   const scoped = await requireBookingBrandScope(session.user, id);
   if (scoped) return scoped;
+
+  /* And being on the roster is not the same as holding this step. The HR
+     sign-off belongs to the people ticked for อนุมัติ (HR) — see
+     `requireBookingMenu` for why a menu tick became authority. */
+  const menu = await requireBookingMenu(session.user, "accountApproval");
+  if (menu) return menu;
 
   try {
     const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);

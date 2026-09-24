@@ -29,7 +29,7 @@ test("the ManagerApproved status label no longer names the Admin stage", () => {
 
 test("the step tells the two ManagerApproved stages apart", () => {
   assert.equal(travelBookingStatusLabel("ManagerApproved", "ADMIN"), "รอ Admin จองให้");
-  assert.equal(travelBookingStatusLabel("ManagerApproved", "ACCOUNT"), "รอบัญชีตรวจสอบ");
+  assert.equal(travelBookingStatusLabel("ManagerApproved", "ACCOUNT"), "รอ HR ตรวจสอบ");
 });
 
 test("no step, or one this file has never heard of, falls back to the stage-neutral label", () => {

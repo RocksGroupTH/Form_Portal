@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { uatActorGate } from "@/lib/acc/travel-booking/uat-gate";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { payoutOptions, payoutTripKind} from "@/lib/acc/travel-booking/payout-rule";
@@ -69,6 +70,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // was narrowed is refused here, where the queue would merely not have shown it.
   const scoped = await requireBookingBrandScope(session.user, id);
   if (scoped) return scoped;
+
+  // And the ACCOUNT step is the HR desk's, whose authority is the อนุมัติ (HR)
+  // tick since 2026-09-24. Choosing the payout date is that desk's own work,
+  // so it is gated with the approval rather than left beside it.
+  const menu = await requireBookingMenu(session.user, "accountApproval");
+  if (menu) return menu;
 
   try {
     const body = (await req.json().catch(() => ({}))) as { date?: unknown };

@@ -233,6 +233,24 @@ test("AP-4's two accounting steps are ONE department and TWO steps", () => {
   assert.equal(stepLabel("ACCOUNT_FINAL"), "บัญชี (ขั้นสุดท้าย)");
 });
 
+test("AP-17 calls the SAME ACCOUNT step HR, and only AP-17 does", () => {
+  /* It reuses the shared step code, so the label cannot be read off the step
+     alone (the user, 2026-09-24). Both columns follow — รออนุมัติโดย and
+     ขั้นตอนปัจจุบัน — and a caller that passes no form still gets the shared
+     answer, which is what the other four forms need. */
+  assert.equal(departmentLabel("ACCOUNT", "AP-17"), "HR");
+  assert.equal(stepLabel("ACCOUNT", "AP-17"), "HR");
+  assert.equal(departmentLabel("ACCOUNT", "AP-1"), "บัญชี");
+  assert.equal(stepLabel("ACCOUNT", "AP-4"), "บัญชี");
+  assert.equal(departmentLabel("ACCOUNT"), "บัญชี");
+
+  /* Only the one step moves — AP-17's Admin step is untouched, and the
+     override must not leak into a form's other steps. */
+  assert.equal(departmentLabel("ADMIN", "AP-17"), "Admin");
+  assert.equal(stepLabel("ADMIN", "AP-17"), "Admin จอง");
+  assert.equal(departmentLabel("ACCOUNT_FINAL", "AP-17"), "บัญชี");
+});
+
 /* ---------------------------------------------------------------- *
  * Status
  * ---------------------------------------------------------------- */

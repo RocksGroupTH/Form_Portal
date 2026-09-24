@@ -868,7 +868,7 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
     // "finished" email now belongs — see `approval.ts`.
     await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
-              VALUES (@rid, @by, 'sent_to_account', N'ส่งต่อให้บัญชีตรวจสอบ')`);
+              VALUES (@rid, @by, 'sent_to_account', N'ส่งต่อให้ HR ตรวจสอบ')`);
     await tx.commit();
   } catch (e) {
     await tx.rollback().catch(() => {});
@@ -876,6 +876,6 @@ export async function completeRequest(requestId: number, actor: Actor): Promise<
   }
 
   const updated = await getTravelBookingRequest(requestId);
-  if (!updated) throw new Error("ไม่พบคำขอหลังส่งต่อให้บัญชี");
+  if (!updated) throw new Error("ไม่พบคำขอหลังส่งต่อให้ HR");
   return updated;
 }

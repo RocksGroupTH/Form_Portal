@@ -10,6 +10,7 @@ import {
 import { resolveLoginEmail } from "@/lib/auth-email";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { deleteFile } from "@/lib/storage";
 import {
   isSharePointConfigured,
@@ -177,6 +178,11 @@ export async function POST(
       // opens the area; the scope decides which requests inside it.
       const scoped = await requireBookingBrandScope(session.user, requestId);
       if (scoped) return scoped;
+      // And which people inside the area: since 2026-09-24 the คิวจอง tick is
+      // authority rather than sight, and attaching or removing booking evidence
+      // is that desk's own work — see `require-booking-menu.ts`.
+      const menu = await requireBookingMenu(session.user, "bookingQueue");
+      if (menu) return menu;
       // `CurrentStepCode` must be checked alongside `Status`: since the
       // accounting step split ADMIN and ACCOUNT apart, `Status` alone stays
       // 'ManagerApproved' through both — without this, an account-area viewer
@@ -436,6 +442,11 @@ export async function DELETE(
       // opens the area; the scope decides which requests inside it.
       const scoped = await requireBookingBrandScope(session.user, requestId);
       if (scoped) return scoped;
+      // And which people inside the area: since 2026-09-24 the คิวจอง tick is
+      // authority rather than sight, and attaching or removing booking evidence
+      // is that desk's own work — see `require-booking-menu.ts`.
+      const menu = await requireBookingMenu(session.user, "bookingQueue");
+      if (menu) return menu;
       // Same `CurrentStepCode` scoping as the POST handler above — booking_*
       // attachments only, not the idcard branch.
       if (reqRow.Status !== "ManagerApproved" || reqRow.CurrentStepCode !== "ADMIN") {

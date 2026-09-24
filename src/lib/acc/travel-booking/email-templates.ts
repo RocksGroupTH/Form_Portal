@@ -71,7 +71,7 @@ function perDiemLabel(req: TravelBookingRequest): string {
  * named exports so a test can assert against the constant rather than a
  * prose fragment, and a reword does not red the suite for no reason.
  */
-export const APPROVED_NEXT_STEP_TEXT = "รอ Admin ดำเนินการจองให้ แล้วจึงส่งให้บัญชีตรวจสอบ";
+export const APPROVED_NEXT_STEP_TEXT = "รอ Admin ดำเนินการจองให้ แล้วจึงส่งให้ HR ตรวจสอบ";
 export const RETURNED_ACTION_TEXT = "เปิดคำขอนี้ แก้ไขตามหมายเหตุ แล้วกดส่งใหม่ (เลขที่เดิม)";
 
 /** Which admin-fill-in items this tab still needs (spec §2.x needs* flags). */
@@ -341,12 +341,12 @@ export const ROOM_SHARE_GUEST_REDATED_TEXT =
   "กรุณาติดต่อเจ้าของคำขอที่พักห้องร่วม หรือยกเลิกการพักห้องร่วมแล้วแก้ไขคำขอของคุณเอง";
 
 export const ROOM_SHARE_ACCOUNTING_CANCELLED_TEXT =
-  "คำขอนี้ผ่านบัญชีแล้ว (Completed — อนุมัติและกำหนดวันจ่ายไปแล้ว) " +
+  "คำขอนี้ผ่าน HR แล้ว (Completed — อนุมัติและกำหนดวันจ่ายไปแล้ว) " +
   "และถูกยกเลิกอัตโนมัติเพราะคำขอที่พักห้องร่วมด้วยถูกยกเลิก/ไม่อนุมัติ " +
   "กรุณาตรวจสอบว่าจ่ายเบี้ยเลี้ยงไปแล้วหรือไม่ และเรียกคืนหรือหักกลบตามความเหมาะสม";
 
 export const ROOM_SHARE_ACCOUNTING_REDATED_TEXT =
-  "คำขอนี้ผ่านบัญชีแล้ว ระบบจึงเปลี่ยนวันเดินทางตามคำขอที่พักห้องร่วม " +
+  "คำขอนี้ผ่าน HR แล้ว ระบบจึงเปลี่ยนวันเดินทางตามคำขอที่พักห้องร่วม " +
   "แต่ไม่แก้ไขยอดเบี้ยเลี้ยงที่อนุมัติไปแล้ว — วันเดินทางในระบบจึงไม่ตรงกับช่วงวันที่ใช้คำนวณยอด " +
   "กรุณาตรวจสอบและปรับปรุงเอง";
 
@@ -440,7 +440,7 @@ export function buildRoomShareEmail(input: RoomShareMailInput): { subject: strin
     }
 
     case "RoomShareAccountingCancelled": {
-      const subject = `[บัญชี] ยกเลิกคำขอที่ผ่านบัญชีแล้ว ${no}`;
+      const subject = `[HR] ยกเลิกคำขอที่ผ่าน HR แล้ว ${no}`;
       const rows = [
         row("เลขที่", no),
         // `ผู้ขอ` IS wanted here, and it is not the row package A removed: that
@@ -458,7 +458,7 @@ export function buildRoomShareEmail(input: RoomShareMailInput): { subject: strin
     }
 
     case "RoomShareAccountingRedated": {
-      const subject = `[บัญชี] วันเดินทางเปลี่ยนหลังผ่านบัญชีแล้ว ${no}`;
+      const subject = `[HR] วันเดินทางเปลี่ยนหลังผ่าน HR แล้ว ${no}`;
       const before = input.previousDates;
       const rows = [
         row("เลขที่", no),

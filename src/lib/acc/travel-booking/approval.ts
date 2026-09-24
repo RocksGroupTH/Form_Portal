@@ -89,7 +89,7 @@ async function requireTravelBookingRequest(id: number): Promise<TravelBookingReq
 
 /**
  * Manager approves — Submitted → ManagerApproved, handing off to Admin for booking fill-in
- * (spec: ผู้จัดการ → Admin จอง → บัญชี → เสร็จสิ้น).
+ * (spec: ผู้จัดการ → Admin จอง → HR → เสร็จสิ้น).
  * Sets `PaymentDate` from `payout-rule.ts`. For ในประเทศ the determining date is
  * the LATER of this approval and the trip's return date; for ต่างประเทศ, since
  * 2026-09-21, it is this approval ALONE — the return date is not read at all.
@@ -259,7 +259,7 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
       await tx.request()
         .input("rid", sql.Int, requestId)
         .input("by", sql.Int, actor.userId)
-        .input("note", sql.NVarChar, `ไม่พบวันเดินทางกลับ จึงคำนวณกำหนดจ่ายจากวันที่อนุมัติอย่างเดียว (${payDate}) — บัญชีควรตรวจสอบ`)
+        .input("note", sql.NVarChar, `ไม่พบวันเดินทางกลับ จึงคำนวณกำหนดจ่ายจากวันที่อนุมัติอย่างเดียว (${payDate}) — HR ควรตรวจสอบ`)
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
                 VALUES (@rid, @by, 'payment_date_fallback', @note)`);
     }
@@ -269,7 +269,7 @@ export async function approveByManager(requestId: number, actor: Actor): Promise
       // do. It used to be a 'completed' row, which is no longer what happens.
       await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
         .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
-                VALUES (@rid, @by, 'sent_to_account', N'ไม่มีรายการที่ต้องจอง — ส่งต่อให้บัญชีตรวจสอบ')`);
+                VALUES (@rid, @by, 'sent_to_account', N'ไม่มีรายการที่ต้องจอง — ส่งต่อให้ HR ตรวจสอบ')`);
     }
     await logManagerOnBehalf(tx, requestId, actor, "อนุมัติ");
     await tx.commit();
@@ -535,7 +535,7 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
   return requireTravelBookingRequest(requestId);
 }
 
-/* ── Accounting stage — spec: ผู้จัดการ → Admin จอง → บัญชี → done ── */
+/* ── Accounting stage — spec: ผู้จัดการ → Admin จอง → HR → done ── */
 
 /**
  * Accounting signs the booking off: `ManagerApproved`/`ACCOUNT` → `Completed`.
@@ -558,7 +558,7 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
               SET Status='Completed', CurrentStepCode=NULL, UpdatedAt=SYSDATETIME()
               WHERE Id=@rid AND Status='ManagerApproved' AND CurrentStepCode='ACCOUNT'`);
     if ((res.rowsAffected[0] ?? 0) === 0) {
-      throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนอนุมัติของบัญชี");
+      throw new Error("คำขอนี้ไม่อยู่ในขั้นตอนอนุมัติของ HR");
     }
 
     // The rule, not the button. The queue disables this row's controls, but a
@@ -579,7 +579,7 @@ export async function approveByAccount(requestId: number, actor: Actor): Promise
       .input("rid", sql.Int, requestId)
       .input("by", sql.Int, actor.userId)
       .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note)
-              VALUES (@rid, @by, 'account_approved', N'บัญชีอนุมัติ')`);
+              VALUES (@rid, @by, 'account_approved', N'HR อนุมัติ')`);
 
     await tx.commit();
   } catch (e) {
@@ -618,7 +618,7 @@ export async function returnByAccount(requestId: number, actor: Actor, comment: 
     stepCode: "ADMIN",
     clearPaymentDate: false,
     action: "account_returned_to_admin",
-    blockedError: "คำขอไม่อยู่ในขั้นที่บัญชีสามารถส่งกลับให้ Admin แก้ไขได้",
+    blockedError: "คำขอไม่อยู่ในขั้นที่ HR สามารถส่งกลับให้ Admin แก้ไขได้",
   });
 
   // The requester is not being asked for anything — the work is Admin's — so the
@@ -651,7 +651,7 @@ export async function rejectByAccount(requestId: number, actor: Actor, comment: 
     stepCode: null,
     clearPaymentDate: true,
     action: "account_rejected",
-    blockedError: "คำขอไม่อยู่ในขั้นที่บัญชีสามารถไม่อนุมัติได้",
+    blockedError: "คำขอไม่อยู่ในขั้นที่ HR สามารถไม่อนุมัติได้",
   });
 
   const requesterEmail = await getRequesterEmail(requestId);

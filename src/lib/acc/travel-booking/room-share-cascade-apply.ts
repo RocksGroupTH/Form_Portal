@@ -339,7 +339,7 @@ export async function applyRoomShareDeath(
     const note =
       `ยกเลิกอัตโนมัติ เนื่องจากคำขอที่พักห้องร่วม ${label(hostNo, hostRequestId)}` +
       ` ถูกยกเลิก/ไม่อนุมัติ — สถานะเดิมของคำขอนี้: ${action.previousStatus}` +
-      (action.wasCompleted ? " (คำขอนี้ผ่านบัญชีแล้ว — แจ้งบัญชีตรวจสอบ)" : "");
+      (action.wasCompleted ? " (คำขอนี้ผ่าน HR แล้ว — แจ้ง HR ตรวจสอบ)" : "");
 
     await runner
       .request()

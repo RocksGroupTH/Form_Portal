@@ -194,7 +194,7 @@ test("a Completed trip whose flag would have flipped is not updated but still ge
   // Finding 1: the note must say accounting signed it — not the generic
   // "already passed accounting" sentence misapplied to a row that just died.
   const note = inserts[0].inputs.note as string;
-  assert.match(note, /ผ่านบัญชีแล้ว/);
+  assert.match(note, /ผ่าน HR แล้ว/);
 });
 
 test("the cause's own row, if its flag flips too, gets a truthful note about itself — not the accounting sentence", async () => {
@@ -220,7 +220,7 @@ test("the cause's own row, if its flag flips too, gets a truthful note about its
   assert.equal(inserts.length, 1);
   const note = inserts[0].inputs.note as string;
   // It must not claim accounting signed it — it died, it wasn't signed.
-  assert.doesNotMatch(note, /ผ่านบัญชีแล้ว/);
+  assert.doesNotMatch(note, /ผ่าน HR แล้ว/);
   assert.match(note, /คำขอนี้เองก็ถูกยกเลิกเช่นกัน/);
 
   const meta = JSON.parse(inserts[0].inputs.meta as string);
@@ -462,7 +462,7 @@ test("an outside trip past accounting is reported but not rewritten", async () =
   assert.equal(meta.locked, true);
 
   const note = inserts[0].inputs.note as string;
-  assert.match(note, /ผ่านบัญชีแล้ว/);
+  assert.match(note, /ผ่าน HR แล้ว/);
 });
 
 /* ── rewriteSubmitAffectedTrips (added 2026-09-22, I1; N1 skip arm added the
@@ -536,7 +536,7 @@ test("rewriteSubmitAffectedTrips: a Completed trip gets zero UPDATEs and a locke
   assert.equal(meta.before.days, meta.after.days);
   assert.equal(meta.before.total, meta.after.total);
   const note = inserts[0].inputs.note as string;
-  assert.match(note, /ผ่านบัญชีแล้ว/);
+  assert.match(note, /ผ่าน HR แล้ว/);
 });
 
 test("rewriteSubmitAffectedTrips: an unchanged flag writes nothing and never calls causeFor", async () => {

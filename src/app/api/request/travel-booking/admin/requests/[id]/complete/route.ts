@@ -4,6 +4,7 @@ import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { completeRequest } from "@/lib/acc/travel-booking/admin-service";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { processQueue } from "@/lib/acc/email-queue";
 
 /**
@@ -34,6 +35,12 @@ export async function POST(
   // was narrowed is refused here, where the queue would merely not have shown it.
   const scoped = await requireBookingBrandScope(session.user, requestId);
   if (scoped) return scoped;
+
+  /* The Admin desk belongs to the people ticked for คิวจอง, and since
+     2026-09-24 that tick is authority rather than sight — see
+     `requireBookingMenu`. */
+  const menu = await requireBookingMenu(session.user, "bookingQueue");
+  if (menu) return menu;
 
   try {
     const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);

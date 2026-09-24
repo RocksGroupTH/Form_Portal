@@ -35,8 +35,8 @@ const CARDS: HubCard[] = [
     menu: "bookingQueue",
   },
   {
-    title: "อนุมัติจองที่พัก/ตั๋วโดยสาร (บัญชี)",
-    desc: "รายการที่ Admin จองเสร็จแล้ว รอบัญชีเลือกเดือนจ่ายแล้วอนุมัติปิดงาน",
+    title: "อนุมัติจองที่พัก/ตั๋วโดยสาร (HR)",
+    desc: "รายการที่ Admin จองเสร็จแล้ว รอ HR เลือกวันจ่ายแล้วอนุมัติปิดงาน",
     href: "/request/accounting/travel-booking/approvals",
     icon: <ClipboardCheck size={20} />,
     accountOnly: true,
@@ -130,7 +130,7 @@ export default function TravelBookingHubPage() {
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
       <PageHeaderBar
         icon={Luggage}
-        title="จองที่พัก/ตั๋วโดยสาร · บัญชี"
+        title="จองที่พัก/ตั๋วโดยสาร · HR"
         titleExtra={<FormEnvironmentChip formCode="AP-17" />}
         subtitle="คิวจอง รายงาน และตั้งค่าการจองที่พัก/ตั๋วโดยสาร (AP-17)"
         backHref={backHref}

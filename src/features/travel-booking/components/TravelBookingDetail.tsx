@@ -747,7 +747,7 @@ export function TravelBookingDetail({
         >
           <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
           <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-            รอ Admin กรอกข้อมูลการจอง — ทีมบัญชีจะดำเนินการจองตามรายการที่ร้องขอ แล้วส่งต่อให้บัญชีตรวจสอบ
+            รอ Admin กรอกข้อมูลการจอง — ทีมแอดมินจะดำเนินการจองตามรายการที่ร้องขอ แล้วส่งต่อให้ HR ตรวจสอบ
           </p>
         </div>
       )}
@@ -762,7 +762,7 @@ export function TravelBookingDetail({
         >
           <AlertCircle size={16} style={{ color: "var(--text-info-yellow)", marginTop: 2 }} className="shrink-0" />
           <p className="text-[13px] m-0" style={{ color: "var(--text-info-yellow)" }}>
-            Admin จองให้เรียบร้อยแล้ว — รอบัญชีตรวจสอบและอนุมัติปิดงาน
+            Admin จองให้เรียบร้อยแล้ว — รอ HR ตรวจสอบและอนุมัติปิดงาน
           </p>
         </div>
       )}

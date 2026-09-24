@@ -251,10 +251,36 @@ const STEP_LABEL: Record<string, string> = {
   HEAD: "หัวหน้า",
 };
 
-export function stepLabel(code: string | null | undefined): string {
+/**
+ * **AP-17 calls its ACCOUNT step HR, not บัญชี** (the user, 2026-09-24: "AP-17
+ * จะเป็น step ที่ชื่อบัญชีเป็น HR แทน").
+ *
+ * It is the SAME `CurrentStepCode` the other four forms use —
+ * `CK_AccApproval_Step` has permitted `ACCOUNT` since migration 091 and AP-17
+ * reused it rather than minting a code of its own — so which department owns
+ * it cannot be read off the step alone. The form has to be passed, and a
+ * caller that does not pass one gets the shared answer, which is right for
+ * every form that is not AP-17.
+ *
+ * An override map rather than a second `STEP_LABEL` copy: AP-17 disagrees
+ * about one step out of eight, and a whole second table would have to be kept
+ * equal to this one by hand for the other seven.
+ */
+const LABEL_BY_FORM: Record<string, Record<string, string>> = {
+  "AP-17": { ACCOUNT: "HR" },
+};
+
+function perForm(formCode: string | null | undefined, key: string): string | undefined {
+  return LABEL_BY_FORM[(formCode ?? "").trim()]?.[key];
+}
+
+export function stepLabel(
+  code: string | null | undefined,
+  formCode?: string | null,
+): string {
   const key = (code ?? "").trim();
   if (!key) return BLANK;
-  return STEP_LABEL[key] ?? key;
+  return perForm(formCode, key) ?? STEP_LABEL[key] ?? key;
 }
 
 /**
@@ -277,10 +303,13 @@ const DEPARTMENT_LABEL: Record<string, string> = {
   HEAD: "หัวหน้า",
 };
 
-export function departmentLabel(code: string | null | undefined): string {
+export function departmentLabel(
+  code: string | null | undefined,
+  formCode?: string | null,
+): string {
   const key = (code ?? "").trim();
   if (!key) return BLANK;
-  return DEPARTMENT_LABEL[key] ?? key;
+  return perForm(formCode, key) ?? DEPARTMENT_LABEL[key] ?? key;
 }
 
 /* ------------------------------------------------------------------ *
@@ -444,11 +473,11 @@ export function cellText(row: ReportRow, key: MyRequestColKey, nowIso: string): 
       const step = row.pendingStepCode ?? row.currentStepCode ?? null;
       const name = row.pendingApproverName?.trim();
       if (name) return name;
-      if (step) return departmentLabel(step);
+      if (step) return departmentLabel(step, row.formCode);
       return BLANK;
     }
     case "currentStep":
-      return stepLabel(row.currentStepCode);
+      return stepLabel(row.currentStepCode, row.formCode);
     case "submittedAt":
       return fmtDate(row.submittedAt);
     case "daysPending": {

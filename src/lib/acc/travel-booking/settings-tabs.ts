@@ -128,7 +128,7 @@ export type BookingMenuKey = "bookingQueue" | "accountApproval";
 
 const BOOKING_MENU_LABELS: Record<BookingMenuKey, string> = {
   bookingQueue: "คิวจองที่พัก/ตั๋วโดยสาร",
-  accountApproval: "อนุมัติ (บัญชี)",
+  accountApproval: "อนุมัติ (HR)",
 };
 
 const BOOKING_MENU_ORDER: readonly BookingMenuKey[] = ["bookingQueue", "accountApproval"];

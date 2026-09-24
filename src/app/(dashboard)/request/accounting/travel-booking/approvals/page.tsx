@@ -490,9 +490,9 @@ export default function TravelBookingAccountApprovalsPage() {
     <PageContainer className="acc-theme py-6 px-3 sm:px-0">
       <PageHeaderBar
         icon={ThumbsUp}
-        title="อนุมัติจองที่พัก/ตั๋วโดยสาร (บัญชี)"
+        title="อนุมัติจองที่พัก/ตั๋วโดยสาร (HR)"
         titleExtra={<FormEnvironmentChip formCode="AP-17" />}
-        subtitle="รายการที่ Admin กรอกข้อมูลการจองเสร็จแล้ว รอบัญชีเลือกวันที่จ่ายและอนุมัติปิดงาน"
+        subtitle="รายการที่ Admin กรอกข้อมูลการจองเสร็จแล้ว รอ HR เลือกวันที่จ่ายและอนุมัติปิดงาน"
         backHref={backTo("/request/accounting/travel-booking", searchParams.get("from"))}
       />
 
@@ -521,7 +521,7 @@ export default function TravelBookingAccountApprovalsPage() {
               ไม่มีสิทธิ์เข้าถึง
             </h2>
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              หน้านี้สำหรับผู้ที่ได้รับสิทธิ์ &quot;อนุมัติ (บัญชี)&quot; ของ AP-17 เท่านั้น —
+              หน้านี้สำหรับผู้ที่ได้รับสิทธิ์ &quot;อนุมัติ (HR)&quot; ของ AP-17 เท่านั้น —
               กรุณาติดต่อผู้ดูแลระบบเพื่อขอเพิ่มสิทธิ์ (ผู้ดูแลระบบเพิ่มได้ที่ ตั้งค่าแบบฟอร์มขอเดินทาง →
               สิทธิ์เข้าถึง)
             </p>
@@ -538,7 +538,7 @@ export default function TravelBookingAccountApprovalsPage() {
           <div className="py-16 text-center px-4">
             <Inbox size={32} style={{ color: "var(--text-faint)", margin: "0 auto 12px" }} />
             <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
-              ไม่มีรายการรอบัญชีอนุมัติ
+              ไม่มีรายการรอ HR อนุมัติ
             </p>
           </div>
         ) : (

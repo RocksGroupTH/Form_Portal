@@ -11,6 +11,7 @@ import { getRequestHost } from "@/lib/acc/erp-environment";
 import { isManagerDevBypassHost } from "@/lib/acc/manager-auth";
 import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { returnRequest, returnByAdmin, returnByAccount, type Actor } from "@/lib/acc/travel-booking/approval";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { processQueue } from "@/lib/acc/email-queue";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 
@@ -121,6 +122,20 @@ export async function POST(
           ? managerStaffId
           : null,
     };
+    /* Which menu owns this depends on where the request is standing: the
+       Admin stage belongs to คิวจอง and the HR stage to อนุมัติ (HR). The
+       manager stage is neither — it is one named person, and this gate
+       must not reach it. Placed here rather than at the top because the
+       stage is only known once the request has been read. */
+    const menuKey = atAccountStage
+      ? ("accountApproval" as const)
+      : atAdminStage
+        ? ("bookingQueue" as const)
+        : null;
+    if (menuKey) {
+      const menu = await requireBookingMenu(session.user, menuKey);
+      if (menu) return menu;
+    }
     const updated = atAccountStage
       ? await returnByAccount(id, actor, comment)
       : atAdminStage

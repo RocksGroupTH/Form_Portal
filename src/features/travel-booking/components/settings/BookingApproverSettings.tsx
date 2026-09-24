@@ -242,7 +242,7 @@ function BrandScopeCell({
             </h3>
             <p className="text-[12px] leading-relaxed m-0" style={{ color: "var(--text-muted)" }}>
               ไม่ติ๊กเลย = เห็น<strong>ทุกแบรนด์</strong> · ติ๊กบางอัน = เห็นเฉพาะที่ติ๊ก ·
-              มีผลกับคิวจอง คิวบัญชี รายงาน และการกดอนุมัติ
+              มีผลกับคิวจอง คิว HR รายงาน และการกดอนุมัติ
             </p>
             <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
               {brands.length === 0 ? (

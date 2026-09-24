@@ -114,6 +114,30 @@ async function scopeByApprover(
   return out;
 }
 
+/**
+ * `ApproverId → TabKeys`, read EXACTLY as stored.
+ *
+ * Deliberately not `scopeByApprover`, which upper-cases every value because
+ * brand codes are case-insensitive. A `TabKey` is a camelCase identifier
+ * (`bookingQueue`, `accountApproval`) compared for equality everywhere else in
+ * this application, so putting it through a brand normaliser would work only
+ * for as long as both sides remembered to shout.
+ */
+async function menusByApprover(pool: ConnectionPool): Promise<Map<number, string[]>> {
+  const r = await pool.request().query<{ ApproverId: number; TabKey: string }>(
+    `SELECT ApproverId, TabKey FROM [dbo].[AccBookingApproverTab] ORDER BY ApproverId, TabKey`,
+  );
+  const out = new Map<number, string[]>();
+  for (const row of r.recordset) {
+    const key = (row.TabKey ?? "").trim();
+    if (!key) continue;
+    const list = out.get(row.ApproverId) ?? [];
+    list.push(key);
+    out.set(row.ApproverId, list);
+  }
+  return out;
+}
+
 /** Expand ERP targets into the claim brands that post into them. */
 function expand(targets: string[], byTarget: Map<string, string[]>): string[] {
   const out: string[] = [];
@@ -163,21 +187,40 @@ export async function loadStepApprovers(pool: ConnectionPool): Promise<StepAppro
       );
     })(),
 
-    /* AP-17 — the Admin desk and the accounting sign-off draw on one roster.
-       Its scope is stored in claim brands already, and empty is unrestricted
+    /* AP-17 — two steps over one roster, and since 2026-09-24 they are NOT the
+       same people. The Admin desk is whoever is ticked for คิวจอง and the HR
+       sign-off whoever is ticked for อนุมัติ (HR), because those menu ticks
+       became AUTHORITY rather than sight that day — see
+       `travel-booking/require-booking-menu.ts`, which is the gate this list
+       has to agree with. Listing the whole roster for both steps, as this did
+       until then, now names people the approve button refuses.
+
+       Brand scope is a second, independent narrowing and is left exactly as
+       it was: stored in claim brands already, and empty is unrestricted
        (`booking-approver-brands.ts`: "clears it — which restores unrestricted
-       access, not 'no brands'"). */
+       access, not 'no brands'").
+
+       **One residual, the same one the brand scope has.** An ADMIN-role
+       approver passes `requireBookingMenu` and `requireBookingBrandScope`
+       with no row at all, and this read sees rows rather than roles, so such
+       a person is under-listed here. Under-listing is the safe direction for
+       a card whose whole job is to name who can act, and reading the role
+       would mean joining `TeamMember` in another database for a tooltip. */
     (async () => {
-      const [rows, scope] = await Promise.all([
+      const [rows, scope, menus] = await Promise.all([
         roster(pool, "AccBookingApprover", "IsActive = 1"),
         scopeByApprover(pool, "AccBookingApproverBrand", "BrandCode"),
+        menusByApprover(pool),
       ]);
-      const people = rows.map((r) => {
-        const brands = scope.get(r.Id);
-        return { name: displayName(r), brands: brands && brands.length > 0 ? brands : null };
-      });
-      put("AP-17", "ADMIN", people);
-      put("AP-17", "ACCOUNT", people);
+      const withMenu = (menu: string) =>
+        rows
+          .filter((r) => (menus.get(r.Id) ?? []).indexOf(menu) >= 0)
+          .map((r) => {
+            const brands = scope.get(r.Id);
+            return { name: displayName(r), brands: brands && brands.length > 0 ? brands : null };
+          });
+      put("AP-17", "ADMIN", withMenu("bookingQueue"));
+      put("AP-17", "ACCOUNT", withMenu("accountApproval"));
     })(),
 
     /* AP-4 — zero ticks is zero brands, the opposite of AP-1's fail-open, and

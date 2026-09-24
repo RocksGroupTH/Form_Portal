@@ -3,6 +3,7 @@ import { statusForAccError } from "@/lib/acc/request-errors";
 import { requireAuth } from "@/lib/api-auth";
 import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
+import { requireBookingMenu } from "@/lib/acc/travel-booking/require-booking-menu";
 import { buildAccActor } from "@/lib/acc/actor-context";
 import { saveBookingDetail, deleteBookingDetail } from "@/lib/acc/travel-booking/admin-service";
 import type { BookingType } from "@/features/travel-booking/types";
@@ -30,6 +31,11 @@ async function requireAdminContext(
   // here, where the queue would merely not have shown it to them.
   const scoped = await requireBookingBrandScope(session.user, requestId);
   if (scoped) return scoped;
+  /* And being allowed the brand is not the same as being the Admin desk.
+     Filling the booking rows in IS that desk's work, so it takes the same
+     คิวจอง tick the เสร็จสิ้น button takes — see `requireBookingMenu`. */
+  const menu = await requireBookingMenu(session.user, "bookingQueue");
+  if (menu) return menu;
   return { requestId, userId: Number(session.user.id), email: session.user.email ?? null };
 }
 

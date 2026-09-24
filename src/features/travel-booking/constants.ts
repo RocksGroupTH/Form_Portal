@@ -46,7 +46,7 @@ export const STATUS_LABEL_TH: Record<TravelBookingStatus, string> = {
 /** Per-stage labels for `ManagerApproved`, keyed on `AccRequest.CurrentStepCode`. */
 const MANAGER_APPROVED_STEP_LABEL_TH: Record<string, string> = {
   ADMIN: "รอ Admin จองให้",
-  ACCOUNT: "รอบัญชีตรวจสอบ",
+  ACCOUNT: "รอ HR ตรวจสอบ",
 };
 
 /**
