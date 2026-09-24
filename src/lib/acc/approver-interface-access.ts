@@ -73,15 +73,22 @@ export async function loadInterfaceBrandsByApproverIds(
     const known = await knownInterfaceCodes();
     for (const id of approverIds) {
       const list = byApprover.get(id);
-      map.set(id, list && list.length > 0 ? normalizeCodes(list, known) : null);
+      /* **Zero rows is zero brands since 2026-09-24** (the user: "ไม่ได้ติ๊ก
+         brand ไหนเลย ต้องไม่ขึ้น"). It used to be `null`, which
+         `resolveApproverInterfaceAccess` read as every brand — the fail-open
+         CLAUDE.md recorded, and what let an approver nobody had ticked
+         anything for approve every brand's claim. `null` now means one thing
+         only: the table itself could not be read. */
+      map.set(id, list && list.length > 0 ? normalizeCodes(list, known) : []);
     }
     return map;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // `null` here means UNRESTRICTED, not "no access" — `resolveApproverInterfaceAccess`
-    // maps it to `{ allAccess: true }`, because for this table no rows is the
-    // intended "not scoped to any brand". That inverts the usual fail-closed
-    // reading, so the catch has to be exact.
+    // `null` here is the MISSING TABLE, and nothing else — since 2026-09-24
+    // it is read as no access rather than as every brand, so this degrade is
+    // fail-closed like every other authorization read. The catch still has to
+    // be exact: it must not swallow a deadlock or a permission failure and
+    // report them as "this table is not deployed".
     //
     // Both halves must hold: the missing-object error, about THIS object.
     // The OR that was here degraded on any error merely *naming* the table —
@@ -155,14 +162,31 @@ export async function resolveApproverInterfaceAccess(
   }
 
   const codes = await getApproverInterfaceBrandCodes(approverId);
-  if (codes === null) {
-    /* Resolved only on the unrestricted branch, which is the only one that
-       needs it — and after the roster read, so a non-approver costs nothing.
-       `allAccess` is what every authorization check short-circuits on
-       (`canActOnInterfaceTarget`), so this list is for display and filtering
-       rather than for deciding whether somebody may act. */
-    const all = await listErpInterfaceBrands();
-    return { allAccess: true, allowedCodes: all.map((b) => b.id) };
-  }
-  return { allAccess: false, allowedCodes: codes };
+  /**
+   * **`allAccess` is never granted here any more** (the user, 2026-09-24).
+   *
+   * An AP-1 approver may act on exactly the interface targets somebody ticked
+   * for them, and on nothing when nobody has — the rule AP-4 has always had and
+   * which this form deliberately did not copy until now. `null` reaches here
+   * only when the scope table could not be read, and answers the same "no
+   * brands": an authorization read that failed must not grant.
+   *
+   * **What it cost, stated rather than discovered.** Measured that day, one of
+   * seven active approvers carried zero rows and could therefore approve every
+   * brand; they now approve none until an admin ticks one. And **nobody was
+   * scoped to KSI at all**, so KSI claims — which had been actionable only
+   * through that fail-open — are actionable by nobody until somebody is ticked
+   * for it. That is the point of the change rather than a side effect: the
+   * queue now says out loud what the ticks actually say.
+   *
+   * The type keeps `allAccess` because AP-17's own resolver still grants it to
+   * an admin role and the two share `approver-interface-access-shared.ts`.
+   * One consequence of it being permanently false on AP-1: the queue's
+   * "ยังไม่ได้จัดกลุ่ม" tab (`showUnassignedTab={access.allAccess}`) no longer
+   * shows for anybody. Measured the same day, every AP-1 claim brand maps to a
+   * target — KSI→KSI, PCMY→PCTH, PCTH→PCTH, ROCKS→PCTH, UNO→UNO — so that tab
+   * has nothing to hold today; a brand added with no mapping would be visible
+   * to nobody, and mapping it at Settings → Interface ERP is the fix.
+   */
+  return { allAccess: false, allowedCodes: codes ?? [] };
 }

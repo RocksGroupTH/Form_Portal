@@ -12,7 +12,7 @@
  *
  * | roster | scope column | empty means | unit |
  * |---|---|---|---|
- * | `AccApprover` | `AccApproverInterfaceBrand.InterfaceBrandCode` | **every brand** | ERP target |
+ * | `AccApprover` | `AccApproverInterfaceBrand.InterfaceBrandCode` | **no brand** (since 2026-09-24) | ERP target |
  * | `AccBookingApprover` | `AccBookingApproverBrand.BrandCode` | **every brand** | claim brand |
  * | `AccReimburseApprover` | `AccReimburseApproverBrand.InterfaceBrandCode` | **no brand** | ERP target |
  * | `AccAdvanceApprover` | — | — | (none) |
@@ -24,10 +24,10 @@
  * would list nobody for exactly those claims — silently, and on the column
  * whose whole purpose is to say who can act.
  *
- * **AP-1's and AP-4's empty scopes mean opposite things and both are honoured
- * as written.** CLAUDE.md records AP-1's zero-rows-is-unrestricted as a
- * fail-open that AP-4 deliberately did not copy; a tooltip that harmonised them
- * would be lying about one of the two.
+ * **AP-1's empty scope meant every brand until 2026-09-24 and now means none**,
+ * which is what AP-4 always meant. The card did not harmonise them while they
+ * disagreed — it reported each as written — and the reason it now shows the
+ * same thing for both is that the RULE changed, not the display.
  *
  * ## Only ACTIVE rows
  *
@@ -157,7 +157,8 @@ export async function loadStepApprovers(pool: ConnectionPool): Promise<StepAppro
   };
 
   const settled = await Promise.allSettled([
-    /* AP-1 — one accounting pool, scoped by ERP target, empty = unrestricted. */
+    /* AP-1 — one accounting pool, scoped by ERP target. Empty is empty since
+       2026-09-24, the same as AP-4: see `resolveApproverInterfaceAccess`. */
     (async () => {
       const [rows, scope, map] = await Promise.all([
         roster(pool, "AccApprover", "IsActive = 1"),
@@ -168,13 +169,10 @@ export async function loadStepApprovers(pool: ConnectionPool): Promise<StepAppro
       put(
         "AP-1",
         "ACCOUNT",
-        rows.map((r) => {
-          const targets = scope.get(r.Id);
-          return {
-            name: displayName(r),
-            brands: targets && targets.length > 0 ? expand(targets, map.byTarget) : null,
-          };
-        }),
+        rows.map((r) => ({
+          name: displayName(r),
+          brands: expand(scope.get(r.Id) ?? [], map.byTarget),
+        })),
       );
     })(),
 
