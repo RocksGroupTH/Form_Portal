@@ -1599,7 +1599,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           {!readOnly && advanceRequestId != null && (
             <div className="flex items-start justify-between gap-2 mt-1">
               <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
-              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
+              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ปุ่ม <b>อ่านด้วย AI</b> จะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้) · ปุ่ม <b>ไม่ใช้ AI</b> แนบไฟล์อย่างเดียว ไม่อ่านและไม่สร้างแถวให้ ต้องกด “เพิ่มแถว” กรอกเอง
               </p>
               <PoweredByClaude />
             </div>
@@ -2355,9 +2355,11 @@ function FileArea({
   readOnly: boolean;
   uploading: boolean;
   onPick: (list: FileList | null) => void;
-  /** When given, the section also offers buttons that upload WITHOUT the AI
-   *  read. The refund-slip section deliberately passes nothing, which is how
-   *  it keeps the two buttons it has today. */
+  /** When given, the section offers buttons that upload WITHOUT the AI read —
+   *  and the two ordinary buttons are relabelled "อ่านด้วย AI", because a
+   *  qualifier only means anything when something unqualified sits beside it.
+   *  The refund-slip section deliberately passes nothing, which is how it keeps
+   *  the two buttons and the two labels it has today. */
   onPickRaw?: (list: FileList | null) => void;
   onRemove: (id: number) => void;
   onView: (f: AccFileMeta) => void;
@@ -2366,34 +2368,44 @@ function FileArea({
   lockedHint?: string;
 }) {
   const disabled = uploading || locked;
+  const hasRaw = onPickRaw != null;
   const btnStyle = {
     background: "var(--bg-card)", border: "1px solid var(--border-card)",
     color: locked ? "var(--text-faint)" : "var(--nav-active-text)",
     opacity: locked ? 0.5 : 1, cursor: locked ? "not-allowed" : "pointer",
   } as const;
+  /* The raw pair reads as secondary: same shape, quieter. The two kinds sit in
+     one wrapping row, so they are only grouped by accident of where it breaks —
+     at 320px, at 480-539px and at every desktop width they are not. Style is
+     what survives a re-wrap; spacing is not. */
+  const rawBtnStyle = {
+    ...btnStyle,
+    color: locked ? "var(--text-faint)" : "var(--text-muted)",
+    borderStyle: "dashed" as const,
+  };
   return (
     <div className="flex flex-col gap-2">
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-            <Paperclip size={14} /> {onPickRaw ? "แนบไฟล์อ่านด้วย AI" : "แนบไฟล์"}
+            <Paperclip size={14} /> {hasRaw ? "แนบไฟล์อ่านด้วย AI" : "แนบไฟล์"}
             <input type="file" hidden multiple accept="image/*,application/pdf" disabled={disabled}
               onChange={(e) => { onPick(e.target.files); e.target.value = ""; }} />
           </label>
           <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-            <Camera size={14} /> {onPickRaw ? "ถ่ายรูปอ่านด้วย AI" : "ถ่ายรูป"}
+            <Camera size={14} /> {hasRaw ? "ถ่ายรูปอ่านด้วย AI" : "ถ่ายรูป"}
             <input type="file" hidden accept="image/*" capture="environment" disabled={disabled}
               onChange={(e) => { onPick(e.target.files); e.target.value = ""; }} />
           </label>
-          {onPickRaw && (
+          {hasRaw && (
             <>
-              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-                <Paperclip size={14} /> แนบไฟล์
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={rawBtnStyle}>
+                <Paperclip size={14} /> แนบไฟล์ (ไม่ใช้ AI)
                 <input type="file" hidden multiple accept="image/*,application/pdf" disabled={disabled}
                   onChange={(e) => { onPickRaw(e.target.files); e.target.value = ""; }} />
               </label>
-              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-                <Camera size={14} /> ถ่ายรูป
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={rawBtnStyle}>
+                <Camera size={14} /> ถ่ายรูป (ไม่ใช้ AI)
                 <input type="file" hidden accept="image/*" capture="environment" disabled={disabled}
                   onChange={(e) => { onPickRaw(e.target.files); e.target.value = ""; }} />
               </label>
