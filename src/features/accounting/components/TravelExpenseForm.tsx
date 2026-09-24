@@ -730,7 +730,15 @@ export function TravelExpenseForm({
   );
 
   /* ── Save draft ── */
-  const handleSaveDraft = useCallback(async () => {
+  /**
+   * Save the draft.
+   *
+   * `silent` is for the one caller that is not a person pressing บันทึกร่าง:
+   * `handleSubmit` saves first when the form has never been saved, and its
+   * toast and its `onSaved` navigation were showing two screens describing a
+   * step nobody asked for, in front of the one they did. See the call site.
+   */
+  const handleSaveDraft = useCallback(async (opts?: { silent?: boolean }) => {
     const datesToCheck = travelDays.map((d) => d.travelDate).filter(Boolean) as string[];
     if (datesToCheck.length > 0) {
       try {
@@ -751,6 +759,7 @@ export function TravelExpenseForm({
         /* network issue — fall through */
       }
     }
+    const silent = !!opts?.silent;
     setSaving(true);
     try {
       const body = {
@@ -785,10 +794,18 @@ export function TravelExpenseForm({
       // form shows the saved files (and fresh item ids) instead of pending ones.
       if (id) {
         await uploadPendingFiles(id);
-        toast.success("บันทึกร่างแล้ว");
+        /* Silent when this save is a STEP INSIDE A SUBMIT (the user,
+           2026-09-24). Pressing ส่งคำขอ on an unsaved form used to announce
+           "บันทึกร่างแล้ว" and then hand the page a new `?id=`, which
+           re-fetched and put "กำลังโหลดแบบร่าง..." over the top of
+           "กำลังส่งคำขอ..." — three screens for one button, describing a step
+           nobody asked for. The reload stays either way: it is a fetch with no
+           overlay, and it is what refreshes the item ids the uploads just
+           created. */
+        if (!silent) toast.success("บันทึกร่างแล้ว");
         await reloadFromServer(id);
       }
-      onSaved?.(id);
+      if (!silent) onSaved?.(id);
       return id;
     } catch {
       toast.error("บันทึกไม่สำเร็จ");
@@ -807,14 +824,23 @@ export function TravelExpenseForm({
       return;
     }
     setSubmitting(true);
+    /* Set only when THIS call created the draft — see below. */
+    let justSavedId: number | null = null;
     try {
       // First ensure we have a saved request
       let id = requestId;
       if (!id) {
         // handleSaveDraft also uploads pending images, so they're persisted.
-        const savedId = await handleSaveDraft();
+        // Silent: its toast and its `onSaved` navigation are what put two more
+        // screens in front of the one this button is for.
+        const savedId = await handleSaveDraft({ silent: true });
         if (!savedId) return;
         id = savedId;
+        /* The draft EXISTS now even though the URL does not say so, so every
+           way out of this function from here has to hand it back — otherwise a
+           failed submit leaves a saved draft the address bar cannot return to,
+           and a refresh starts a second one. */
+        justSavedId = savedId;
       } else {
         // Re-save to flush latest changes, then upload any pending images.
         const body = { id, brandCode, countryCode, travelDays: buildTravelDaysForSave(), requesterStaffId };
@@ -848,8 +874,12 @@ export function TravelExpenseForm({
       toast.error("ส่งคำขอไม่สำเร็จ");
     } finally {
       setSubmitting(false);
+      /* Only on the way out, and only if the submit did not navigate away:
+         the URL catches up with the draft that was created, so the overlay the
+         user sees is still one screen and nothing is stranded. */
+      if (justSavedId !== null) onSaved?.(justSavedId);
     }
-  }, [requestId, brandCode, countryCode, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, handleSaveDraft, onSubmitted, canSubmit, focusFirstMissing]);
+  }, [requestId, brandCode, countryCode, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, handleSaveDraft, onSaved, onSubmitted, canSubmit, focusFirstMissing]);
 
   const requesterCard = (
     <SectionCard
@@ -2017,7 +2047,9 @@ export function TravelExpenseForm({
             icon={<Save size={15} />}
             loading={saving}
             disabled={saving || submitting || !travelDetailsReady}
-            onClick={handleSaveDraft}
+            /* Wrapped, not passed: the handler now takes options, and handing it
+               straight to onClick would make the MouseEvent the options object. */
+            onClick={() => void handleSaveDraft()}
             type="button"
           >
             บันทึกร่าง
