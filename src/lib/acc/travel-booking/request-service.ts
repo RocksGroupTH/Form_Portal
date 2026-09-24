@@ -1,4 +1,5 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
+import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { pickEmployeePhotoUrl } from "@/lib/hr/photo-url";
 import { resolveEmployeeForActor } from "@/lib/hr/employee-lookup";
@@ -500,8 +501,21 @@ export async function getTravelBookingRequest(id: number): Promise<TravelBooking
       loadRoomShareEvents(pool, id),
     ]);
 
+  // Who HR (or `UatTester`, in UAT) says this requester's manager is TODAY.
+  // Resolved here because `TravelBookingDetail` decides whether to draw the
+  // manager buttons in the browser, off `managerApproval.assignedTo` — the
+  // submit-time snapshot — and could not ask HR for itself. `null` means HR has
+  // nothing usable to say and that snapshot answers, exactly as before; see
+  // `@/lib/acc/current-manager`.
+  const currentManager = await resolveCurrentManagerForRequest({
+    id,
+    staffId: (reqRow.StaffId as number | null) ?? null,
+    requesterEmail: (reqRow.RequesterEmail as string | null) ?? null,
+  });
+
   return {
     ...base,
+    currentManager,
     workLocations,
     departureLocations,
     idCardFiles,

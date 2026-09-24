@@ -1,5 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
+import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { deleteStoredFiles, type StoredFileRef } from "@/lib/acc/stored-file";
 import { computeTotalAmount, computeTotalDistance, computeRequestTotalAmount, computeRequestTotalDistance, allDayItems } from "@/lib/acc/calc";
@@ -387,6 +388,10 @@ function mapRequestRow(r: Record<string, unknown>): AccRequest {
     requesterDepartmentName: (r.RequesterDepartmentName as string) ?? null,
     managerStaffId: (r.ManagerStaffId as number) ?? null,
     managerEmail: (r.ManagerEmail as string) ?? null,
+    // Defaulted here and filled in by the detail read, which is the only
+    // caller that can await HR. A list row keeps null and falls back to the
+    // snapshot, which is what every list has always shown.
+    currentManager: null,
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
     // Null means Thailand — every claim written before migration 129, and every
@@ -612,6 +617,14 @@ export async function getRequest(id: number): Promise<AccRequest | null> {
     .query(`SELECT * FROM [dbo].[AccRequest] WHERE Id = @id`);
   if (head.recordset.length === 0) return null;
   const req = mapRequestRow(head.recordset[0] as Record<string, unknown>);
+
+  // Who HR says is this requester's manager TODAY, resolved once here so the
+  // three surfaces that ask cannot disagree: the approve/reject/return routes,
+  // the object ACL, and the detail page's own button gate — which runs in the
+  // browser and could not resolve it for itself. `null` means HR has nothing
+  // usable to say and `managerStaffId` above answers instead; see
+  // `current-manager.ts`.
+  req.currentManager = await resolveCurrentManagerForRequest(req);
 
   const days = await loadTravelDays(pool, id);
   if (days.length > 0) attachTravelToRequest(req, days);

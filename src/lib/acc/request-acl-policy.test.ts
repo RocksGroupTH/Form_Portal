@@ -21,6 +21,9 @@ const submitted: AccRequestAclRow = {
   submittedBy: 41,
   staffId: 5001,
   managerStaffId: 7001,
+  // HR still agrees with the snapshot — the ordinary case, and the one every
+  // test that predates the live resolution was written against.
+  currentManagerStaffId: 7001,
 };
 
 const draft: AccRequestAclRow = { ...submitted, id: 1235, status: "Draft", submittedBy: null };
@@ -61,6 +64,51 @@ test("the creator can read their own request", () => {
 
 test("the assigned manager can read it", () => {
   assert.equal(decideRequestRead(submitted, assignedManager).ok, true);
+});
+
+/* ── Read: either manager, after HR has moved the requester ── */
+
+/**
+ * HR now says staff 7002 manages this requester; 7001 was the manager when the
+ * request was submitted and is still stamped on it.
+ *
+ * Read access is the **union** — deliberately unlike `mayActOnManagerStep`,
+ * where the live answer decides alone. 7001 loses the buttons the moment HR
+ * changes; taking away their ability to open a request they were part-way
+ * through reviewing would end an approval trail at a document its own
+ * participant cannot read.
+ */
+const managerChanged: AccRequestAclRow = { ...submitted, id: 1238, currentManagerStaffId: 7002 };
+const newManager = viewer({ userId: 78, email: "new.manager@rocksgroup.com", staffId: 7002 });
+
+test("the manager HR names today can read a request submitted under the previous one", () => {
+  assert.equal(decideRequestRead(managerChanged, newManager).ok, true);
+});
+
+test("the previous manager keeps read access after being replaced", () => {
+  assert.equal(decideRequestRead(managerChanged, assignedManager).ok, true);
+});
+
+test("a null live manager leaves the snapshot answering alone", () => {
+  const noLive: AccRequestAclRow = { ...submitted, currentManagerStaffId: null };
+  assert.equal(decideRequestRead(noLive, assignedManager).ok, true);
+  assert.equal(decideRequestRead(noLive, newManager).ok, false);
+});
+
+test("neither manager column admits somebody who is on neither", () => {
+  assert.equal(decideRequestRead(managerChanged, stranger).ok, false);
+});
+
+test("a viewer with no HR StaffId is not matched by a null manager column", () => {
+  // Both columns null and `viewer.staffId` null is three nulls that must not
+  // compare equal — the shape `isAssignedManager` guards with its early return.
+  const noManager: AccRequestAclRow = {
+    ...submitted,
+    managerStaffId: null,
+    currentManagerStaffId: null,
+  };
+  const noStaffId = viewer({ userId: 61, email: "nohr@rocksgroup.com", staffId: null });
+  assert.equal(decideRequestRead(noManager, noStaffId).ok, false);
 });
 
 test("the accounting area can read it", () => {

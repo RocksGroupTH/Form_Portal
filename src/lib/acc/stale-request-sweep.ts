@@ -206,6 +206,10 @@ async function loadForMail(pool: ConnectionPool, id: number): Promise<AccRequest
     requesterDepartmentName: (r.RequesterDepartmentName as string) ?? null,
     managerStaffId: (r.ManagerStaffId as number) ?? null,
     managerEmail: (r.ManagerEmail as string) ?? null,
+    // The sweep cancels stale requests on a timer; it never asks who may act,
+    // so it has no use for the live manager and deliberately does not pay for
+    // the HR read to get one.
+    currentManager: null,
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: r.TotalAmount === null || r.TotalAmount === undefined ? null : Number(r.TotalAmount),
     paymentDate: r.PaymentDate ? ymd(r.PaymentDate as Date) : null,

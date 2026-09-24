@@ -55,14 +55,32 @@ export interface MyWorkRowInput extends NextApprovalInput {
   managerStaffId?: number | null;
   managerEmail?: string | null;
   viewerManagerApproved?: boolean;
+  /**
+   * The list already decided, in SQL, that this viewer is the requester's
+   * manager **today** (`currentManagerIsPredicate`). Trusted rather than
+   * recomputed, exactly as `viewerManagerApproved` beside it is: the browser
+   * holds a snapshot of who the manager was at submit and cannot ask HR who it
+   * is now.
+   */
+  viewerIsCurrentManager?: boolean;
   /** Which form the row belongs to — AP-4's accounting steps bucket differently. */
   formCode?: string | null;
 }
 
+/**
+ * Either manager this request has had — today's, or the one stamped at submit.
+ *
+ * The union matters in one direction each way. Without the live half, a manager
+ * HR has just handed the request to reads a `ManagerApproved` row as still
+ * pending on them, because their StaffId is on neither snapshot column. Without
+ * the snapshot half, the manager who actually approved it loses the row out of
+ * their อนุมัติแล้ว tab the moment HR moves the requester elsewhere.
+ */
 function viewerIsRequestManager(
   row: MyWorkRowInput,
   viewer: MyWorkViewerContext,
 ): boolean {
+  if (row.viewerIsCurrentManager) return true;
   if (isAssignedManager(viewer.staffId, row.managerStaffId ?? null)) return true;
   const email = viewer.email?.trim().toLowerCase();
   const mgr = row.managerEmail?.trim().toLowerCase();

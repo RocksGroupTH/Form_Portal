@@ -6,6 +6,7 @@
  */
 import type { ReimburseStatus, ReimburseStepCode } from "./constants";
 import type { VendorMatchStatus } from "@/lib/acc/reimburse/vendor-match-core";
+import type { CurrentManagerRef } from "@/lib/acc/manager-auth";
 
 /** One line as printed inside an attached document (`AccReimburseItemDetail`). */
 export interface ReimburseItemDetail {
@@ -178,6 +179,14 @@ export interface ReimburseDetail {
   requesterDepartmentName: string | null;
   managerStaffId: number | null;
   managerEmail: string | null;
+  /**
+   * Who HR says the requester's manager is **today** — resolved on every detail
+   * read, not stamped at submit like `managerStaffId` beside it. It is what
+   * decides the MANAGER step: `mayActOnManagerStep` admits this person and
+   * nobody else whenever it is set. `null` means HR has nothing usable to say
+   * and the snapshot answers instead. See `src/lib/acc/current-manager.ts`.
+   */
+  currentManager: CurrentManagerRef | null;
   companyName: string | null;
   /** What the spend was for — free text, optional (spec §2.1). */
   purpose: string | null;

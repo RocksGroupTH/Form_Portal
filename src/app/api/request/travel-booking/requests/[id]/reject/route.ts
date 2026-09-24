@@ -9,6 +9,7 @@ import { canAccessBookingArea } from "@/lib/acc/booking-access";
 import { requireBookingBrandScope } from "@/lib/acc/travel-booking/require-booking-brand-scope";
 import { getRequestHost } from "@/lib/acc/erp-environment";
 import { isManagerDevBypassHost } from "@/lib/acc/manager-auth";
+import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
 import { rejectRequest, rejectByAdmin, rejectByAccount, type Actor } from "@/lib/acc/travel-booking/approval";
 import { processQueue } from "@/lib/acc/email-queue";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
@@ -44,12 +45,26 @@ export async function POST(
   const own = await pool.request()
     .input("id", sql.Int, id)
     .input("form", sql.NVarChar, AP17_FORM_CODE)
-    .query(`SELECT ManagerStaffId, Status, CurrentStepCode FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
+    .query(`SELECT ManagerStaffId, StaffId, RequesterEmail, Status, CurrentStepCode FROM [dbo].[AccRequest] WHERE Id=@id AND FormCode=@form`);
   if (own.recordset.length === 0) {
     return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   }
-  const row = own.recordset[0] as { ManagerStaffId: number | null; Status: string; CurrentStepCode: string | null };
-  const managerStaffId = row.ManagerStaffId ?? null;
+  const row = own.recordset[0] as { ManagerStaffId: number | null; StaffId: number | null; RequesterEmail: string | null; Status: string; CurrentStepCode: string | null };
+  const snapshotManagerStaffId = row.ManagerStaffId ?? null;
+
+  // Who HR (or `UatTester`, in UAT) says the requester's manager is TODAY.
+  // It decides alone when it is set, so a manager replaced in HR loses this
+  // step at once; `null` means HR has nothing usable to say and the
+  // submit-time snapshot answers instead. `managerStaffId` below is the
+  // effective answer, so `isManager`, the on-behalf record and the
+  // dev-bypass StaffId fallback all follow it without restating the rule.
+  // See `@/lib/acc/current-manager`.
+  const currentManager = await resolveCurrentManagerForRequest({
+    id,
+    staffId: (row?.StaffId as number | null) ?? null,
+    requesterEmail: (row?.RequesterEmail as string | null) ?? null,
+  });
+  const managerStaffId = currentManager?.staffId ?? snapshotManagerStaffId;
   const atAdminStage = row.Status === "ManagerApproved" && row.CurrentStepCode === "ADMIN";
   const atAccountStage = row.Status === "ManagerApproved" && row.CurrentStepCode === "ACCOUNT";
 

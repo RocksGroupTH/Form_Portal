@@ -1,6 +1,7 @@
 import type { RequestStatus } from "@/features/accounting/constants";
 import type { AccFileMeta, PendingFile } from "@/features/accounting/types";
 import type { ClrAnyStepCode, ClrStepCode } from "./constants";
+import type { CurrentManagerRef } from "@/lib/acc/manager-auth";
 
 /** One actual-expense line (AP-3.1 section 1). */
 export interface ClearAdvanceItem {
@@ -142,6 +143,14 @@ export interface ClearAdvanceRequest {
   requesterDepartmentCode: string | null;
   managerStaffId: number | null;
   managerEmail: string | null;
+  /**
+   * Who HR says the requester's manager is **today** — resolved on every detail
+   * read, not stamped at submit like `managerStaffId` beside it. It is what
+   * decides the MANAGER step: `mayActOnManagerStep` admits this person and
+   * nobody else whenever it is set. `null` means HR has nothing usable to say
+   * and the snapshot answers instead. See `src/lib/acc/current-manager.ts`.
+   */
+  currentManager: CurrentManagerRef | null;
   companyName: string | null;
   totalAmount: number | null; // mirrors actualTotal
   submittedBy: number | null;

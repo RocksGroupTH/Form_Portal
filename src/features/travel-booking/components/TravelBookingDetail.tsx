@@ -47,7 +47,7 @@ import { useBookingAccess } from "@/features/travel-booking/hooks/useBookingAcce
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/useOptionIcons";
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
-import { canActManagerStep } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
 import {
   currencyWord,
   fmtMoneyTh,
@@ -507,27 +507,24 @@ export function TravelBookingDetail({
   const isDevHost = useErpSandboxDevHost();
   const isStepPending =
     request.status === "Submitted" && managerApproval?.status === "Pending";
+  /* `current` is the live answer the server resolved on this read — whoever HR
+     (or UatTester, in UAT) names as the requester's manager TODAY. When it is
+     set it decides alone, so a manager replaced in HR loses these buttons at
+     the same moment the three AP-17 routes stop accepting them. `null` falls
+     back to the approval row's own assignee, which is what this gate compared
+     before the live resolution existed. */
+  const managerAssignment = {
+    current: request.currentManager,
+    snapshotStaffId: managerApproval?.assignedTo ?? null,
+    approval: managerApproval,
+  };
+  const viewerAsActor = { staffId: viewerStaffId, email: viewerEmail };
   const isAssignedManagerViewer =
-    isStepPending &&
-    canActManagerStep(
-      viewerStaffId,
-      viewerEmail,
-      managerApproval?.assignedTo ?? null,
-      managerApproval,
-      null,
-      false,
-    );
+    isStepPending && mayActOnManagerStep(viewerAsActor, managerAssignment);
   const canActManager =
     isAssignedManagerViewer ||
     (isStepPending &&
-      canActManagerStep(
-        viewerStaffId,
-        viewerEmail,
-        managerApproval?.assignedTo ?? null,
-        managerApproval,
-        null,
-        isDevHost,
-      ));
+      mayActOnManagerStep(viewerAsActor, managerAssignment, { devHostBypass: isDevHost }));
 
   const canCancel =
     isOwner &&

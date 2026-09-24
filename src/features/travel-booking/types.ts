@@ -5,6 +5,7 @@
  * migration 049, moved here by 104/105).
  * See docs/superpowers/specs/2026-07-14-ap17-accommodation-ticket-booking-design.md §2, §3, §9.
  */
+import type { CurrentManagerRef } from "@/lib/acc/manager-auth";
 
 /** AccRequest.Status values used by AP-17 (mirrors the shared Acc* status machine, "Approved" renamed "Completed" for this form's semantics). */
 export type TravelBookingStatus =
@@ -246,6 +247,18 @@ export interface TravelBookingApproval {
 export interface TravelBookingRequest {
   /** AccRequest.Id — absent for a tab that hasn't been persisted yet. */
   id?: number;
+  /**
+   * Who HR (or `UatTester`, in UAT) says the requester's manager is **today**,
+   * resolved on every detail read rather than stamped at submit.
+   *
+   * AP-17 keeps no `managerStaffId` of its own on this payload — the detail
+   * page has always compared `managerApproval.assignedTo`, which *is* the
+   * submit-time snapshot. This field is what lets it follow a manager change
+   * instead: when it is set it decides alone, and `null` falls back to that
+   * snapshot. Optional because a tab being filled in has no request yet, let
+   * alone a manager. See `src/lib/acc/current-manager.ts`.
+   */
+  currentManager?: CurrentManagerRef | null;
   requestNo: string | null;
   status: TravelBookingStatus;
   /**

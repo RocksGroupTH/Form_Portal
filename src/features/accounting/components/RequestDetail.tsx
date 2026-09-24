@@ -62,7 +62,7 @@ function FileTile({ file, onOpen }: { file: AccFileMeta; onOpen: (f: AccFileMeta
   );
 }
 import { UatDataBanner } from "@/components/UatDataBanner";
-import { canActManagerStep } from "@/lib/acc/manager-auth";
+import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
 import { useRole } from "@/lib/hooks/useRole";
 import { computeTotalAmount, computeTotalDistance, dayCostBreakdown } from "@/lib/acc/calc";
@@ -1404,36 +1404,31 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
   );
 
   /**
-   * Whether the viewer is the manager this request was actually assigned to —
-   * no host bypass involved.
+   * Whether the viewer is this request's manager — no host bypass involved.
    *
-   * For a UAT request that means the requester's configured UAT manager: the
-   * submit resolves `UatTester.ManagerStaffId` and writes it into
-   * `request.managerStaffId`, so the snapshot compared here already *is* the
-   * UAT manager. A tester who is their own manager matches it too.
+   * `current` is the live answer the server resolved on this read: whoever HR
+   * (or `UatTester`, in UAT) names as the requester's manager **today**. When
+   * it is set it decides alone, so a manager replaced in HR stops seeing the
+   * buttons here at the same moment the routes stop accepting them — which is
+   * the whole point of resolving it server-side and shipping it down rather
+   * than letting this component compare a snapshot. `null` means HR had
+   * nothing usable to say and `managerStaffId` answers, exactly as before.
    */
+  const managerAssignment = {
+    current: request.currentManager,
+    snapshotStaffId: request.managerStaffId,
+    approval: pendingManagerApproval,
+  };
+  const viewerAsActor = { staffId: viewerStaffId, email: viewerEmail };
+
   const isAssignedManagerViewer =
     request.currentStepCode === "MANAGER" &&
-    canActManagerStep(
-      viewerStaffId,
-      viewerEmail,
-      request.managerStaffId,
-      pendingManagerApproval,
-      role,
-      false,
-    );
+    mayActOnManagerStep(viewerAsActor, managerAssignment);
 
   const canActManager =
     isAssignedManagerViewer ||
     (request.currentStepCode === "MANAGER" &&
-      canActManagerStep(
-        viewerStaffId,
-        viewerEmail,
-        request.managerStaffId,
-        pendingManagerApproval,
-        role,
-        isDevHost,
-      ));
+      mayActOnManagerStep(viewerAsActor, managerAssignment, { devHostBypass: isDevHost }));
 
   const [mgAction, setMgAction] = useState<"approve" | "return" | "reject" | null>(null);
   const [mgComment, setMgComment] = useState("");
