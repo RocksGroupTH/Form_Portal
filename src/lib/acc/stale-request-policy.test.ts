@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AUTO_CANCEL_MONTHS, eligibleForAutoCancel } from "./stale-request-policy";
+import { AUTO_CANCEL_DAYS, eligibleForAutoCancel } from "./stale-request-policy";
 
 test("a request still sitting with the manager is eligible", () => {
   assert.equal(eligibleForAutoCancel({ status: "Submitted", stepCode: "MANAGER" }), true);
@@ -44,5 +44,5 @@ test("Submitted on any other step is left alone", () => {
 });
 
 test("the window is one month", () => {
-  assert.equal(AUTO_CANCEL_MONTHS, 1);
+  assert.equal(AUTO_CANCEL_DAYS, 30);
 });

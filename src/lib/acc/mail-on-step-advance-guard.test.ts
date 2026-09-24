@@ -11,7 +11,7 @@ import path from "node:path";
  *   ส่งคำขอ              → the manager
  *   บัญชีอนุมัติ          → the requester
  *   ไม่อนุมัติ / ส่งกลับ   → the requester
- *   ค้างผู้จัดการ > 1 เดือน → the requester (the stale sweep, already so)
+ *   ค้างผู้จัดการ > 30 วัน  → the requester (the stale sweep, already so)
  *
  * Everything else went: the five forms used to mail the next queue's whole
  * roster at every hop, and three of them mailed the requester a second time to

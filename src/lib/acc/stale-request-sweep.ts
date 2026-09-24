@@ -1,8 +1,8 @@
 /**
- * AP-1 — withdraw a request the manager has left for more than a month.
+ * AP-1 — withdraw a request the manager has left for more than 30 days.
  *
  * `stale-request-policy.ts` says *which* `(status, stepCode)` tuple may be
- * touched and holds the month count. This file does the work: claim, close,
+ * touched and holds the day count. This file does the work: claim, close,
  * log, notify — once per request, in one transaction each, against **both**
  * form databases.
  *
@@ -11,13 +11,13 @@
  * The whole rule — form, status, step, and the age — lives in the `WHERE` of
  * one conditional `UPDATE`, so the row is claimed by the same statement that
  * decides it qualifies. That is the repo's state-transition convention
- * (CLAUDE.md, "State transitions"), and here it is also what keeps the month
- * arithmetic single: SQL Server's `DATEADD(MONTH, -1, '2026-03-31')` clamps to
- * 28 February while JavaScript's `setMonth` overflows to 3 March, so a
- * JavaScript pre-filter would disagree with the statement on exactly the dates
- * nobody tests. The `SELECT` below is a candidate list only — every id it
- * returns is re-tested by the `UPDATE`, and one that has since been approved,
- * rejected or returned simply claims nothing.
+ * (CLAUDE.md, "State transitions"), and it is also what keeps the clock single:
+ * `SYSDATETIME()` is the database's, which is the clock `SubmittedAt` was
+ * written with, where `Date.now()` would be the app server's. See
+ * `stale-request-policy.ts` for why that argument replaced a month-arithmetic
+ * one when the unit became days. The `SELECT` below is a candidate list only —
+ * every id it returns is re-tested by the `UPDATE`, and one that has since been
+ * approved, rejected or returned simply claims nothing.
  *
  * ## Both databases
  *
@@ -70,7 +70,7 @@
 import type { ConnectionPool } from "mssql";
 import { sql } from "@/lib/acc/pool";
 import { getProductionFormPool, getUatFormPool } from "@/lib/db/mssql";
-import { AUTO_CANCEL_MONTHS } from "@/lib/acc/stale-request-policy";
+import { AUTO_CANCEL_DAYS } from "@/lib/acc/stale-request-policy";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildEmail } from "@/lib/acc/email-templates";
 import { AP1_FORM_CODE, type StepCode } from "@/features/accounting/constants";
@@ -92,7 +92,7 @@ export const AUTO_CANCEL_ACTION = "auto_cancelled_stale";
 /** What the closed approval row and the log line say, in the requester's language. */
 const AUTO_CANCEL_NOTE =
   `ระบบยกเลิกอัตโนมัติ — ผู้จัดการไม่ได้อนุมัติหรือไม่อนุมัติภายใน ` +
-  `${AUTO_CANCEL_MONTHS} เดือน นับจากวันที่ส่งคำขอ`;
+  `${AUTO_CANCEL_DAYS} วัน นับจากวันที่ส่งคำขอ`;
 
 export interface StaleSweepResult {
   /** How many requests this run actually cancelled, across both databases. */
@@ -127,14 +127,14 @@ async function cancelOne(pool: ConnectionPool, id: number): Promise<CancelledRow
     const upd = await tx.request()
       .input("rid", sql.Int, id)
       .input("form", sql.NVarChar, AP1_FORM_CODE)
-      .input("months", sql.Int, AUTO_CANCEL_MONTHS)
+      .input("days", sql.Int, AUTO_CANCEL_DAYS)
       .query(`UPDATE [dbo].[AccRequest] SET Status='Cancelled', CurrentStepCode=NULL,
                 CancelledBy=NULL, CancelledAt=SYSDATETIME(), UpdatedAt=SYSDATETIME()
               OUTPUT INSERTED.Id, INSERTED.RequestNo, INSERTED.RequesterEmail
               WHERE Id=@rid AND FormCode=@form
                 AND Status='Submitted' AND CurrentStepCode='MANAGER'
                 AND SubmittedAt IS NOT NULL
-                AND SubmittedAt < DATEADD(MONTH, -@months, SYSDATETIME())`);
+                AND SubmittedAt < DATEADD(DAY, -@days, SYSDATETIME())`);
     if (upd.recordset.length === 0) {
       await tx.rollback();
       return null;
@@ -252,11 +252,11 @@ export async function sweepStaleRequestsOn(
   const candidates = await pool.request()
     .input("max", sql.Int, max)
     .input("form", sql.NVarChar, AP1_FORM_CODE)
-    .input("months", sql.Int, AUTO_CANCEL_MONTHS)
+    .input("days", sql.Int, AUTO_CANCEL_DAYS)
     .query(`SELECT TOP (@max) Id FROM [dbo].[AccRequest]
             WHERE FormCode=@form AND Status='Submitted' AND CurrentStepCode='MANAGER'
               AND SubmittedAt IS NOT NULL
-              AND SubmittedAt < DATEADD(MONTH, -@months, SYSDATETIME())
+              AND SubmittedAt < DATEADD(DAY, -@days, SYSDATETIME())
             ORDER BY Id`);
 
   const rows: CancelledRow[] = [];

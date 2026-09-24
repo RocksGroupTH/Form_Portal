@@ -5,6 +5,9 @@ import {
   showsForeignCurrency,
 } from "@/lib/acc/currency-display";
 import type { AccRequest } from "@/features/accounting/types";
+/* The one number, so the subject, the lead and the SQL cannot say three
+   different things about how long a manager had. */
+import { AUTO_CANCEL_DAYS } from "@/lib/acc/stale-request-policy";
 import {
   MAIL_FORM_NAMES,
   approvedLead,
@@ -53,7 +56,7 @@ export type AccTrigger =
 const STALE_CANCEL_LEAD =
   `<p style="font-size:14px;line-height:1.6;color:#333;margin:0 0 12px">` +
   `คำขอเบิกค่าเดินทางของท่านถูก<b>ยกเลิกโดยระบบอัตโนมัติ</b> ` +
-  `เนื่องจากผู้จัดการไม่ได้อนุมัติหรือไม่อนุมัติภายใน 1 เดือน นับจากวันที่ส่งคำขอ<br>` +
+  `เนื่องจากผู้จัดการไม่ได้อนุมัติหรือไม่อนุมัติภายใน ${AUTO_CANCEL_DAYS} วัน นับจากวันที่ส่งคำขอ<br>` +
   `หากยังต้องการเบิกค่าใช้จ่ายรายการนี้ กรุณาสร้างคำขอใหม่อีกครั้ง</p>`;
 
 /**
@@ -95,7 +98,7 @@ export function buildEmail(
     Approved: `อนุมัติแล้ว ${req.requestNo ?? ""}`,
     Rejected: `ไม่อนุมัติ ${req.requestNo ?? ""}`,
     Returned: `ส่งกลับแก้ไข ${req.requestNo ?? ""}`,
-    Cancelled: `ยกเลิกอัตโนมัติ (เกิน 1 เดือน) ${req.requestNo ?? ""}`,
+    Cancelled: `ยกเลิกอัตโนมัติ (เกิน ${AUTO_CANCEL_DAYS} วัน) ${req.requestNo ?? ""}`,
   };
   const rows = [
     row("เลขที่", req.requestNo ?? "-"),

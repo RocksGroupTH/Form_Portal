@@ -91,3 +91,34 @@ test("no other form code reaches the sweep as a literal either", () => {
     );
   }
 });
+
+/**
+ * **The age unit, which is the one thing here a typechecker cannot see.**
+ *
+ * The constant was `AUTO_CANCEL_MONTHS = 1` until 2026-09-24, when the user
+ * asked for a flat 30 days. It was renamed rather than edited in place, so the
+ * four call sites became compile errors — but the unit inside the SQL string is
+ * not typed at all: `DATEADD(MONTH, -@days, …)` with `@days = 30` compiles,
+ * runs, and gives every manager **two and a half years** instead of a month.
+ * No behavioural test can reach it either; the sweep imports `@/lib/acc/pool`
+ * and cannot be loaded here.
+ *
+ * So both statements are pinned to `DAY`, and `MONTH` is refused outright.
+ */
+test("both statements measure the age in DAYS, never months", () => {
+  const src = code(SWEEP);
+  const dateadds = src.match(/DATEADD\([^)]*\)/g) ?? [];
+  assert.equal(dateadds.length, 2, `expected two DATEADDs (the candidate SELECT and the claiming UPDATE), found ${dateadds.length}`);
+  for (const d of dateadds) {
+    assert.match(d, /DATEADD\(DAY, -@days,/, `${d} must measure in days — see this test's own docblock`);
+  }
+  assert.doesNotMatch(src, /DATEADD\(MONTH/, "the month window was replaced by a flat 30 days");
+});
+
+test("the Thai note the timeline and the mail show says days too", () => {
+  /* The copy interpolates the same constant, so the only way it can drift is
+     somebody retyping the unit beside it. */
+  const src = code(SWEEP);
+  assert.match(src, /\$\{AUTO_CANCEL_DAYS\} วัน/, "the cancellation note must say วัน");
+  assert.doesNotMatch(src, /\$\{AUTO_CANCEL_DAYS\} เดือน/, "days interpolated as เดือน");
+});
