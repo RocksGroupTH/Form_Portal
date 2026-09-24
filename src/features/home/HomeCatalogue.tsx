@@ -101,24 +101,60 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(h / 24)} วันที่แล้ว`;
 }
 
-function StatCard({ value, label, tone }: { value: number; label: string; tone: string }) {
-  return (
-    <div
-      className="p-3.5"
-      style={{
-        background: "var(--bg-card)",
-        borderRadius: "var(--radius-card)",
-        boxShadow: "var(--shadow-card)",
-        border: "1px solid var(--border-card)",
-      }}
-    >
+/**
+ * One tile of the stat strip.
+ *
+ * `href` makes it a link to the list it counted, with that filter already
+ * applied — a number nobody can act on is a number nobody trusts. It is
+ * optional because **ร่าง / ตีกลับ has nowhere honest to go**: My Requests reads
+ * `/requests/mine`, whose SQL pins `Status <> 'Draft'`, so a link filtered to
+ * `Returned` would open a shorter list than the tile promised. That tile stays
+ * a plain div and the "ทำต่อจากที่ค้างไว้" section below is the way in.
+ */
+function StatCard({
+  value,
+  label,
+  tone,
+  href,
+}: {
+  value: number;
+  label: string;
+  tone: string;
+  href?: string;
+}) {
+  const style = {
+    background: "var(--bg-card)",
+    borderRadius: "var(--radius-card)",
+    boxShadow: "var(--shadow-card)",
+    border: "1px solid var(--border-card)",
+  } as const;
+
+  const body = (
+    <>
       <div className="text-[19px] font-extrabold leading-none tabular-nums" style={{ color: tone }}>
         {value}
       </div>
       <div className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
         {label}
       </div>
-    </div>
+    </>
+  );
+
+  if (!href) {
+    return (
+      <div className="p-3.5" style={style}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Link
+      href={href}
+      className="p-3.5 block transition-shadow hover:brightness-[0.99]"
+      style={{ ...style, textDecoration: "none" }}
+    >
+      {body}
+    </Link>
   );
 }
 
@@ -344,7 +380,8 @@ export function HomeCatalogue() {
   const [query, setQuery] = useState("");
   const {
     pendingCount,
-    monthCount,
+    stats,
+    monthRange,
     resumableCount,
     resumable,
     summaryError,
@@ -441,12 +478,62 @@ export function HomeCatalogue() {
         </p>
       ) : (
         <>
-          {/* Stat strip */}
-          <div className="grid grid-cols-3 gap-2.5 mt-4">
-            <StatCard value={pendingCount} label="รออนุมัติจากคุณ" tone="var(--status-pending-text)" />
-            <StatCard value={monthCount} label="คำขอเดือนนี้" tone="var(--status-ok-text)" />
+          {/* Stat strip.
+              Two rows of four rather than one row of eight: at eight across a
+              tile is narrower than its own Thai label, and the labels are what
+              make the numbers mean anything. The first tile is the only one
+              about OTHER people's requests — it is this viewer's approval queue
+              — and the seven after it are their own, which is why it links to
+              My Work and they link to My Requests. */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4">
+            <StatCard
+              value={pendingCount}
+              label="รออนุมัติจากคุณ"
+              tone="var(--status-pending-text)"
+              href="/my-work"
+            />
+            <StatCard
+              value={stats.total}
+              label="คำขอทั้งหมด"
+              tone="var(--text-primary)"
+              href="/my-request?status=all"
+            />
+            {/* `submittedAt` on both sides: `countHomeStats` measures it and
+                `inDateRange` filters on it, so this link opens exactly the rows
+                the tile counted. */}
+            <StatCard
+              value={stats.month}
+              label="คำขอเดือนนี้"
+              tone="var(--status-ok-text)"
+              href={`/my-request?status=all&from=${monthRange.from}&to=${monthRange.to}`}
+            />
+            <StatCard
+              value={stats.pending}
+              label="คำขอที่รออนุมัติ"
+              tone="var(--status-pending-text)"
+              href="/my-request?status=pending"
+            />
+            <StatCard
+              value={stats.approved}
+              label="อนุมัติแล้ว"
+              tone="var(--status-ok-text)"
+              href="/my-request?status=Approved"
+            />
+            <StatCard
+              value={stats.rejected}
+              label="ไม่อนุมัติ"
+              tone="var(--color-danger)"
+              href="/my-request?status=Rejected"
+            />
+            <StatCard
+              value={stats.cancelled}
+              label="ยกเลิก"
+              tone="var(--text-muted)"
+              href="/my-request?status=Cancelled"
+            />
             {/* Draft + Returned — the drafts endpoints return both and AP-17 cannot
-                separate them, so the label names both rather than under-reporting. */}
+                separate them, so the label names both rather than under-reporting.
+                No link: see `StatCard`. */}
             <StatCard value={resumableCount} label="ร่าง / ตีกลับ" tone="var(--status-draft-text)" />
           </div>
 

@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { StepCode } from "@/features/accounting/constants";
 import { REIMBURSE_STEP_LABEL } from "@/features/reimburse/constants";
 import { isAssignedManager } from "@/lib/acc/manager-auth";
+import { isCompletedStatus } from "@/features/accounting/constants";
 
 export const APPROVAL_STEP_LABEL: Record<StepCode, string> = {
   MANAGER: "ผู้จัดการ",
@@ -100,7 +101,11 @@ export function getMyWorkStatusBucket(
   if (status === "Rejected") return "Rejected";
   if (status === "Returned") return "Returned";
   if (status === "Cancelled") return "Cancelled";
-  if (status === "Approved") return "Approved";
+  // `Completed` is AP-17's spelling of the same terminal state, and without
+  // it such a row falls all the way through to `pending` below — so a
+  // finished booking would sit in My Work's รออนุมัติ tab wearing a chip that
+  // reads Complete, the page contradicting itself. See `isCompletedStatus`.
+  if (isCompletedStatus(status)) return "Approved";
 
   const pending = row.pendingStepCode ?? row.currentStepCode ?? null;
 
@@ -190,7 +195,10 @@ export function myWorkStatusStyle(bucket: MyWorkStatusBucket): CSSProperties {
 /** Short label for list rows — next approval step and assignee when in progress. */
 export function formatNextApprovalDetail(input: NextApprovalInput & { viewerManagerApproved?: boolean }): string | null {
   const { status } = input;
-  if (status === "Approved" || status === "Rejected" || status === "Cancelled" || status === "Draft") {
+  // `isCompletedStatus` rather than `=== "Approved"`: a finished AP-17 booking
+  // is `Completed`, and without it this goes looking for a next step on a
+  // request that has none.
+  if (isCompletedStatus(status) || status === "Rejected" || status === "Cancelled" || status === "Draft") {
     return null;
   }
   if (status === "Returned") {

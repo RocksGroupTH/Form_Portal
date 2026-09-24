@@ -2,6 +2,7 @@
 import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { hrPhotoUrl } from "@/lib/hr/photo-url";
 import {
@@ -39,7 +40,7 @@ import {
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
-import { isPendingApprovalStatus } from "@/features/accounting/constants";
+import { isCompletedStatus, isPendingApprovalStatus } from "@/features/accounting/constants";
 import { MultiSelectFilter, inDateRange, isMultiSelectActive, matchesMultiSelectValue } from "@/features/accounting/components/ApprovalQueueFilters";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import { SidePanel, SidePanelClose, SidePanelExpand } from "@/components/ui/SidePanel";
@@ -171,7 +172,8 @@ function StatusBadge({ status, workBucket }: { status: string; workBucket?: MyWo
 
 const MINE_STATUS_FILTER_GROUPS = [
   { id: "pending", label: "รออนุมัติ", match: isPendingApprovalStatus },
-  { id: "Approved", label: "อนุมัติแล้ว", match: (s: string) => s === "Approved" },
+  // Both spellings — AP-17 writes `Completed`. See `isCompletedStatus`.
+  { id: "Approved", label: "อนุมัติแล้ว", match: isCompletedStatus },
   { id: "Returned", label: "ส่งกลับแก้ไข", match: (s: string) => s === "Returned" },
   { id: "Rejected", label: "ไม่อนุมัติ", match: (s: string) => s === "Rejected" },
   { id: "Cancelled", label: "ยกเลิก", match: (s: string) => s === "Cancelled" },
@@ -274,13 +276,41 @@ function RequestRowList({
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState(1);
 
+  /* Home's stat tiles open this page with the filter they counted already
+     applied — `?status=Rejected` from ไม่อนุมัติ, `?status=all&from=…&to=…`
+     from คำขอเดือนนี้ — so the number on the tile and the list it opens are
+     the same set of rows.
+
+     **Seed only, never a controlled value.** The filter chips below are the
+     authority once the page is up; re-reading the URL on every render would
+     snap a chip the user just pressed back to whatever Home linked to. `?date`
+     matches on `submittedAt`, which is what `countHomeStats` measured. */
+  const searchParams = useSearchParams();
+  const initialStatus = useMemo(() => {
+    const raw = searchParams.get("status");
+    const fallback = kind === "work" ? DEFAULT_WORK_STATUS_FILTER : DEFAULT_MINE_STATUS_FILTER;
+    if (!raw) return fallback;
+    if (raw === "all") return "all";
+    // An id this page does not know would filter every row out and read as an
+    // empty list rather than as a bad link, so an unknown one falls back.
+    const groups = kind === "work" ? WORK_STATUS_FILTER_GROUPS : MINE_STATUS_FILTER_GROUPS;
+    return groups.some((g) => g.id === raw) ? raw : fallback;
+    // Deliberately keyed on nothing: the seed is read once, at mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const initialDates = useMemo(() => {
+    const isYmd = (v: string | null) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    return { from: isYmd(from) ? from! : "", to: isYmd(to) ? to! : "" };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>(
-    () => (kind === "work" ? DEFAULT_WORK_STATUS_FILTER : DEFAULT_MINE_STATUS_FILTER),
-  );
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatus);
   const [formFilter, setFormFilter] = useState<string[]>([]);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useState(initialDates.from);
+  const [dateTo, setDateTo] = useState(initialDates.to);
   const [workViewer, setWorkViewer] = useState<MyWorkViewerContext>({
     staffId: null,
     email: null,
