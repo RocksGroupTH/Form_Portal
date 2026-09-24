@@ -23,7 +23,7 @@
 
 | File | Change | Task |
 | --- | --- | --- |
-| `src/features/clear-advance/components/ClearAdvanceForm.tsx` | the two ภ.ง.ด. controls, the table header, the totals `colSpan` | 1 |
+| `src/features/clear-advance/components/ClearAdvanceForm.tsx` | the two ภ.ง.ด. controls, the table header, **both** `colSpan` counts, the import | 1 |
 | `src/lib/clr/wide-card-width.ts` | **new** — the wide-mode width arithmetic, pure | 2 |
 | `src/lib/clr/wide-card-width.test.ts` | **new** — its tests | 2 |
 | `src/features/clear-advance/components/ClearAdvanceForm.tsx` | wide state, effect, wrapper, header button | 3 |
@@ -37,8 +37,14 @@
 **Files:**
 - Modify: `src/features/clear-advance/components/ClearAdvanceForm.tsx:1922`, `:1974-1985`, `:2008-2013`, `:2068-2076`
 
-**Three edits, and the third is the one that gets forgotten.** The wide table's cell, the
-narrow card's field, **and** the header cell plus the totals row's `colSpan` that counts it.
+**Five edits, and the counts are what get forgotten.** The wide table's header cell and body
+cell, the narrow card's field, the import — **and every `colSpan` in that table that counted
+the column being removed. There are two of them, not one.**
+
+> Corrected 2026-09-24, after the spec review of the first attempt. This task originally
+> named only the totals row's `colSpan` and the empty-state row above it was missed, which
+> left a brand-new form's WHT table one phantom column wide on first open. The step is now
+> Step 4.
 
 - [ ] **Step 1: Delete the wide table's header cell**
 
@@ -95,7 +101,29 @@ with:
                   <Td colSpan={7}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
 ```
 
-- [ ] **Step 4: Delete the narrow card's field**
+- [ ] **Step 4: Fix the empty-state row's span too**
+
+Directly above the totals row, at `:1930`, the WHT table's "no rows yet" cell spans the whole
+table:
+
+```tsx
+                    <Td colSpan={readOnly ? 9 : 10}>
+```
+
+The table is now 8 columns read-only and 9 with the remove-row button, so replace it with:
+
+```tsx
+                    {/* Eight columns read-only, nine with the remove button —
+                        the same count the totals row below spans. Both follow
+                        the header, and both were one too wide until the ภ.ง.ด.
+                        column left on 2026-09-24. */}
+                    <Td colSpan={readOnly ? 8 : 9}>
+```
+
+**This is the row a brand-new form shows**, and an over-long `colspan` grows the table by a
+phantom column — so getting this wrong is visible on first open, not in some edge case.
+
+- [ ] **Step 5: Delete the narrow card's field**
 
 At `:2068-2076`, delete this whole `<MField>` block:
 
@@ -111,7 +139,7 @@ At `:2068-2076`, delete this whole `<MField>` block:
                 </MField>
 ```
 
-- [ ] **Step 5: Drop `PND_LABEL` from the import, keep `suggestPndType`**
+- [ ] **Step 6: Drop `PND_LABEL` from the import, keep `suggestPndType`**
 
 Those four `<option>` elements were `PND_LABEL`'s **only** uses in this file, so it is now an
 unused import. Line 5 reads:
@@ -128,22 +156,22 @@ import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 
 `suggestPndType` stays — it is what still fills the type from the tax id.
 
-- [ ] **Step 6: Leave everything else about `pndType` alone**
+- [ ] **Step 7: Leave everything else about `pndType` alone**
 
 Do **not** touch `:527`, `:605` or `:1283`. The value is still filled from the tax id and
 still sent on save; the ERP payload refuses a clearing whose WHT rows have no decided type,
 so removing the fill would strand claims at the send. `wht-pnd-core.ts` itself does not
 change — `PND_LABEL` is still used by both apps' account steps.
 
-- [ ] **Step 7: Typecheck**
+- [ ] **Step 8: Typecheck**
 
 ```bash
 cd /r/Form_Portal && npx tsc --noEmit
 ```
 
-Expected: no output. An error naming `PND_LABEL` means Step 5 was skipped.
+Expected: no output. An error naming `PND_LABEL` means Step 6 was skipped.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cd /r/Form_Portal
@@ -629,6 +657,14 @@ test("the WHT totals row spans the seven columns that are left", () => {
   assert.match(form(), /<Td colSpan=\{7\}><span[^>]*>รวม WHT<\/span><\/Td>/);
 });
 
+/* The row a brand-new form shows. It was missed when the column was removed,
+   and an over-long colspan does not throw — it grows the table by a phantom
+   column, so the header stops lining up with the body on first open. */
+test("the WHT empty-state row spans the same columns the header has", () => {
+  assert.match(form(), /<Td colSpan=\{readOnly \? 8 : 9\}>/);
+  assert.doesNotMatch(form(), /<Td colSpan=\{readOnly \? 9 : 10\}>/);
+});
+
 test("the receipt section offers the no-AI buttons", () => {
   assert.match(form(), /onPickRaw=\{\(list\) => uploadFiles\(list, "clear_doc", \{ read: false \}\)\}/);
 });
@@ -654,7 +690,7 @@ test("skipping the read is one argument on the one upload function", () => {
 cd /r/Form_Portal && npx tsx --test src/lib/clr/ap3-form-cr-a-guard.test.ts
 ```
 
-Expected: `# pass 6`, `# fail 0`. If any fail, the earlier task it names was not finished —
+Expected: `# pass 7`, `# fail 0`. If any fail, the earlier task it names was not finished —
 fix that task, not this test.
 
 - [ ] **Step 3: Prove the guard is not vacuous**
