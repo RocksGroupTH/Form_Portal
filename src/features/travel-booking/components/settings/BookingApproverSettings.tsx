@@ -6,6 +6,8 @@ import { AlertTriangle, Check, Loader2, Plus, ShieldCheck, UserCheck, UserX } fr
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
 import { GRANTABLE_BOOKING_TABS, GRANTABLE_BOOKING_MENUS } from "@/lib/acc/travel-booking/settings-tabs";
+import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
+import { FormOwnerCheckbox } from "@/features/settings/FormOwnerCheckbox";
 
 const ENDPOINT = "/api/request/travel-booking/settings/approvers";
 
@@ -598,6 +600,17 @@ export function BookingApproverSettings() {
                   >
                     เมนูที่เห็น
                   </th>
+                  {/* Before สถานะ (the user, 2026-09-24), and outside every
+                      grant group above it on purpose: an owner is a contact
+                      line and grants nothing, so it must not read as a third
+                      kind of tick. See `FormOwnerCheckbox`. */}
+                  <th
+                    rowSpan={2}
+                    className="text-center px-4 py-2 font-semibold align-bottom whitespace-nowrap"
+                    style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border-light)" }}
+                  >
+                    เจ้าของฟอร์ม
+                  </th>
                   {/* Status and its control share one column: the badge reports,
                       the button acts. A badge that is also a button reads as
                       neither. */}
@@ -681,6 +694,18 @@ export function BookingApproverSettings() {
                         payload echoes `isActive` back unchanged. */}
                     <TabGrantCells row={r} onSaved={() => void mutate()} />
                     <BrandScopeCell row={r} onSaved={() => void mutate()} />
+                    {/* Ticked for an inactive row too, for the same reason the
+                        grant ticks are shown there: this one is not access at
+                        all, so switching somebody off as an approver is no
+                        reason to stop telling requesters to ask them. */}
+                    <td className="px-4 py-2.5">
+                      <FormOwnerCheckbox
+                        formCode={AP17_FORM_CODE}
+                        email={r.email}
+                        displayName={r.displayName}
+                        staffId={r.staffId}
+                      />
+                    </td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-center gap-2">
                         <span

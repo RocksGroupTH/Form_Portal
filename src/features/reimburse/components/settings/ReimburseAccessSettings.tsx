@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
 import { ALL_REIMBURSE_TABS, GRANTABLE_REIMBURSE_TABS, REIMBURSE_MENUS } from "@/lib/acc/reimburse/settings-tabs";
 import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
+import { AP4_FORM_CODE } from "@/features/reimburse/constants";
+import { FormOwnerCheckbox } from "@/features/settings/FormOwnerCheckbox";
 
 const ENDPOINT = "/api/request/reimburse/settings/access";
 
@@ -808,6 +810,18 @@ export function ReimburseAccessSettings() {
                     >
                       หน้าใช้งาน
                     </th>
+                    {/* Before สถานะ (the user, 2026-09-24), and deliberately
+                        outside all three labelled groups: an owner is a
+                        contact line printed at the foot of the form and grants
+                        nothing, so it must not read as a fourth kind of grant.
+                        See `FormOwnerCheckbox`. */}
+                    <th
+                      rowSpan={2}
+                      className="text-center px-4 py-2 font-semibold align-bottom whitespace-nowrap"
+                      style={{ color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }}
+                    >
+                      เจ้าของฟอร์ม
+                    </th>
                     {/* Status and its control share one column: the badge
                         reports, the button acts. A badge that is also a button
                         reads as neither. */}
@@ -954,6 +968,18 @@ export function ReimburseAccessSettings() {
                             switching them on. The save cannot flip the status: the
                             payload echoes `isActive` back unchanged. */}
                         <TabGrantCells row={r} onSaved={() => void mutate()} />
+                        {/* Ticked for an inactive row too, and for an orphan:
+                            this one is not access at all, so neither switching
+                            somebody off nor their having no สิทธิ์เข้าถึง row is
+                            a reason to stop telling requesters to ask them. */}
+                        <td className="px-4 py-2.5" style={{ borderLeft: "1px solid var(--border-light)" }}>
+                          <FormOwnerCheckbox
+                            formCode={AP4_FORM_CODE}
+                            email={r.email}
+                            displayName={r.displayName}
+                            staffId={r.staffId}
+                          />
+                        </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center justify-center gap-2">
                             <span

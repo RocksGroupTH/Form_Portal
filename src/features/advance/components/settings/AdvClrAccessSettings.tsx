@@ -19,6 +19,7 @@ import {
   type AdvClrApproverColumn,
 } from "@/lib/adv/approver-columns";
 import { approverRosterKey, fetchApproverRoster } from "@/lib/adv/approver-roster";
+import { FormOwnerCheckbox } from "@/features/settings/FormOwnerCheckbox";
 import {
   buildAccessGridRows,
   countActiveApprovers,
@@ -647,6 +648,20 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
                     >
                       หน้าใช้งาน
                     </th>
+                    {/* Before สถานะ (the user, 2026-09-24), outside every grant
+                        group: an owner grants nothing, so it must not read as
+                        another kind of tick. **It is per FORM even though the
+                        roster is shared** — AP-2's page writes AP-2's owners
+                        and AP-3's writes AP-3's, which is the one thing on this
+                        grid that is not common to both. See
+                        `FormOwnerCheckbox`. */}
+                    <th
+                      rowSpan={2}
+                      className="text-center px-4 py-2 font-semibold align-bottom whitespace-nowrap"
+                      style={{ color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }}
+                    >
+                      เจ้าของฟอร์ม
+                    </th>
                     {/* Status and its control share one column: the badge
                         reports, the button acts. A badge that is also a button
                         reads as neither. */}
@@ -774,6 +789,18 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
                         menus={menus}
                         onSaved={refresh}
                       />
+                      {/* Ticked for a row with no สิทธิ์เข้าถึง row at all, and
+                          for one that is switched off: this is not access, so
+                          neither state is a reason to stop telling requesters
+                          to ask them. */}
+                      <td className="px-4 py-2.5" style={{ borderLeft: "1px solid var(--border-light)" }}>
+                        <FormOwnerCheckbox
+                          formCode={form}
+                          email={r.email}
+                          displayName={r.displayName}
+                          staffId={r.staffId}
+                        />
+                      </td>
                       <td className="px-4 py-2.5">
                         {!r.access ? (
                           <div className="flex items-center justify-center">

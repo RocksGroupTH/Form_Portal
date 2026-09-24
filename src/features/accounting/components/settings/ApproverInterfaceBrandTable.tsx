@@ -5,6 +5,8 @@ import { Check, Loader2, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
 import type { AccApproverRow } from "@/features/accounting/types";
+import { AP1_FORM_CODE } from "@/features/accounting/constants";
+import { FormOwnerCheckbox } from "@/features/settings/FormOwnerCheckbox";
 
 function codesEqual(a: string[] | null, b: string[] | null): boolean {
   if (a === null && b === null) return true;
@@ -266,6 +268,15 @@ export function ApproverInterfaceBrandTable({
                   <span className="block text-[10px]">{iface.id}</span>
                 </th>
               ))}
+              {/* Before สถานะ (the user, 2026-09-24). It is not an access
+                  right and sits here only because this is where a form's
+                  people are managed — see `FormOwnerCheckbox`. */}
+              <th
+                className="text-center px-3 py-2.5 font-semibold whitespace-nowrap w-24"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                เจ้าของฟอร์ม
+              </th>
               <th
                 className="text-center px-3 py-2.5 font-semibold whitespace-nowrap w-24"
                 style={{ color: "var(--text-secondary)" }}
@@ -311,6 +322,17 @@ export function ApproverInterfaceBrandTable({
                     </span>
                   </td>
                 )}
+                {/* Ticked for an inactive row too: an owner is a contact line,
+                    not an approval, so switching somebody off as an approver
+                    is not a reason to stop telling requesters to ask them. */}
+                <td className="px-3 py-2.5 text-center">
+                  <FormOwnerCheckbox
+                    formCode={AP1_FORM_CODE}
+                    email={a.email}
+                    displayName={a.displayName}
+                    staffId={a.staffId}
+                  />
+                </td>
                 <td className="px-3 py-2.5 text-center">
                   {a.isActive ? (
                     <span

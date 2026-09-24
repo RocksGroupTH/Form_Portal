@@ -3,11 +3,9 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, Database, Loader2, Plus, Users, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/Dialog";
-import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import type { FormOwnerRef } from "@/lib/form-environment/payload-types";
 // The typed-confirmation rule lives in its own import-free module so it can be
 // unit-tested without loading React, SWR and sonner. See its docblock for why
 // both Production directions are typed and neither UAT direction is.
@@ -160,194 +158,6 @@ function EnvironmentSwitch({
   );
 }
 
-/**
- * The owner column's whole content: one pill, never a list.
- *
- * It says how many and opens the dialog; the names are in the `title`, so the
- * commonest question — *who?* — is answered by hovering rather than by a click
- * and a dismissal. With nobody named it reads `เพิ่ม` and is dashed, matching
- * every other "nothing here yet" affordance in these settings panels.
- */
-function OwnerCellButton({
-  owners,
-  disabled,
-  onOpen,
-}: {
-  owners: readonly FormOwnerRef[];
-  disabled: boolean;
-  onOpen: () => void;
-}) {
-  const named = owners.length > 0;
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onOpen}
-      /* One per line: an address is long enough that joining with commas
-         wraps the tooltip anyway, and a name above its own address is how the
-         dialog behind this button lists them too. */
-      title={
-        named
-          ? owners.map((o) => `${o.displayName || o.email}\n${o.email}`).join("\n\n")
-          : "ยังไม่มีเจ้าของฟอร์ม"
-      }
-      aria-label={named ? `เจ้าของฟอร์ม ${owners.length} คน — กดเพื่อจัดการ` : "เพิ่มเจ้าของฟอร์ม"}
-      className="inline-flex items-center gap-1 text-[10.5px] font-semibold px-2 py-0.5 rounded-full cursor-pointer whitespace-nowrap"
-      style={
-        named
-          ? {
-              background: "var(--bg-badge)",
-              color: "var(--text-secondary)",
-              border: "1px solid var(--border-light)",
-            }
-          : {
-              background: "var(--bg-card-alt)",
-              color: "var(--text-muted)",
-              border: "1px dashed var(--border-card)",
-            }
-      }
-    >
-      {named ? (
-        <>
-          <Users size={11} /> {owners.length} คน
-        </>
-      ) : (
-        <>
-          <Plus size={11} /> เพิ่ม
-        </>
-      )}
-    </button>
-  );
-}
-
-/**
- * Add and remove one form's owners.
- *
- * A plain fixed overlay rather than the `Dialog` beside it, deliberately: the
- * directory search this opens is one too, and the two have to hand off to each
- * other. See `managingOwnersOf` for that hand-off.
- *
- * **Every change is written immediately**, exactly as the switches in the table
- * are — there is no Save button and no draft state, so this dialog is a view
- * onto the stored list rather than a form over it, and closing it can never
- * lose anything. `saving` disables both controls for the whole write, since a
- * second remove issued against the list this one is replacing would race it.
- */
-function FormOwnerDialog({
-  formCode,
-  owners,
-  saving,
-  onAdd,
-  onRemove,
-  onClose,
-}: {
-  formCode: string;
-  owners: readonly FormOwnerRef[];
-  saving: boolean;
-  onAdd: () => void;
-  onRemove: (email: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
-        className="rounded-2xl w-[420px] max-w-full overflow-hidden"
-        style={{
-          background: "var(--bg-card)",
-          border: "1px solid var(--border-card)",
-          boxShadow: "var(--shadow-modal)",
-        }}
-      >
-        <div className="px-5 py-4 flex items-start gap-3">
-          <div className="flex-1 min-w-0">
-            <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>
-              เจ้าของฟอร์ม {formCode}
-            </h3>
-            <p className="text-[11.5px] mt-1" style={{ color: "var(--text-muted)" }}>
-              แสดงท้ายฟอร์มเพื่อให้ผู้ขอติดต่อกรณีต้องการยกเลิก · ไม่ได้รับสิทธิ์เพิ่มเติมใด ๆ
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label="ปิด"
-            onClick={onClose}
-            className="border-none bg-transparent p-0 cursor-pointer shrink-0"
-            style={{ color: "var(--text-faint)" }}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="px-5 pb-1 flex flex-col gap-1.5 max-h-[44vh] overflow-y-auto">
-          {owners.length === 0 ? (
-            /* Not an error state: a form with no owner prints the same
-               contact sentence it always printed, just without a name. */
-            <p className="text-[12px] py-2" style={{ color: "var(--text-faint)" }}>
-              ยังไม่มีเจ้าของฟอร์ม — ท้ายฟอร์มจะแสดงข้อความติดต่อแบบไม่ระบุชื่อ
-            </p>
-          ) : (
-            owners.map((o) => (
-              <div
-                key={o.email}
-                className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
-                style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)" }}
-              >
-                <span className="flex-1 min-w-0">
-                  <span
-                    className="block text-[12px] font-semibold truncate"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {o.displayName || o.email}
-                  </span>
-                  {/* The address is the thing a requester actually uses, so it
-                      is shown even when it is also the name above. */}
-                  <span className="block text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                    {o.email}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  aria-label={`ลบ ${o.displayName || o.email}`}
-                  disabled={saving}
-                  onClick={() => onRemove(o.email)}
-                  className="border-none bg-transparent p-0 cursor-pointer shrink-0"
-                  style={{ color: "var(--text-faint)" }}
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-
-        <div
-          className="flex items-center gap-2 px-5 py-3 mt-3"
-          style={{ borderTop: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
-        >
-          <button
-            type="button"
-            disabled={saving}
-            onClick={onAdd}
-            className="flex items-center gap-1 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white"
-            style={{ background: "var(--color-action)" }}
-          >
-            <Plus size={13} /> เพิ่มเจ้าของ
-          </button>
-          {saving && <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-muted)" }} />}
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-auto px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer"
-            style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}
-          >
-            ปิด
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function FormEnvironmentSettings() {
   const { data, mutate, isLoading } = useSWR<{ ok: boolean; data: FormEnvironmentRow[]; error?: string }>(
     "/api/settings/form-environment",
@@ -358,36 +168,6 @@ export function FormEnvironmentSettings() {
     fetcher,
   );
 
-  /* Its own fetch rather than a field on the row above: the switches route
-     writes one switch at a time by design and an owner list is a whole-row
-     write, so folding them together would force one shape onto the other.
-     See `/api/settings/form-owners`. */
-  const { data: ownerRes, mutate: mutateOwners } = useSWR<{
-    ok: boolean;
-    data: Record<string, FormOwnerRef[]>;
-    error?: string;
-  }>("/api/settings/form-owners", fetcher);
-  const owners = ownerRes?.ok ? ownerRes.data ?? {} : {};
-  /** The form whose owner list the directory search is currently adding to. */
-  const [addingOwnerTo, setAddingOwnerTo] = useState<string | null>(null);
-  /**
-   * The form whose owners are open in the manage dialog.
-   *
-   * The names used to be chips in the table cell with a `+ เพิ่ม` beside them,
-   * and at three owners one Thai name wrapped to three lines and pushed the row
-   * taller than every other row on the page (the user, 2026-09-24: "เหมือน
-   * พื้นที่ไม่พอ"). A table column cannot hold a list that grows; the cell now
-   * holds a count and this dialog holds the list.
-   *
-   * **Only ever one overlay at a time**: pressing เพิ่ม inside the dialog sets
-   * `addingOwnerTo` and this one stops rendering until the search closes, which
-   * returns here with the new owner in place. `ADSearchModal` is a plain fixed
-   * overlay rather than a Radix dialog, so stacking the two would work — but
-   * two dimmed backdrops over each other read as a bug, and the Radix
-   * `pointer-events: none` trap this repo has already measured once is not
-   * worth re-entering the day somebody converts either of them.
-   */
-  const [managingOwnersOf, setManagingOwnersOf] = useState<string | null>(null);
 
   const [saving, setSaving] = useState<string | null>(null);
   /** The switch waits here until confirmed — typed, for either Production direction; clicked, for UAT. */
@@ -399,32 +179,6 @@ export function FormEnvironmentSettings() {
   const rows = data?.ok ? data.data ?? [] : [];
   const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
   const coverage = coverageRes?.ok ? coverageRes.data : null;
-
-  /**
-   * Write one form's owners, whole.
-   *
-   * Saved on every add and every remove rather than behind a Save button,
-   * which is how the switches beside it behave — and an owner list has no
-   * half-finished state a Save button would be protecting.
-   */
-  const saveOwners = async (formCode: string, next: FormOwnerRef[]) => {
-    setSaving(formCode);
-    try {
-      const res = await fetch("/api/settings/form-owners", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ formCode, owners: next }),
-      });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
-      toast.success(`${formCode} · บันทึกเจ้าของฟอร์มแล้ว`);
-      await mutateOwners();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
-    } finally {
-      setSaving(null);
-    }
-  };
 
   const setFlag = async (formCode: string, field: SwitchField, next: boolean) => {
     setSaving(formCode);
@@ -571,20 +325,6 @@ export function FormEnvironmentSettings() {
                           <Loader2 size={12} className="animate-spin" style={{ color: "var(--text-muted)" }} />
                         )}
                       </div>
-                    </td>
-                    {/* Owners. Printed at the foot of every form as the person
-                        to contact about a cancellation — see `formOwnerNotice`.
-                        Naming somebody here grants them nothing.
-
-                        A count, not the names: the list grows and a table
-                        column does not. The names are one click away, and on
-                        hover without a click at all. */}
-                    <td className="px-4 py-2.5">
-                      <OwnerCellButton
-                        owners={owners[row.formCode] ?? []}
-                        disabled={saving === row.formCode}
-                        onOpen={() => setManagingOwnersOf(row.formCode)}
-                      />
                     </td>
                     <td className="px-4 py-2.5" style={{ color: "var(--text-muted)" }}>
                       {formatStamp(row.updatedAt)}
@@ -744,39 +484,6 @@ export function FormEnvironmentSettings() {
           </div>
         )}
       </Dialog>
-      {managingOwnersOf && !addingOwnerTo && (
-        <FormOwnerDialog
-          formCode={managingOwnersOf}
-          owners={owners[managingOwnersOf] ?? []}
-          saving={saving === managingOwnersOf}
-          onAdd={() => setAddingOwnerTo(managingOwnersOf)}
-          onRemove={(email) =>
-            saveOwners(
-              managingOwnersOf,
-              (owners[managingOwnersOf] ?? []).filter((x) => x.email !== email),
-            )
-          }
-          onClose={() => setManagingOwnersOf(null)}
-        />
-      )}
-      {addingOwnerTo && (
-        <ADSearchModal
-          title={`เจ้าของฟอร์ม ${addingOwnerTo}`}
-          subtitle="ค้นหาจากไดเรกทอรีของบริษัท · เจ้าของฟอร์มไม่ได้รับสิทธิ์เพิ่มเติมใด ๆ"
-          existingEmails={(owners[addingOwnerTo] ?? []).map((o) => o.email)}
-          /* Both ways out land back on the manage dialog, which is where the
-             admin was and where the result of this search is visible. */
-          onClose={() => setAddingOwnerTo(null)}
-          onSelect={(u: ADResult) => {
-            const code = addingOwnerTo;
-            setAddingOwnerTo(null);
-            void saveOwners(code, [
-              ...(owners[code] ?? []),
-              { email: u.email, displayName: u.name || null },
-            ]);
-          }}
-        />
-      )}
     </div>
   );
 }
