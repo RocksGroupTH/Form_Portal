@@ -109,14 +109,25 @@ test("description carries the ADV no, the employee and the detail", () => {
     items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", description: "ค่าแท็กซี่" }],
   }));
   const exp = p.lines.find((l) => l.accountNo === "610322005")!;
-  assert.equal(exp.description, "ADV26-00026 เบิก เคลียร์เงินทดลอง ภาสพงษ์ พิษณุพจน์ ค่าแท็กซี่");
+  assert.equal(exp.description, "ADC26-09005 ค่าแท็กซี่");
   assert.ok(exp.description.length <= 100);
 });
 
 test("description falls back to the AP-3 no when there is no ADV no", () => {
   const p = buildClearAdvanceJournalPayload(base({}));
   const exp = p.lines.find((l) => l.accountNo === "610322005")!;
-  assert.ok(exp.description.startsWith("ADC26-09005 เบิก เคลียร์เงินทดลอง"));
+  assert.equal(exp.description, "ADC26-09005");
+});
+
+/* The old comment claimed "the identifying half has to survive" the 100-char
+ * cut and nothing tested it. The ADC no. is what has to survive now. */
+test("a long detail is cut to 100 chars, and the ADC no. survives at the front", () => {
+  const p = buildClearAdvanceJournalPayload(base({
+    items: [{ glAccountNo: "610322005", amountBeforeVat: 2000, vatAmount: 0, whtAmount: 0, branchCode: "HQ01", description: "ค่า".repeat(80) }],
+  }));
+  const exp = p.lines.find((l) => l.accountNo === "610322005")!;
+  assert.equal(exp.description.length, 100);
+  assert.ok(exp.description.startsWith("ADC26-09005 "));
 });
 
 test("money returned to the company -> Refund on every line", () => {
