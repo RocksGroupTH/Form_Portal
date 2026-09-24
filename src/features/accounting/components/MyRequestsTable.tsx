@@ -182,7 +182,7 @@ export function MyRequestsTable({
   const nowIso = useMemo(() => new Date().toISOString(), [rows]);
 
   const statusOf = useCallback(
-    (row: ReportRow) => statusFor?.(row) ?? statusDisplay(row.status, row.currentStepCode),
+    (row: ReportRow) => statusFor?.(row) ?? statusDisplay(row.status),
     [statusFor],
   );
 

@@ -155,13 +155,44 @@ export const STATUS_AT_STEP: Record<ReimburseStepCode, ReimburseStatus> = {
   ACCOUNT_FINAL: "ManagerApproved",
 };
 
-/** Where an approval at `step` leaves the request (spec §3.2.1). */
+/**
+ * Where an approval at `step` leaves the request.
+ *
+ * **`ACCOUNT_FINAL` is RETIRED as of 2026-09-24 — accounting approves once and
+ * the claim is finished**, which is what AP-1 has always done. The user's
+ * decision, and the evidence that prompted it is worth keeping: measured that
+ * day in UAT, `AccReimburseApprover` held exactly ONE active approver, and both
+ * live AP-4 claims sat at `ACCOUNT_FINAL` with `MANAGER` and `ACCOUNT` both
+ * signed **by that same person** — so `canActFinalStep` refused the only
+ * candidate and the two claims were stuck permanently. That is the state the
+ * settings page's own amber banner exists to predict: *"the one that looks fine
+ * until it is tried"*.
+ *
+ * The spec (§1, §3.2.1) designs three steps and this now runs two. The
+ * divergence is deliberate and is recorded here rather than in the spec,
+ * because the spec's own §6 stage 4 already wanted `ACCOUNT_FINAL` moved after
+ * the Business Central send — a step that cannot exist until AP-4 has a sender,
+ * and which nobody is waiting on.
+ *
+ * ## The step is retired, NOT deleted — the same treatment AP-2 gave `HEAD_DEPT`
+ *
+ * `ACCOUNT_FINAL` stays in `ReimburseStepCode`, in `CK_AccApproval_Step`, and in
+ * every reader: `approveReimburseFinal`, `assertMayTakeFinalStep`, the detail
+ * page's final-approve control and My Work's pending-step arm all still work.
+ * Nothing **creates** a row at that step any more, so for new claims they are
+ * unreachable — but a row that is already there stays actionable rather than
+ * becoming a request nobody can move, which is exactly the trap this change is
+ * getting AP-4 out of. Migration 162 clears the two that exist.
+ *
+ * **Do not delete the step's vocabulary to tidy up.** AP-2's own note says the
+ * same of `HEAD_DEPT`: the type stays valid so legacy rows still parse.
+ */
 export const STATE_AFTER_APPROVE: Record<
   ReimburseStepCode,
   { status: ReimburseStatus; nextStep: ReimburseStepCode | null }
 > = {
   MANAGER: { status: "ManagerApproved", nextStep: "ACCOUNT" },
-  ACCOUNT: { status: "ManagerApproved", nextStep: "ACCOUNT_FINAL" },
+  ACCOUNT: { status: "Approved", nextStep: null },
   ACCOUNT_FINAL: { status: "Approved", nextStep: null },
 };
 

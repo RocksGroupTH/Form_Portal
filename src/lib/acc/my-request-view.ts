@@ -327,50 +327,31 @@ const STATUS_DISPLAY: Record<string, MyRequestStatusDisplay> = {
 };
 
 /**
- * **AP-4 at `ACCOUNT_FINAL` reads Complete to its requester** (the user's rule,
- * 2026-09-24: *"บัญชี (ขั้นสุดท้าย) คือรอ Interface ERP ตรงนี้ต้องแสดงเป็น
- * Complete แล้ว"*).
+ * **There is deliberately no step in this signature**, and there was one for a
+ * few hours on 2026-09-24 — worth recording, because the reasoning that put it
+ * there was sound and the conclusion was still wrong.
  *
- * By then the checking accountant has signed and the payment date is set, so
- * nothing the requester filed is still in question — what remains is
- * accounting's own work. `ManagerApproved` alone would read **Pending**, which
- * tells them somebody is still deciding.
+ * AP-4 rows sat at `(ManagerApproved, ACCOUNT_FINAL)` and read **Pending** to
+ * their requester, so the step was read here and promoted them to Complete: by
+ * then the checking accountant had signed and the payment date was set, and
+ * nothing the requester filed was still in question.
  *
- * ## The step is the whole condition, and that is what bounds it
+ * Measuring the database is what changed the answer. Those rows were not
+ * waiting for Business Central, they were **stuck** — one active approver in
+ * `AccReimburseApprover`, who had signed both `MANAGER` and `ACCOUNT`
+ * himself, and `canActFinalStep` refuses the same person at the final step.
+ * Calling that Complete would have told the requester their money was settled
+ * on a claim that could never be approved at all, and stopped them chasing it.
  *
- * `ACCOUNT_FINAL` is a `ReimburseStepCode` and no other form writes it, so
- * there is no `FormCode` branch here and none is needed — AP-1 and AP-17 end
- * their accounting step at `ACCOUNT` and go straight to `Approved`/`Completed`,
- * and AP-2 and AP-3 use their own vocabulary entirely.
- *
- * ## ⚠ What this is NOT, and the one thing to check before copying it
- *
- * **In the code as it stands, `ACCOUNT_FINAL` is a second HUMAN approval, not
- * an ERP wait.** `STATE_AFTER_APPROVE.ACCOUNT_FINAL` is
- * `{ status: "Approved", nextStep: null }` and `canActFinalStep` requires a
- * different person from the one who took `ACCOUNT` — the two-person rule. The
- * spec's §6 stage 4 *intends* this step to move after the Business Central
- * send, which is the arrangement the rule above describes; it has not landed,
- * because AP-4 has no sender yet.
- *
- * So this is a **display** decision taken with that stated, not a claim about
- * the workflow. It is safe in exactly one respect, and it is worth knowing why:
- * **it only ever reaches คำขอของฉัน.** งานของฉัน labels rows from
- * `getMyWorkStatusBucket`, never from here, so the second accountant still sees
- * the claim as pending in the queue they must act on. If that ever stops being
- * true, this rule starts telling an approver their outstanding work is done.
+ * The step was retired instead (`STATE_AFTER_APPROVE`), so accounting's
+ * approval now lands on `Approved` and reaches Complete through the ordinary
+ * mapping. **A display rule was the wrong shape for a workflow problem**, which
+ * is the thing to remember if a status ever again looks wrong on one form: ask
+ * what the row is actually waiting for before renaming what it says.
  */
-const AWAITING_ERP_STEP = "ACCOUNT_FINAL";
-
-export function statusDisplay(
-  raw: string | null | undefined,
-  currentStepCode?: string | null,
-): MyRequestStatusDisplay {
+export function statusDisplay(raw: string | null | undefined): MyRequestStatusDisplay {
   const key = (raw ?? "").trim();
   if (!key) return { label: BLANK, tone: "other" };
-  if (key === "ManagerApproved" && (currentStepCode ?? "").trim() === AWAITING_ERP_STEP) {
-    return STATUS_DISPLAY.Approved;
-  }
   return STATUS_DISPLAY[key] ?? { label: key, tone: "other" };
 }
 
@@ -432,7 +413,7 @@ export function cellText(row: ReportRow, key: MyRequestColKey, nowIso: string): 
     case "requesterDepartment":
       return row.requesterDepartmentName ?? BLANK;
     case "status":
-      return statusDisplay(row.status, row.currentStepCode).label;
+      return statusDisplay(row.status).label;
     case "pendingBy": {
       /* **A name if there is one, otherwise the department — and never both**
          (the user's rule, 2026-09-24: "ให้ใส่เป็นชื่อ ถ้าไม่มีใส่แค่แผนก").

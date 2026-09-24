@@ -76,10 +76,43 @@ test("the two accounting steps share ManagerApproved, so a claim must name the s
   assert.notEqual(STEP_ORDER.ACCOUNT, STEP_ORDER.ACCOUNT_FINAL);
 });
 
-test("approving each step lands where the spec says", () => {
+test("the ACCOUNTING step is TERMINAL — ACCOUNT_FINAL is retired", () => {
+  /* Changed 2026-09-24, and it is a divergence from the spec's three-step §3.2.1
+     rather than an implementation of it. The measured reason: UAT held one
+     active `AccReimburseApprover`, who had signed both MANAGER and ACCOUNT
+     himself, so `canActFinalStep` refused the only candidate and both live
+     claims were stuck at ACCOUNT_FINAL for good — the exact stall the settings
+     page's amber banner existed to predict.
+
+     AP-1 has always worked this way: accounting approves once and the claim is
+     finished. */
   assert.deepEqual(STATE_AFTER_APPROVE.MANAGER, { status: "ManagerApproved", nextStep: "ACCOUNT" });
-  assert.deepEqual(STATE_AFTER_APPROVE.ACCOUNT, { status: "ManagerApproved", nextStep: "ACCOUNT_FINAL" });
+  assert.deepEqual(STATE_AFTER_APPROVE.ACCOUNT, { status: "Approved", nextStep: null });
+});
+
+test("ACCOUNT_FINAL still RESOLVES, because retired is not deleted", () => {
+  /* The same treatment AP-2 gives `HEAD_DEPT`: nothing creates a row at this
+     step any more, but every reader still works, so a row already sitting there
+     stays actionable instead of becoming a request nobody can move — which is
+     the trap this change is getting AP-4 out of.
+
+     `isReimburseStepCode` and `CK_AccApproval_Step` keep admitting it for the
+     same reason. Do not delete the vocabulary to tidy up. */
   assert.deepEqual(STATE_AFTER_APPROVE.ACCOUNT_FINAL, { status: "Approved", nextStep: null });
+  assert.equal(isReimburseStepCode("ACCOUNT_FINAL"), true);
+  assert.equal(isAccountStep("ACCOUNT_FINAL"), true);
+});
+
+test("no step leads to ACCOUNT_FINAL any more", () => {
+  /* The single assertion that says the retirement actually happened. A future
+     edit restoring `nextStep: "ACCOUNT_FINAL"` on the ACCOUNT step would
+     re-create the stall, and it would look like a correction to the spec. */
+  const reachable = Object.values(STATE_AFTER_APPROVE).map((s) => s.nextStep);
+  assert.equal(
+    reachable.indexOf("ACCOUNT_FINAL"),
+    -1,
+    "something opens ACCOUNT_FINAL again — see STATE_AFTER_APPROVE's docblock",
+  );
 });
 
 test("the step codes are the three AP-4 uses and nothing else", () => {

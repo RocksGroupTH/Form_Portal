@@ -153,18 +153,28 @@ const STEP_LABEL = REIMBURSE_STEP_LABEL;
 const STEP_SEQUENCE: readonly ReimburseStepCode[] = REIMBURSE_STEP_CODES;
 
 /**
- * What approving is called at each step. The accounting check is not simply "an
- * approval" — it is where the payment date is fixed, and the button says so.
+ * What approving is called at each step.
+ *
+ * **The accounting step FINISHES the claim as of 2026-09-24**, when
+ * `ACCOUNT_FINAL` was retired (see `STATE_AFTER_APPROVE`), so its label had to
+ * change with it: it used to read "ตรวจสอบและกำหนดวันที่จ่าย" against a done
+ * state of "บันทึกการตรวจสอบแล้ว", which described a check that something else
+ * would follow. Nothing follows it now, and a button on a money path has to say
+ * that the click is the last one — the payment date is still fixed here, which
+ * is why it is named beside the approval rather than dropped.
+ *
+ * `ACCOUNT_FINAL` keeps its labels: retired is not deleted, and a legacy claim
+ * already parked there still renders and is still actionable.
  */
 const APPROVE_LABEL: Record<ReimburseStepCode, string> = {
   MANAGER: "อนุมัติ",
-  ACCOUNT: "ตรวจสอบและกำหนดวันที่จ่าย",
+  ACCOUNT: "อนุมัติและกำหนดวันที่จ่าย",
   ACCOUNT_FINAL: "อนุมัติขั้นสุดท้าย",
 };
 
 const APPROVE_DONE_LABEL: Record<ReimburseStepCode, string> = {
   MANAGER: "อนุมัติแล้ว",
-  ACCOUNT: "บันทึกการตรวจสอบแล้ว",
+  ACCOUNT: "อนุมัติแล้ว",
   ACCOUNT_FINAL: "อนุมัติขั้นสุดท้ายแล้ว",
 };
 

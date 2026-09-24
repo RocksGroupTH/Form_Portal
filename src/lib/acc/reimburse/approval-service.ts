@@ -637,16 +637,22 @@ export async function approveReimburseAccountCheck(
     // is not asked before this point.
     await requireApproverScopeFor(actor, await claimedBrandCode(tx, requestId));
     await closeApprovalRow(tx, requestId, "ACCOUNT", "Approved", staffId, actor.email, null, true);
-    await openApprovalRow(tx, requestId, "ACCOUNT_FINAL");
+    /* No `openApprovalRow(… "ACCOUNT_FINAL")` any more: this step is terminal
+       since 2026-09-24 — see `STATE_AFTER_APPROVE`'s docblock for the measured
+       reason. Opening a row for a step nothing advances is precisely how the
+       two claims that prompted the change came to be stuck. */
     await logActivity(tx, requestId, actor.userId, "account_checked", chosen);
   });
 
   await afterCommit(requestId, async (updated) => {
-    // Everyone in the pool except the person who just checked — they are the one
-    // person the two-person rule will refuse at the final step.
-    for (const email of await approverEmails(staffId)) {
-      await notifyQuietly(updated, email, "AccountChecked", "รออนุมัติขั้นสุดท้าย (บัญชี)");
-    }
+    /* The claim is finished here now, so this mail is the APPROVED one — the
+       requester and their manager, the pair `approveReimburseFinal` notifies.
+       It used to tell the approver pool "รออนุมัติขั้นสุดท้าย (บัญชี)", which
+       named a step that no longer follows; leaving it would have asked people
+       to do something nothing was waiting for, and told the requester nothing
+       at all. */
+    await notifyQuietly(updated, updated.requesterEmail, "Approved", "อนุมัติแล้ว");
+    await notifyQuietly(updated, updated.managerEmail, "Approved", "อนุมัติแล้ว");
   });
 }
 
