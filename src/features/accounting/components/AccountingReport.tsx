@@ -810,6 +810,16 @@ export function AccountingReport() {
                 <div className="min-w-0 lg:border-l lg:pl-4" style={{ borderColor: "var(--border-light)" }}>
                   <FilterDateRangePicker
                     label="ช่วงวันที่หลัก"
+                    /* One picker, three bases — and only one of them can be
+                       in the future. A payment round is set ahead of time, so
+                       refusing tomorrow made this control unable to select
+                       most of what it filters on; `allowFuture`'s own docblock
+                       named this as its reason for existing and nothing had
+                       ever passed it. Left off for the other two: AP-1 refuses
+                       a future travel date outright, and nothing is submitted
+                       in the future either, so offering tomorrow there would
+                       only offer a range that matches nothing. */
+                    allowFuture={filters.dateBasis === "payment"}
                     from={filters.periodFrom}
                     to={filters.periodTo}
                     onChange={(from, to) => patchFilters({ periodFrom: from, periodTo: to })}

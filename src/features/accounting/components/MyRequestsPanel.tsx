@@ -780,6 +780,13 @@ function RequestRowList({
             that have one, which is what `inDateRange` already answers. */}
         <FilterDateRangePicker
           label="วันที่จ่าย"
+          /* **The one filter here whose dates are mostly in the future.**
+             `FilterDateRangePicker` refuses tomorrow by default, which is
+             right for วันที่ส่ง beside it — nothing is submitted in the
+             future — and wrong here: accounting sets `PaymentDate` to a round
+             that has not happened yet, so the default left this control
+             unable to select the very rows it exists to find. */
+          allowFuture
           from={payFrom}
           to={payTo}
           onChange={(from, to) => {
