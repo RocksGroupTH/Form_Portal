@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, Database, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Loader2, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/Dialog";
 // The typed-confirmation rule lives in its own import-free module so it can be
@@ -15,6 +15,7 @@ import {
   needsTypedConfirm,
   type SwitchField,
 } from "@/features/settings/form-environment-confirm";
+import { FORM_NAME_MAX, parseFormNames } from "@/lib/form-environment/form-name-input";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -175,10 +176,49 @@ export function FormEnvironmentSettings() {
     null,
   );
   const [confirmText, setConfirmText] = useState("");
+  /**
+   * The form being renamed, with its two names held while they are edited.
+   *
+   * A dialog rather than an inline field: there are two names and a Save, and
+   * a table cell that grows two inputs on click reflows every row beside it.
+   * The draft lives here rather than on the row, so closing without saving
+   * cannot leave the grid showing something the database does not have.
+   */
+  const [renaming, setRenaming] = useState<{ row: FormEnvironmentRow; th: string; en: string } | null>(
+    null,
+  );
 
   const rows = data?.ok ? data.data ?? [] : [];
   const loadError = data && !data.ok ? data.error ?? "โหลดข้อมูลไม่สำเร็จ" : null;
   const coverage = coverageRes?.ok ? coverageRes.data : null;
+
+  /** Rename one form. Validated here first, so a refusal costs no round trip. */
+  const saveNames = async () => {
+    if (!renaming) return;
+    const parsed = parseFormNames({ nameTh: renaming.th, nameEn: renaming.en });
+    if (!parsed.ok) {
+      toast.error(parsed.error);
+      return;
+    }
+    const code = renaming.row.formCode;
+    setSaving(code);
+    try {
+      const res = await fetch("/api/settings/form-names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ formCode: code, nameTh: parsed.nameTh, nameEn: parsed.nameEn }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error ?? "บันทึกไม่สำเร็จ");
+      toast.success(`${code} · เปลี่ยนชื่อฟอร์มแล้ว`);
+      setRenaming(null);
+      await mutate();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const setFlag = async (formCode: string, field: SwitchField, next: boolean) => {
     setSaving(formCode);
@@ -252,7 +292,6 @@ export function FormEnvironmentSettings() {
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Production</th>
                   <th className="text-right px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>UAT</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Switches</th>
-                  <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>เจ้าของฟอร์ม</th>
                   <th className="text-left px-4 py-2 font-semibold" style={{ color: "var(--text-muted)" }}>Last changed</th>
                 </tr>
               </thead>
@@ -284,6 +323,22 @@ export function FormEnvironmentSettings() {
                             </p>
                           )}
                         </div>
+                        {/* The names live in AccFormMaster and were editable only
+                            with SQL until 2026-09-24. Opening the dialog seeds it
+                            from the row, so cancelling changes nothing. */}
+                        <button
+                          type="button"
+                          aria-label={`แก้ไขชื่อฟอร์ม ${row.formCode}`}
+                          title="แก้ไขชื่อฟอร์ม"
+                          disabled={saving === row.formCode}
+                          onClick={() =>
+                            setRenaming({ row, th: row.formNameTh ?? "", en: row.formNameEn ?? "" })
+                          }
+                          className="border-none bg-transparent p-1 cursor-pointer shrink-0 rounded"
+                          style={{ color: "var(--text-faint)" }}
+                        >
+                          <Pencil size={12} />
+                        </button>
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums" style={{ color: "var(--text-muted)" }}>
@@ -484,6 +539,87 @@ export function FormEnvironmentSettings() {
           </div>
         )}
       </Dialog>
+
+      {renaming && (
+        <div className="app-overlay fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="rounded-2xl w-[440px] max-w-full overflow-hidden"
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border-card)",
+              boxShadow: "var(--shadow-modal)",
+            }}
+          >
+            <div className="px-5 py-4 flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[14px] font-bold" style={{ color: "var(--text-heading)" }}>
+                  แก้ไขชื่อฟอร์ม {renaming.row.formCode}
+                </h3>
+                <p className="text-[11.5px] mt-1" style={{ color: "var(--text-muted)" }}>
+                  ชื่อนี้แสดงในหน้า My Request / My Work รายงาน และตัวกรองฟอร์ม
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="ปิด"
+                onClick={() => setRenaming(null)}
+                className="border-none bg-transparent p-0 cursor-pointer shrink-0"
+                style={{ color: "var(--text-faint)" }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 pb-1 flex flex-col gap-3">
+              {([
+                ["ชื่อฟอร์ม (ไทย)", "th"],
+                ["ชื่อฟอร์ม (อังกฤษ)", "en"],
+              ] as const).map(([label, key]) => (
+                <label key={key} className="flex flex-col gap-1">
+                  <span className="text-[11.5px] font-semibold" style={{ color: "var(--text-secondary)" }}>
+                    {label}
+                  </span>
+                  <input
+                    value={renaming[key]}
+                    maxLength={FORM_NAME_MAX}
+                    onChange={(e) => setRenaming({ ...renaming, [key]: e.target.value })}
+                    className="px-3 py-2 rounded-lg text-[13px] outline-none"
+                    style={{
+                      background: "var(--bg-card-alt)",
+                      border: "1px solid var(--border-card)",
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div
+              className="flex gap-2 px-5 py-3 mt-3"
+              style={{ borderTop: "1px solid var(--border-card)", background: "var(--bg-card-alt)" }}
+            >
+              <button
+                type="button"
+                onClick={() => setRenaming(null)}
+                className="px-3 py-2 rounded-lg text-[12px] font-medium cursor-pointer"
+                style={{ background: "var(--bg-badge)", color: "var(--text-secondary)", border: "none" }}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={saving === renaming.row.formCode}
+                onClick={() => void saveNames()}
+                className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold cursor-pointer border-none text-white"
+                style={{ background: "var(--color-action)" }}
+              >
+                {saving === renaming.row.formCode && <Loader2 size={13} className="animate-spin" />}
+                บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

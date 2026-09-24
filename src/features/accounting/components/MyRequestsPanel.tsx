@@ -40,6 +40,7 @@ import {
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
+import { compareFormCodes } from "@/lib/form-code-order";
 import { StatIcon, type StatIconName } from "@/components/ui/StatIcon";
 import {
   defaultStatusFilter,
@@ -594,7 +595,15 @@ function RequestRowList({
     const fromCards = REQUEST_CARDS.filter((c) => !c.soon && c.badge && isFormAvailable(c.badge))
       .map((c) => c.badge as string);
     const fromRows = rows.map((r) => r.formCode).filter(Boolean);
-    return Array.from(new Set([...fromCards, ...fromRows])).sort();
+    /* `compareFormCodes`, not `.sort()` (the user, 2026-09-24: "ถึงจะไม่มีเลข
+       ก็ต้องเรียงข้อมูลตามลำดับ"). A plain string sort orders these AP-1 ·
+       AP-17 · AP-2 · AP-3 · AP-4, comparing "17" against "2" one character at
+       a time — the same defect Home and the Request hub were fixed for on
+       2026-08-22, which is why the comparator already exists. The list shows
+       no code since the label became ชื่อไทย (English), so the order is now
+       the ONLY thing carrying it, which is what made a wrong one visible
+       here and not before. */
+    return Array.from(new Set([...fromCards, ...fromRows])).sort(compareFormCodes);
   }, [rows, isFormAvailable]);
 
   /* From the rows alone, unlike `formOptions`, which seeds itself from the
