@@ -5,7 +5,6 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
-import { listClrApprovers, roleForStep } from "@/lib/clr/clear-advance-approver-service";
 import { glMissingMessage, linesMissingGl } from "@/lib/clr/clear-advance-line-validation";
 import { resolveClrPaymentDate } from "@/lib/clr/clear-advance-payment-date";
 import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
@@ -171,15 +170,10 @@ export async function approveCurrentStep(
   if (!req) return;
   const no = req.requestNo ?? String(requestId);
 
-  if (nextStep) {
-    const role = roleForStep(nextStep);
-    const subject = `เคลียร์เงินทดรองจ่าย ${no} รออนุมัติ (${CLR_STEP_LABEL_TH[nextStep]})`;
-    const body = `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> รอการอนุมัติขั้น ${CLR_STEP_LABEL_TH[nextStep]}</p>` + link(requestId);
-    if (role) {
-      const approvers = await listClrApprovers(role);
-      for (const a of approvers) await notify(requestId, subject, body, a.email, "StepAdvanced");
-    }
-  } else {
+  /* Nobody is mailed when a step advances (the user, 2026-09-24) — the
+     approver roster's own queue page is where that work is found. Only the
+     final approval below still writes, and it writes to the requester. */
+  if (!nextStep) {
     const subject = `เคลียร์เงินทดรองจ่าย ${no} อนุมัติครบแล้ว`;
     const body =
       `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ได้รับการอนุมัติครบทุกขั้นแล้ว</p>` +

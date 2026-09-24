@@ -8,7 +8,6 @@ import { getRequest } from "@/lib/adv/advance-request-service";
 import { listApproverEmailsByRole } from "@/lib/adv/advance-approver-service";
 import {
   needsPayment,
-  stepApproverRole,
   STEP_LABEL,
   type StepType,
 } from "@/lib/adv/approval-steps";
@@ -35,37 +34,6 @@ export async function getCurrentApprovalStep(requestId: number): Promise<Current
   if (!r.recordset.length) return null;
   const x = r.recordset[0] as Record<string, unknown>;
   return { id: x.Id as number, stepType: x.StepType as StepType, stepOrder: x.StepOrder as number };
-}
-
-/** Notify the approvers who can act on a given step type. */
-async function notifyStep(requestId: number, stepType: StepType, requestNo: string) {
-  const role = stepApproverRole(stepType);
-  let emails: string[] = [];
-  if (role) {
-    emails = await listApproverEmailsByRole(role);
-  } else {
-    // HEAD_DEPT — the assigned manager on the row.
-    const pool = await getAccPool();
-    const r = await pool.request().input("rid", sql.Int, requestId)
-      .query(`SELECT AssignedEmail FROM [dbo].[AccAdvanceApproval]
-              WHERE RequestId=@rid AND StepType='HEAD_DEPT' AND Status='Pending'`);
-    emails = (r.recordset as { AssignedEmail: string | null }[])
-      .map((x) => x.AssignedEmail).filter((e): e is string => !!e);
-  }
-  const req = await getRequest(requestId);
-  const { subject, html: body } = buildAdvanceEmail("StepPending", {
-    id: requestId,
-    requestNo,
-    requesterFullName: req?.requesterFullName,
-    brandCode: req?.brandCode,
-    payeeName: req?.advance?.payeeName,
-    totalAmount: req?.totalAmount,
-    paymentDate: req?.paymentDate,
-    stepLabel: STEP_LABEL[stepType],
-  });
-  for (const toEmail of emails) {
-    await queueEmail({ requestId, toEmail, subject, bodyHtml: body, triggerType: "ManagerApproved" });
-  }
 }
 
 /** Approve the current step. Advances to the next, or finalises the request. */
@@ -136,7 +104,11 @@ export async function approveCurrentStep(
   const req = await getRequest(requestId);
   const no = req?.requestNo ?? `#${requestId}`;
   if (nextType) {
-    await notifyStep(requestId, nextType, no);
+    /* Nobody is mailed when a step advances (the user, 2026-09-24). AP-2's
+       chain is an amount matrix of up to three approval levels, so this was
+       the noisiest of the five — a message to a whole role's roster at every
+       hop. Each of those rosters has its own queue page, which is where that
+       work is found now. */
   } else if (req?.requesterEmail) {
     const { subject, html: bodyHtml } = buildAdvanceEmail("Approved", {
       id: requestId,
