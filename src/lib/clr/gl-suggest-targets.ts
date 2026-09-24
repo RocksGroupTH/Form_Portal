@@ -40,7 +40,9 @@ export type GlSuggestPlan = {
   noBranch: number[];
 };
 
-type PlanLine = {
+/** The little of a line this rule reads — exported so the run that consumes
+ *  the plan (`gl-suggest-run.ts`) describes its input with the same type. */
+export type PlanLine = {
   glAccountNo: string | null;
   amountBeforeVat: number | null;
   description?: string | null;
