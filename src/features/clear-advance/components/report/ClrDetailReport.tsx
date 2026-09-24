@@ -214,9 +214,22 @@ export function ClrDetailReport() {
   }, [fetchRows]);
 
   const handleExport = useCallback(() => {
-    const qs = queryString();
+    // The file's columns follow the reader's on-screen order (report-export-
+    // order.ts maps these screen keys to the file's own column set). We send
+    // the full `order` — not `visibleColumns` — because a column the reader
+    // hid is still written to the file; only its position, not its presence,
+    // is the reader's to decide here.
+    const qs = buildQuery({
+      brand: filters.brand,
+      requestNo: filters.requestNo,
+      advanceNo: filters.advanceNo,
+      staffId: filters.staffId,
+      from: filters.from,
+      to: filters.to,
+      cols: order.join(","),
+    });
     window.open(`/api/request/clear-advance/report/detail/export?${qs}`, "_blank");
-  }, [queryString]);
+  }, [filters, order]);
 
   const brandOptions = useMemo<SelectOption[]>(
     () => brands.map((b) => ({ value: b.brandCode, label: b.brandName || b.brandCode })),

@@ -429,6 +429,12 @@ export function ClrControlReport() {
     // understands one exact value per filter — two or more picks on a
     // stacked axis are dropped rather than forwarded, so the file comes back
     // as a (visibly broader) superset instead of a silently empty one.
+    //
+    // The file's columns follow the reader's on-screen order (report-export-
+    // order.ts maps these screen keys to the file's own column set). We send
+    // the full `order` — not `visibleColumns` — because a column the reader
+    // hid is still written to the file; only its position, not its presence,
+    // is the reader's to decide here.
     const qs = buildQuery({
       brand: singleStackedValue(filters.brand),
       status: singleStackedValue(filters.status),
@@ -436,9 +442,10 @@ export function ClrControlReport() {
       advanceNo: filters.advanceNo,
       from: filters.from,
       to: filters.to,
+      cols: order.join(","),
     });
     window.open(`/api/request/clear-advance/report/export?${qs}`, "_blank");
-  }, [filters]);
+  }, [filters, order]);
 
   const brandOptions = useMemo<SelectOption[]>(
     () => brands.map((b) => ({ value: b.brandCode, label: b.brandName || b.brandCode })),
