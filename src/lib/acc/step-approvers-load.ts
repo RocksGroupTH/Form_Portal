@@ -63,7 +63,7 @@ function displayName(r: RosterRow): string {
 async function claimBrandsByTarget(
   pool: ConnectionPool,
   formCode: string,
-): Promise<{ byTarget: Map<string, string[]>; byClaim: Map<string, string> }> {
+): Promise<Map<string, string[]>> {
   /* The bind name is `formCode`, not `form`: `perFormPredicate` renders
      `@formCode` and a mismatch is not a type error, it is a runtime
      "Must declare the scalar variable" — which is how the first run of this
@@ -81,10 +81,6 @@ async function claimBrandsByTarget(
      WHERE fb.FormCode = @formCode`);
 
   const byTarget = new Map<string, string[]>();
-  /* The same rows read the other way, so the card can say WHY somebody scoped
-     to another brand is listed. Kept beside the expansion rather than fetched
-     again: two reads of one mapping is two chances to disagree about it. */
-  const byClaim = new Map<string, string>();
   for (const row of r.recordset) {
     const claim = (row.BrandCode ?? "").trim().toUpperCase();
     if (!claim) continue;
@@ -92,9 +88,8 @@ async function claimBrandsByTarget(
     const list = byTarget.get(target) ?? [];
     list.push(claim);
     byTarget.set(target, list);
-    byClaim.set(claim, target);
   }
-  return { byTarget, byClaim };
+  return byTarget;
 }
 
 /** `ApproverId → codes`, for one scope table. Absent id = no rows at all. */
@@ -144,34 +139,26 @@ async function roster(pool: ConnectionPool, table: string, where: string): Promi
  * form's. Same reasoning `sweepStaleRequests` applies to its two pools.
  */
 export async function loadStepApprovers(pool: ConnectionPool): Promise<StepApproverMap> {
-  const out: Record<string, { steps: Record<string, StepApprover[]>; postsInto: Record<string, string> }> = {};
-  const form_ = (form: string) => (out[form] ??= { steps: {}, postsInto: {} });
+  const out: Record<string, Record<string, StepApprover[]>> = {};
   const put = (form: string, step: string, people: StepApprover[]) => {
-    form_(form).steps[step] = people;
-  };
-  /* Only where the scope is target-based — see `StepApproverForm.postsInto`. */
-  const putPostsInto = (form: string, byClaim: Map<string, string>) => {
-    for (const [claim, target] of Array.from(byClaim.entries())) {
-      if (claim !== target) form_(form).postsInto[claim] = target;
-    }
+    (out[form] ??= {})[step] = people;
   };
 
   const settled = await Promise.allSettled([
     /* AP-1 — one accounting pool, scoped by ERP target. Empty is empty since
        2026-09-24, the same as AP-4: see `resolveApproverInterfaceAccess`. */
     (async () => {
-      const [rows, scope, map] = await Promise.all([
+      const [rows, scope, byTarget] = await Promise.all([
         roster(pool, "AccApprover", "IsActive = 1"),
         scopeByApprover(pool, "AccApproverInterfaceBrand", "InterfaceBrandCode"),
         claimBrandsByTarget(pool, "AP-1"),
       ]);
-      putPostsInto("AP-1", map.byClaim);
       put(
         "AP-1",
         "ACCOUNT",
         rows.map((r) => ({
           name: displayName(r),
-          brands: expand(scope.get(r.Id) ?? [], map.byTarget),
+          brands: expand(scope.get(r.Id) ?? [], byTarget),
         })),
       );
     })(),
@@ -196,15 +183,14 @@ export async function loadStepApprovers(pool: ConnectionPool): Promise<StepAppro
     /* AP-4 — zero ticks is zero brands, the opposite of AP-1's fail-open, and
        the reason `[]` had to stay distinguishable from `null` all the way up. */
     (async () => {
-      const [rows, scope, map] = await Promise.all([
+      const [rows, scope, byTarget] = await Promise.all([
         roster(pool, "AccReimburseApprover", "IsActive = 1"),
         scopeByApprover(pool, "AccReimburseApproverBrand", "InterfaceBrandCode"),
         claimBrandsByTarget(pool, "AP-4"),
       ]);
-      putPostsInto("AP-4", map.byClaim);
       const people = rows.map((r) => ({
         name: displayName(r),
-        brands: expand(scope.get(r.Id) ?? [], map.byTarget),
+        brands: expand(scope.get(r.Id) ?? [], byTarget),
       }));
       put("AP-4", "ACCOUNT", people);
       put("AP-4", "ACCOUNT_FINAL", people);

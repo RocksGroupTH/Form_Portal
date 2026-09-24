@@ -23,7 +23,7 @@ import {
   type MyRequestKind,
   type MyRequestStatusDisplay,
 } from "@/lib/acc/my-request-view";
-import { approverNamesFor, postsIntoFor } from "@/lib/acc/step-approvers";
+import { approverNamesFor } from "@/lib/acc/step-approvers";
 import { useStepApprovers } from "@/lib/hooks/useStepApprovers";
 import { ApproverHoverCard } from "@/features/accounting/components/ApproverHoverCard";
 import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
@@ -391,25 +391,17 @@ export function MyRequestsTable({
                          the row already names, so it stays plain text with the
                          address on its `title` as it always had. */
                       (() => {
-                        const q = {
+                        const names = approverNamesFor(stepApprovers, {
                           environment: row.environment,
                           formCode: row.formCode,
                           brandCode: row.brandCode,
-                        };
-                        const names = approverNamesFor(stepApprovers, {
-                          ...q,
                           stepCode: row.pendingStepCode ?? row.currentStepCode ?? null,
                         });
                         const text = cellText(row, col.key, nowIso);
                         return names === null ? (
                           text
                         ) : (
-                          <ApproverHoverCard
-                            text={text}
-                            brandCode={row.brandCode}
-                            postsInto={postsIntoFor(stepApprovers, q)}
-                            names={names}
-                          />
+                          <ApproverHoverCard text={text} brandCode={row.brandCode} names={names} />
                         );
                       })()
                     ) : (
@@ -429,9 +421,13 @@ export function MyRequestsTable({
 /**
  * The tooltip, where a cell had to drop something to stay scannable.
  *
- * รออนุมัติโดย shows a name or a department and never an email address — so
- * the address, which is the only thing naming the person when HR has no row
- * for them, lives here rather than being lost.
+ * **รออนุมัติโดย has none since 2026-09-24** (the user: "เมื่อชี้แล้วเอากล่อง
+ * ดำๆ ออกเลยที่แสดง mail"). It carried the assignee's address for a manager
+ * step, which the browser draws as its own black box — beside the styled card
+ * the pool steps now open, two different things appeared for one column
+ * depending on the row. What that costs is small and real: the address was the
+ * only thing naming an approver whose HR row is missing, and such a row now
+ * shows the bare department.
  */
 function cellTitle(
   row: ReportRow,
@@ -439,14 +435,6 @@ function cellTitle(
   nowIso: string,
 ): string | undefined {
   if (key === "workDetail") return cellText(row, key, nowIso);
-  if (key === "pendingBy") {
-    /* The POOL case is not here any more: it is `ApproverHoverCard`, because
-       one name per line is the thing a `title` string cannot do (the user,
-       2026-09-24) and AP-17's roster is eight people. What is left is the
-       MANAGER case, which keeps what this tooltip always carried — the
-       assignee's address, the only thing naming them when HR has no row. */
-    return row.pendingApproverEmail?.trim() || undefined;
-  }
   return undefined;
 }
 

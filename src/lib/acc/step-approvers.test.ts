@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { approverNamesFor, postsIntoFor, type StepApproverPayload } from "./step-approvers";
+import { approverNamesFor, type StepApproverPayload } from "./step-approvers";
 
 /**
  * Who the `รออนุมัติโดย` tooltip names.
@@ -13,24 +13,24 @@ import { approverNamesFor, postsIntoFor, type StepApproverPayload } from "./step
 const PAYLOAD: StepApproverPayload = {
   Production: {
     "AP-1": {
-      steps: {
-        ACCOUNT: [
-          { name: "Plume Pasapong", brands: null }, // unrestricted
-          /* As the LOADER emits it: a tick on the PCTH target is expanded
-             into every claim brand that posts into PCTH, which is why PCMY and
-             ROCKS are here beside it. The expansion is done server-side so
-             this module only ever compares claim brands. */
-          { name: "Kan Kanjanaporn", brands: ["PCTH", "PCMY", "ROCKS"] },
-          { name: "Sa Nipaporn", brands: ["KSI"] },
-        ],
-      },
-      // PCMY's claims post into PCTH's books — measured on the live map.
-      postsInto: { PCMY: "PCTH", ROCKS: "PCTH" },
+      ACCOUNT: [
+        /* `null` is AP-17's shape, not AP-1's any more — AP-1 stopped meaning
+           "every brand" by an empty scope on 2026-09-24. Kept in the fixture
+           because the rule this module applies is still per-approver and one
+           of the five rosters does mean it. */
+        { name: "Plume Pasapong", brands: null },
+        /* As the LOADER emits it: a tick on the PCTH target is expanded into
+           every claim brand that posts into PCTH, which is why PCMY and ROCKS
+           are here beside it. The expansion is server-side so this module only
+           ever compares claim brands. */
+        { name: "Kan Kanjanaporn", brands: ["PCTH", "PCMY", "ROCKS"] },
+        { name: "Sa Nipaporn", brands: ["KSI"] },
+      ],
     },
-    "AP-4": { steps: { ACCOUNT: [{ name: "Gail Salin", brands: [] }] }, postsInto: {} },
+    "AP-4": { ACCOUNT: [{ name: "Gail Salin", brands: [] }] },
   },
   UAT: {
-    "AP-1": { steps: { ACCOUNT: [{ name: "Only In UAT", brands: null }] }, postsInto: {} },
+    "AP-1": { ACCOUNT: [{ name: "Only In UAT", brands: null }] },
   },
 };
 
@@ -134,35 +134,4 @@ test("what comes back is names, never an address — the user chose names only",
     brandCode: "PCTH",
   });
   for (const n of names ?? []) assert.doesNotMatch(n, /@/);
-});
-
-test("a claim posting into another company's books says so", () => {
-  /* The report that prompted this: a PCMY claim listed seven people scoped to
-     PCTH and read as "nobody ticked PCMY, why are they here?". They genuinely
-     can act — `canActOnClaimBrand` maps the claim to its ERP target before
-     comparing — so the card explains instead of hiding them. */
-  const q = { environment: "Production", formCode: "AP-1", brandCode: "PCMY" };
-  assert.equal(postsIntoFor(PAYLOAD, q), "PCTH");
-  assert.deepEqual(approverNamesFor(PAYLOAD, { ...q, stepCode: "ACCOUNT" }), [
-    "Plume Pasapong",
-    "Kan Kanjanaporn",
-  ]);
-});
-
-test("a brand posting into its own books says nothing — that is every ordinary row", () => {
-  for (const brandCode of ["PCTH", "KSI", "UNO", "", null, undefined]) {
-    assert.equal(
-      postsIntoFor(PAYLOAD, { environment: "Production", formCode: "AP-1", brandCode }),
-      null,
-      `${brandCode} should not claim to post elsewhere`,
-    );
-  }
-});
-
-test("forms that do not scope on targets carry no posting note at all", () => {
-  /* AP-17 scopes on claim brands and AP-2/AP-3 do not scope by brand, so a
-     "posts into" line there would explain a rule those forms never apply. */
-  assert.equal(postsIntoFor(PAYLOAD, { environment: "Production", formCode: "AP-4", brandCode: "PCMY" }), null);
-  assert.equal(postsIntoFor(PAYLOAD, { environment: "Production", formCode: "AP-17", brandCode: "PCMY" }), null);
-  assert.equal(postsIntoFor(undefined, { formCode: "AP-1", brandCode: "PCMY" }), null);
 });
