@@ -22,6 +22,22 @@ export interface FormAccess {
    * `isComingSoon` in `./pick-environment` for why each exclusion is there.
    */
   comingSoon: boolean;
+  /**
+   * Who to contact about this form, for the line at the foot of it.
+   *
+   * It rides on this payload rather than on a route of its own because
+   * every form page already fetches this one — a second endpoint would be
+   * a second gate and a second request to answer a contact line. It is
+   * **never empty-vs-absent**: a form with no owner carries `[]`, so a
+   * client can tell "nobody is named" from a payload that failed to load.
+   */
+  owners: FormOwnerRef[];
+}
+
+/** One named owner. Mirrors `FormOwner` in `./form-owner`, minus the id. */
+export interface FormOwnerRef {
+  email: string;
+  displayName: string | null;
 }
 
 /**
