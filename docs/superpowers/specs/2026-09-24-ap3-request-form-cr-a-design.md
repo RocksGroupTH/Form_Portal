@@ -108,13 +108,26 @@ the `verifyReceipts` call. Not a second upload function, and not a filter applie
 one function, one extra argument, so the two paths cannot drift apart. **The file is still
 uploaded, stored and listed exactly as before** — only the read is skipped.
 
-### The consequence worth writing down
+### The consequences worth writing down
 
-A receipt attached this way produces **no row**. The requester adds one with เพิ่มแถว and
-types it in. Because the AI G/L suggestion happens during that same read
-(`ClearAdvanceForm.tsx:1068` calls `/api/request/clear-advance/suggest-gl`), a hand-added
-row also arrives at the account step **with no G/L account** — and there is no control
-anywhere that asks for a suggestion later.
+Skipping the read is one line, but that one call is the root of a large tree. Everything up to
+it is identical on both paths — the 4MB check, the draft auto-create, the POST, the stored
+file, the thumbnail in the list, the แนบไฟล์แล้ว toast. What does not happen, enumerated during the
+spec review of the implementation rather than guessed at here:
+
+| Skipped | What the requester or accounting sees |
+| --- | --- |
+| `acceptOcrRows` | **No expense row.** The requester adds one with เพิ่มแถว and types it. |
+| `/suggest-gl` | **No G/L account** on that row — see below. |
+| `suggestBranch` | No `branchCode`, which is also why the G/L could not be suggested even if the read had run. |
+| `/vat-registrant` and the `vendorByTin` fallback | No Revenue-Department check and no payee-name correction. Recoverable: the RD button on the lines grid still works once a 13-digit tax id is typed. |
+| the read-notes dialog | No warning about skipped pages, a truncated PDF, or a file that produced nothing. |
+| the scanning overlay | Nothing appears; the upload finishes when the POST returns. **This one is the point**, not a loss. |
+| kind-based re-routing | Normally the model's `kind`, not the box, decides where values land — a transfer slip dropped in the receipt box fills the refund fields. That cross-routing cannot happen on the raw path. |
+
+And one asymmetry further downstream: `doRemoveFile` deletes the expense line whose
+`sourceFileId` matches the file being removed. A raw-attached file tagged no line, so deleting
+it removes the file alone and any hand-typed row stays until it is deleted separately.
 
 That is the gap CR item 8 describes, and this change widens the door to it. Item 8 (a
 suggest button at the account step) closes it. **These two should ship in the same release,
