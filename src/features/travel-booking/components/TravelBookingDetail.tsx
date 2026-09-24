@@ -50,6 +50,7 @@ import { InfoStrip, typeInfo } from "@/features/travel-booking/components/Bookin
 import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
 import {
   approvalActorPrefixFor,
+  isWithdrawnApproval,
   withdrawnApprovalLabel,
 } from "@/features/accounting/lib/withdrawn-approval";
 import {
@@ -384,10 +385,19 @@ function approvalDotStyle(status: TravelBookingApproval["status"]): React.CSSPro
   return { background: "var(--bg-badge)", color: "var(--text-muted)", border: "1px solid var(--border-card)" };
 }
 
-function approvalIcon(status: TravelBookingApproval["status"]) {
+/**
+ * One icon per event, not two: the chip beside this dot already says
+ * ยกเลิกโดยผู้ขอ with a Ban, and a ↺ in the circle next to it reads as a
+ * second, different thing having happened. The colours stay the return tones
+ * (`approvalDotStyle` is unchanged) — the row IS still a `Returned` row, and
+ * only its meaning changed. See `withdrawn-approval.ts`.
+ */
+function approvalIcon(status: TravelBookingApproval["status"], requestStatus?: string | null) {
   if (status === "Approved") return <CheckCircle size={14} />;
   if (status === "Rejected") return <XCircle size={14} />;
-  if (status === "Returned") return <RotateCcw size={13} />;
+  if (status === "Returned") {
+    return isWithdrawnApproval(requestStatus, status) ? <Ban size={13} /> : <RotateCcw size={13} />;
+  }
   return <Clock size={13} />;
 }
 
@@ -822,7 +832,7 @@ export function TravelBookingDetail({
                         className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold"
                         style={approvalDotStyle(approval.status)}
                       >
-                        {approvalIcon(approval.status)}
+                        {approvalIcon(approval.status, request.status)}
                       </div>
                       {!isLast && (
                         <div className="w-px flex-1 my-1" style={{ background: "var(--border-light)", minHeight: 16 }} />

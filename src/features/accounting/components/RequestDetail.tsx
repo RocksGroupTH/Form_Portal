@@ -65,6 +65,7 @@ import { UatDataBanner } from "@/components/UatDataBanner";
 import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
 import {
   approvalActorPrefixFor,
+  isWithdrawnApproval,
   withdrawnApprovalLabel,
 } from "@/features/accounting/lib/withdrawn-approval";
 import { useErpSandboxDevHost } from "@/features/accounting/hooks/useErpSandboxDevHost";
@@ -1765,7 +1766,17 @@ export function RequestDetail({ request, onChanged, hideCancel = false, stickyTo
                         ) : approval.status === "Rejected" ? (
                           <XCircle size={14} />
                         ) : approval.status === "Returned" ? (
-                          <RotateCcw size={13} />
+                          /* One icon per event, not two: the chip beside this
+                             dot already says ยกเลิกโดยผู้ขอ with a Ban, and a
+                             ↺ in the circle next to it reads as a second,
+                             different thing having happened. The colours stay
+                             the return tones on purpose — the row IS still a
+                             `Returned` row, and only its meaning changed. */
+                          isWithdrawnApproval(request.status, approval.status) ? (
+                            <Ban size={13} />
+                          ) : (
+                            <RotateCcw size={13} />
+                          )
                         ) : (
                           <Clock size={13} />
                         )}

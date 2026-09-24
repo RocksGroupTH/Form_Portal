@@ -2,6 +2,7 @@
 import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
 import {
   approvalActorPrefixFor,
+  isWithdrawnApproval,
   withdrawnApprovalLabel,
 } from "@/features/accounting/lib/withdrawn-approval";
 
@@ -1012,7 +1013,13 @@ export function ReimburseDetail({
                       ) : a.status === "Rejected" ? (
                         <XCircle size={14} />
                       ) : a.status === "Returned" ? (
-                        <RotateCcw size={13} />
+                        /* One icon per event — the chip beside it already
+                           says ยกเลิกโดยผู้ขอ with this same Ban. */
+                        isWithdrawnApproval(withdrawn ? "Cancelled" : null, a.status) ? (
+                          <Ban size={13} />
+                        ) : (
+                          <RotateCcw size={13} />
+                        )
                       ) : (
                         <Clock size={13} />
                       )}
