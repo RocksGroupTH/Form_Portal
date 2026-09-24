@@ -1,10 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  approverNamesFor,
-  stepApproverTooltip,
-  type StepApproverPayload,
-} from "./step-approvers";
+import { approverNamesFor, type StepApproverPayload } from "./step-approvers";
 
 /**
  * Who the `รออนุมัติโดย` tooltip names.
@@ -120,17 +116,14 @@ test("no brand on the row over-lists rather than claiming nobody can act", () =>
   );
 });
 
-test("the tooltip names the brand it scoped by, and says so when nobody can act", () => {
-  assert.equal(
-    stepApproverTooltip(["Plume Pasapong", "Kan Kanjanaporn"], "PCTH"),
-    "ผู้มีสิทธิ์อนุมัติ (PCTH): Plume Pasapong, Kan Kanjanaporn",
-  );
-  assert.equal(stepApproverTooltip([], "ROCKS"), "ยังไม่มีผู้มีสิทธิ์อนุมัติ (ROCKS)");
-  assert.equal(stepApproverTooltip(["A"], null), "ผู้มีสิทธิ์อนุมัติ: A");
-  assert.equal(stepApproverTooltip(null, "PCTH"), undefined, "null must leave the old tooltip alone");
-});
-
-test("no email reaches the tooltip — the user chose names only", () => {
-  const line = stepApproverTooltip(["Plume Pasapong"], "PCTH") ?? "";
-  assert.doesNotMatch(line, /@/);
+test("what comes back is names, never an address — the user chose names only", () => {
+  /* The route selects no email at all, so this pins the shape rather than a
+     filter: anything that starts returning one would show up here first. */
+  const names = approverNamesFor(PAYLOAD, {
+    environment: "Production",
+    formCode: "AP-1",
+    stepCode: "ACCOUNT",
+    brandCode: "PCTH",
+  });
+  for (const n of names ?? []) assert.doesNotMatch(n, /@/);
 });

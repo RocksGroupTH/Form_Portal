@@ -23,8 +23,9 @@ import {
   type MyRequestKind,
   type MyRequestStatusDisplay,
 } from "@/lib/acc/my-request-view";
-import { approverNamesFor, stepApproverTooltip, type StepApproverPayload } from "@/lib/acc/step-approvers";
+import { approverNamesFor } from "@/lib/acc/step-approvers";
 import { useStepApprovers } from "@/lib/hooks/useStepApprovers";
+import { ApproverHoverCard } from "@/features/accounting/components/ApproverHoverCard";
 import { MyRequestStatusChip } from "@/features/accounting/components/MyRequestStatusChip";
 
 /**
@@ -381,10 +382,28 @@ export function MyRequestsTable({
                       fontVariantNumeric: col.align === "right" ? "tabular-nums" : undefined,
                       fontWeight: col.key === "requestNo" || col.key === "totalAmount" ? 700 : 400,
                     }}
-                    title={cellTitle(row, col.key, nowIso, stepApprovers)}
+                    title={cellTitle(row, col.key, nowIso)}
                   >
                     {col.key === "status" ? (
                       <MyRequestStatusChip display={statusOf(row)} />
+                    ) : col.key === "pendingBy" ? (
+                      /* A pool step opens the card; a MANAGER step is a person
+                         the row already names, so it stays plain text with the
+                         address on its `title` as it always had. */
+                      (() => {
+                        const names = approverNamesFor(stepApprovers, {
+                          environment: row.environment,
+                          formCode: row.formCode,
+                          stepCode: row.pendingStepCode ?? row.currentStepCode ?? null,
+                          brandCode: row.brandCode,
+                        });
+                        const text = cellText(row, col.key, nowIso);
+                        return names === null ? (
+                          text
+                        ) : (
+                          <ApproverHoverCard text={text} brandCode={row.brandCode} names={names} />
+                        );
+                      })()
                     ) : (
                       cellText(row, col.key, nowIso)
                     )}
@@ -410,28 +429,15 @@ function cellTitle(
   row: ReportRow,
   key: MyRequestColKey,
   nowIso: string,
-  stepApprovers: StepApproverPayload | undefined,
 ): string | undefined {
   if (key === "workDetail") return cellText(row, key, nowIso);
   if (key === "pendingBy") {
-    /* A pool step names a department in the cell — `บัญชี`, `Admin` — which
-       answers "who is this with" and nothing about who can actually act.
-       Measured 2026-09-24, `AccApproval` carries an assignee on every pending
-       MANAGER row and on none of the pool rows, so the names come from the
-       rosters instead (the user: "เอาเมาส์ไปชี้ได้ว่าคนที่มีสิทธิ์ในการอนุมัติ
-       นั้นคือใคร"). Scoped to this claim's own brand, because an approver
-       scoped elsewhere cannot act on it. */
-    const names = approverNamesFor(stepApprovers, {
-      environment: row.environment,
-      formCode: row.formCode,
-      stepCode: row.pendingStepCode ?? row.currentStepCode ?? null,
-      brandCode: row.brandCode,
-    });
-    const pool = stepApproverTooltip(names, row.brandCode);
-    /* The manager step answers null and keeps what this tooltip has always
-       carried: the assignee's address, which is the only thing naming them
-       when HR has no row. */
-    return pool ?? row.pendingApproverEmail?.trim() ?? undefined;
+    /* The POOL case is not here any more: it is `ApproverHoverCard`, because
+       one name per line is the thing a `title` string cannot do (the user,
+       2026-09-24) and AP-17's roster is eight people. What is left is the
+       MANAGER case, which keeps what this tooltip always carried — the
+       assignee's address, the only thing naming them when HR has no row. */
+    return row.pendingApproverEmail?.trim() || undefined;
   }
   return undefined;
 }

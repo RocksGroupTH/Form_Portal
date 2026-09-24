@@ -110,18 +110,14 @@ export function approverNamesFor(
     .map((p) => p.name);
 }
 
-/**
- * The tooltip line. Names only — the user's call on 2026-09-24, asked directly:
- * publishing the accounting roster's addresses to every requester who can open
- * My Requests is a wider change than answering "who".
+/*
+ * There was a `stepApproverTooltip` here, building the whole line as a string
+ * for a native `title`. It lasted a day: the user asked for a styled box with
+ * one name per line (2026-09-24), which a `title` cannot do, and
+ * `ApproverHoverCard` renders the names as markup instead. Deleted rather than
+ * left unused — the card carries the same Thai wording, and a second copy that
+ * nothing renders is how the two come to disagree.
+ *
+ * **Names only is still the rule and still the user's**, asked directly the
+ * same day: the route selects no email, so nothing downstream can print one.
  */
-export function stepApproverTooltip(
-  names: string[] | null,
-  brandCode?: string | null,
-): string | undefined {
-  if (names === null) return undefined;
-  const brand = (brandCode ?? "").trim();
-  const scope = brand ? ` (${brand})` : "";
-  if (names.length === 0) return `ยังไม่มีผู้มีสิทธิ์อนุมัติ${scope}`;
-  return `ผู้มีสิทธิ์อนุมัติ${scope}: ${names.join(", ")}`;
-}
