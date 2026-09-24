@@ -43,7 +43,7 @@ export type DetailExportKey = (typeof DETAIL_EXPORT_ORDER)[number];
  * the file. A screen column absent from this map owns none: it is on screen and
  * not in the file.
  */
-const CONTROL_OWNS: Record<string, readonly ControlExportKey[]> = {
+export const CONTROL_OWNS: Record<string, readonly ControlExportKey[]> = {
   submittedAt: ["submittedAt"],
   requestNo: ["requestNo"],
   staffId: ["staffId"],
@@ -61,7 +61,7 @@ const CONTROL_OWNS: Record<string, readonly ControlExportKey[]> = {
   overallStatus: ["overallStatus"],
 };
 
-const DETAIL_OWNS: Record<string, readonly DetailExportKey[]> = Object.fromEntries(
+export const DETAIL_OWNS: Record<string, readonly DetailExportKey[]> = Object.fromEntries(
   DETAIL_EXPORT_ORDER.map((k) => [k, [k] as readonly DetailExportKey[]]),
 );
 

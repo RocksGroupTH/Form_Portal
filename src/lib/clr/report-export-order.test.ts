@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CONTROL_EXPORT_ORDER,
+  CONTROL_OWNS,
   DETAIL_EXPORT_ORDER,
+  DETAIL_OWNS,
   controlExportOrder,
   detailExportOrder,
 } from "./report-export-order";
@@ -70,6 +72,44 @@ test("the output is always a permutation of the default columns", () => {
       [...out].sort(),
       [...CONTROL_EXPORT_ORDER].sort(),
       `input ${JSON.stringify(input)}`,
+    );
+  }
+});
+
+/**
+ * Ownership itself, not just its effect.
+ *
+ * Mutation testing found the gap this closes. Take `extraToEmployee` away from
+ * `adjustment` and every case above still passed but one: the fallback loop
+ * quietly picks the orphan up and appends it, so the file still has all 17
+ * columns and the permutation property is still satisfied — it just writes a
+ * column somewhere the reader did not put it. The cases above pin the two pairs
+ * that exist today; these pin the rule, so a column added later cannot arrive
+ * unowned, owned twice, or owned by a screen column the map invented.
+ */
+
+test("every export column is owned by exactly one screen column", () => {
+  for (const [order, owns] of [
+    [CONTROL_EXPORT_ORDER, CONTROL_OWNS],
+    [DETAIL_EXPORT_ORDER, DETAIL_OWNS],
+  ] as const) {
+    const owners = new Map<string, string[]>();
+    for (const [screenKey, keys] of Object.entries(owns)) {
+      for (const k of keys) owners.set(k, [...(owners.get(k) ?? []), screenKey]);
+    }
+    for (const k of order) {
+      assert.deepEqual(
+        owners.get(k)?.length ?? 0,
+        1,
+        `${k} is owned by ${JSON.stringify(owners.get(k) ?? [])}, expected exactly one screen column`,
+      );
+    }
+    assert.deepEqual(
+      // Array.from, not a spread: this repo's tsconfig target makes spreading a
+      // Map iterator a TS2802 error.
+      Array.from(owners.keys()).filter((k) => !(order as readonly string[]).includes(k)),
+      [],
+      "a screen column owns a column the export does not have",
     );
   }
 });
