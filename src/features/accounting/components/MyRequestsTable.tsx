@@ -74,11 +74,22 @@ function writeStored(key: string, value: unknown): void {
 
 export function MyRequestsTable({
   rows,
+  exportRows,
   kind,
   onOpen,
   statusFor,
 }: {
+  /** The page on screen. */
   rows: ReportRow[];
+  /**
+   * What Excel gets: **every filtered row, not just this page.**
+   *
+   * Somebody who has filtered to 57 claims and is looking at the first ten
+   * expects the file to hold 57 — the page is how the screen copes with the
+   * result, not part of the question they asked. The COLUMNS still follow the
+   * screen exactly, because those are a choice they made.
+   */
+  exportRows: ReportRow[];
   kind: MyRequestKind;
   /** Same target as the list: a row opens the same drawer. */
   onOpen: (row: ReportRow) => void;
@@ -187,7 +198,7 @@ export function MyRequestsTable({
   );
 
   function handleExport() {
-    if (rows.length === 0) {
+    if (exportRows.length === 0) {
       toast.error("ไม่มีรายการให้ export");
       return;
     }
@@ -195,7 +206,7 @@ export function MyRequestsTable({
     // that quietly widened to every column would not be the table somebody is
     // looking at, which is the thing they pressed the button to keep.
     const header = shownColumns.map((c) => c.label);
-    const body = rows.map((r) =>
+    const body = exportRows.map((r) =>
       shownColumns.map((c) =>
         // Status alone comes from `statusOf`, for the reason its prop gives:
         // `cellExportValue` reads the row's own status, which is the wrong
@@ -247,9 +258,15 @@ export function MyRequestsTable({
       </div>
 
       {/* The table scrolls rather than wrapping: a column of dates that wraps
-          stops being scannable, which is the whole reason for this view. */}
+          stops being scannable, which is the whole reason for this view.
+
+          `show-x-scroll` is not decoration — `.acc-theme` hides every
+          scrollbar (globals.css), so the table scrolled with nothing on screen
+          saying it could. That class is the existing opt-in, added for AP-3's
+          expense grid, and reusing it keeps one definition of what a visible
+          horizontal scrollbar looks like in this app. */}
       <div
-        className="overflow-x-auto rounded-xl"
+        className="overflow-x-auto show-x-scroll rounded-xl"
         style={{ border: "1px solid var(--border-card)" }}
       >
         <table className="w-full border-collapse text-[12px]">

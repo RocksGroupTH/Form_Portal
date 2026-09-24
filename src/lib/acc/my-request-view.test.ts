@@ -13,6 +13,12 @@ import {
   departmentLabel,
   isSettled,
   managerTurnaroundDays,
+  DEFAULT_PAGE_SIZE,
+  MY_REQUEST_PAGE_SIZES,
+  clampPage,
+  pageCount,
+  pageSlice,
+  pageWindow,
   statusDisplay,
   statusDisplayForBucket,
   stepLabel,
@@ -404,4 +410,84 @@ test("statusDisplay takes a STATUS and nothing else", () => {
   assert.equal(statusDisplay.length, 1, "statusDisplay must not start reading a step again");
   assert.equal(statusDisplay("ManagerApproved").label, "Pending");
   assert.equal(statusDisplay("Approved").label, "Complete");
+});
+
+/* ---------------------------------------------------------------- *
+ * Paging
+ * ---------------------------------------------------------------- */
+
+test("the default page size is 10 and the choices include it", () => {
+  assert.equal(DEFAULT_PAGE_SIZE, 10);
+  assert.ok(MY_REQUEST_PAGE_SIZES.indexOf(DEFAULT_PAGE_SIZE) !== -1);
+});
+
+test("an empty result is one page, not zero", () => {
+  /* Zero pages makes the pager render nothing and `clampPage` answer 0, which
+     then slices from index -10. One empty page is the honest shape. */
+  assert.equal(pageCount(0, 10), 1);
+  assert.equal(clampPage(1, 0, 10), 1);
+  assert.deepEqual(pageSlice([], 1, 10), []);
+});
+
+test("page counts round UP, because a remainder is still a page", () => {
+  assert.equal(pageCount(10, 10), 1);
+  assert.equal(pageCount(11, 10), 2);
+  assert.equal(pageCount(57, 10), 6);
+  assert.equal(pageCount(57, 100), 1);
+});
+
+test("filtering while deep in the pages lands on the LAST page, not an empty one", () => {
+  /* The case this exists for: 57 rows, reader on page 6, they type a search
+     that leaves 12. Page 6 of 2 slices nothing, which reads as "no results"
+     over a filter that matched plenty. */
+  assert.equal(clampPage(6, 12, 10), 2);
+  assert.equal(clampPage(6, 57, 10), 6);
+  // And nonsense clamps forward rather than throwing.
+  assert.equal(clampPage(0, 57, 10), 1);
+  assert.equal(clampPage(-3, 57, 10), 1);
+  assert.equal(clampPage(Number.NaN, 57, 10), 1);
+});
+
+test("the slice is the page a reader would count to", () => {
+  const rows = Array.from({ length: 25 }, (_, i) => i + 1);
+  assert.deepEqual(pageSlice(rows, 1, 10), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(pageSlice(rows, 2, 10), [11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+  assert.deepEqual(pageSlice(rows, 3, 10), [21, 22, 23, 24, 25]);
+  // Past the end is the last page, never empty — the clamp above, applied.
+  assert.deepEqual(pageSlice(rows, 9, 10), [21, 22, 23, 24, 25]);
+});
+
+test("a short pager lists every page with no ellipsis", () => {
+  assert.deepEqual(pageWindow(1, 1), [1]);
+  assert.deepEqual(pageWindow(2, 4), [1, 2, 3, 4]);
+  assert.deepEqual(pageWindow(3, 7), [1, 2, 3, 4, 5, 6, 7]);
+});
+
+test("a long pager keeps the first and last page reachable", () => {
+  /* "Back to the start" is the one jump a windowed pager otherwise makes
+     impossible, so page 1 and the last page are always offered. */
+  const w = pageWindow(10, 20);
+  assert.equal(w[0], 1);
+  assert.equal(w[w.length - 1], 20);
+  assert.ok(w.indexOf(10) !== -1, "the current page is not in its own window");
+});
+
+test("the pager does not change width as the reader moves through it", () => {
+  /* A row of buttons that grows and shrinks slides Next sideways under the
+     cursor, which is a misclick waiting to happen. */
+  const widths = new Set<number>();
+  for (let p = 1; p <= 20; p++) widths.add(pageWindow(p, 20).length);
+  assert.equal(widths.size, 1, `pager width varies: ${Array.from(widths).join(", ")}`);
+});
+
+test("an ellipsis appears only where pages are actually skipped", () => {
+  /* A gap drawn between 1 and 2 claims something is hidden when nothing is,
+     which teaches the reader to distrust the other one. */
+  const first = pageWindow(1, 20);
+  assert.equal(first[1], 2, "a gap sits between page 1 and page 2");
+  const last = pageWindow(20, 20);
+  assert.equal(last[last.length - 2], 19, "a gap sits between the last two pages");
+  const middle = pageWindow(10, 20);
+  assert.equal(middle[1], "gap");
+  assert.equal(middle[middle.length - 2], "gap");
 });

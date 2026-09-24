@@ -539,3 +539,80 @@ export function cellExportValue(
     }
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Paging
+ * ------------------------------------------------------------------ */
+
+/**
+ * **Paging lives here, and applies to BOTH views.**
+ *
+ * The request came from the table (the user, 2026-09-24), but the list renders
+ * the same filtered rows, and a page size that changed meaning when you pressed
+ * the view switch would be its own small lie. One slice, taken before either
+ * renderer sees the rows.
+ */
+export const MY_REQUEST_PAGE_SIZES = [10, 50, 100] as const;
+
+export const DEFAULT_PAGE_SIZE = 10;
+
+export function pageCount(total: number, pageSize: number): number {
+  if (pageSize <= 0) return 1;
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+/**
+ * The page actually shown, given how many there are.
+ *
+ * **Filtering while on page 6 is the case this exists for**: the result set
+ * shrinks to two pages and the slice would be empty, which reads as "no
+ * results" over a filter that matched plenty. Clamping lands the reader on the
+ * last real page instead.
+ */
+export function clampPage(page: number, total: number, pageSize: number): number {
+  const count = pageCount(total, pageSize);
+  if (!Number.isFinite(page) || page < 1) return 1;
+  return Math.min(Math.trunc(page), count);
+}
+
+export function pageSlice<T>(rows: readonly T[], page: number, pageSize: number): T[] {
+  if (pageSize <= 0) return rows.slice();
+  const p = clampPage(page, rows.length, pageSize);
+  return rows.slice((p - 1) * pageSize, p * pageSize);
+}
+
+/**
+ * Which page buttons to draw: `1 … 4 5 6 … 20`, with `"gap"` for each ellipsis.
+ *
+ * **Always the same number of slots** (up to `span` pages plus the two ends),
+ * so the row of buttons does not change width as the reader moves through it —
+ * a pager whose Next button slides sideways under the cursor is one people
+ * misclick. The first and last page are always offered, because "go back to the
+ * start" is the one jump a windowed pager otherwise makes impossible.
+ */
+export function pageWindow(current: number, count: number, span = 5): (number | "gap")[] {
+  const slots = Math.min(count, span + 4);
+  if (count <= slots) {
+    const all: (number | "gap")[] = [];
+    for (let i = 1; i <= count; i++) all.push(i);
+    return all;
+  }
+
+  // The entries between the two fixed ends. A gap REPLACES one of them rather
+  // than being inserted beside them, which is what keeps the count constant.
+  const inner = slots - 2;
+  let from = Math.max(2, current - Math.floor(inner / 2));
+  let to = from + inner - 1;
+  if (to > count - 1) {
+    to = count - 1;
+    from = to - inner + 1;
+  }
+
+  const out: (number | "gap")[] = [1];
+  for (let i = from; i <= to; i++) out.push(i);
+  out.push(count);
+
+  if (from > 2) out[1] = "gap";
+  if (to < count - 1) out[out.length - 2] = "gap";
+  return out;
+}
