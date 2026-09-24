@@ -1,5 +1,9 @@
 "use client";
 import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-calendar";
+import {
+  approvalActorPrefixFor,
+  withdrawnApprovalLabel,
+} from "@/features/accounting/lib/withdrawn-approval";
 
 import React, { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
@@ -246,20 +250,6 @@ function approvalActorLabel(a: ReimburseApproval): string | null {
   return email ?? null;
 }
 
-/**
- * `withdrawn` is the request being `Cancelled`, not the row saying so.
- *
- * A self-cancel closes the pending `MANAGER` row as `Returned`, because
- * `CK_AccApproval_Status` has no `Cancelled` — see `cancelReimburseByRequester`.
- * Left unqualified the timeline would then say the requester "ส่งกลับ" their own
- * claim for editing, which is the one thing a cancel is not.
- */
-function approvalActorPrefix(status: ReimburseApproval["status"], withdrawn = false): string {
-  if (status === "Approved") return "อนุมัติโดย";
-  if (status === "Rejected") return "ไม่อนุมัติโดย";
-  if (status === "Returned") return withdrawn ? "ยกเลิกโดย" : "ส่งกลับโดย";
-  return "รอดำเนินการโดย";
-}
 
 /* ─────────────────────────── small pieces ─────────────────────────── */
 
@@ -303,12 +293,13 @@ function ApprovalStatusBadge({
       border: "var(--border-info-yellow)",
     },
   };
-  // Same colours, honest wording — see `approvalActorPrefix`.
+  // Same colours, honest wording — see `withdrawn-approval.ts`, which owns
+  // this rule for all four detail pages now.
   const base = cfg[status];
-  const c =
-    withdrawn && status === "Returned"
-      ? { ...base, label: "ยกเลิกโดยผู้ขอ", icon: <Ban size={12} /> }
-      : base;
+  const withdrawnLabel = withdrawnApprovalLabel(withdrawn ? "Cancelled" : null, status);
+  const c = withdrawnLabel
+    ? { ...base, label: withdrawnLabel, icon: <Ban size={12} /> }
+    : base;
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full"
@@ -1050,7 +1041,7 @@ export function ReimburseDetail({
                     </div>
                     {actor && (
                       <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-                        {approvalActorPrefix(a.status, withdrawn)} {actor}
+                        {approvalActorPrefixFor(a.status, withdrawn ? "Cancelled" : null)} {actor}
                       </p>
                     )}
                     {a.comment && (

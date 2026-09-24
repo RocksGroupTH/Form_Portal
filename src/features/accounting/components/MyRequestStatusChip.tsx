@@ -28,6 +28,13 @@ import type { MyRequestStatusDisplay, MyRequestStatusTone } from "@/lib/acc/my-r
  * pure and tested; this file is only the colours and the markup.
  */
 const STATUS_TONE: Record<MyRequestStatusTone, React.CSSProperties> = {
+  /* Nobody has acted on it and nobody is waiting — the neutral draft
+     tokens, which is what every other surface already paints a draft. */
+  draft: {
+    background: "var(--status-draft-bg)",
+    color: "var(--status-draft-text)",
+    border: "1px solid var(--border-light)",
+  },
   submitted: {
     background: "var(--nav-active-bg)",
     color: "var(--nav-active-text)",

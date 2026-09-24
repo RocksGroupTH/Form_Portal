@@ -754,7 +754,17 @@ export async function listMyRequestRows(userId: number): Promise<ReportRow[]> {
       .query(
         buildListQuery(
           "request",
-          `r.Status <> 'Draft' AND (r.CreatedBy = @uid OR r.SubmittedBy = @uid)`,
+          /* **Drafts included since 2026-09-24** (the user). Home's ร่าง /
+             ตีกลับ tile had to open a list that actually contains what it
+             counted, and `Status <> 'Draft'` meant it could not: the tile
+             counted drafts and returns, the page could show only returns.
+
+             A draft carries no `RequestNo` and no `SubmittedAt`, so it prints
+             — in both columns and drops out of any วันที่ส่ง range, which is
+             correct rather than merely tolerable: it has not been sent.
+             `listMyWorkRows` is unaffected — it matches on an approval row,
+             and a draft has none. */
+          `r.CreatedBy = @uid OR r.SubmittedBy = @uid`,
           "r.SubmittedAt DESC, r.Id DESC",
           environment,
         ),

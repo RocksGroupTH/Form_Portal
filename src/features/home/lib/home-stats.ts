@@ -15,20 +15,28 @@
  * list of 5 would be a front page contradicting the page it sent you to. If a
  * status is ever reclassified, both move together or the link starts lying.
  *
- * ## What is counted, and what cannot be
+ * ## What is counted
  *
- * The rows come from `/api/request/accounting/requests/mine`, whose SQL pins
- * `r.Status <> 'Draft'` — so **a never-submitted draft is in none of these
- * counts**, `total` included. That is the user's decision (2026-09-24, "เฉพาะ
- * ที่ส่งแล้ว") and it is also the only self-consistent one available here:
- * drafts are fetched from two other endpoints, are grouped rather than listed
- * on AP-17, and cannot be shown on My Requests at all. They have their own
- * tile, ร่าง / ตีกลับ, counted by the hook from those endpoints.
+ * Every tile reads `/api/request/accounting/requests/mine`, **drafts included
+ * since 2026-09-24**. They were excluded until then, because that query pinned
+ * `Status <> 'Draft'` and the page could not show one — so คำขอทั้งหมด counted
+ * only what had been filed (the user's decision that day, "เฉพาะที่ส่งแล้ว")
+ * and ร่าง / ตีกลับ was counted separately, from the two drafts endpoints, and
+ * had no link at all because there was nowhere honest to send it.
  *
- * **`Returned` is in both**, and deliberately: it is a filed request with a
- * status of its own on My Requests, *and* something its owner can still edit,
- * so it belongs to `total` and to ร่าง / ตีกลับ at once. The strip is a set of
- * answers to different questions, not a partition.
+ * The user reversed that the same day: the list now carries drafts, so one pass
+ * over one list answers every tile, the ร่าง / ตีกลับ tile opens a page showing
+ * exactly what it counted, and **`total` includes drafts** — which is what My
+ * Requests' own ทั้งหมด box shows, so the two can no longer disagree.
+ *
+ * Those two drafts endpoints are still fetched, and only for the "ทำต่อจาก
+ * ที่ค้างไว้" list: resuming is AP-1 and AP-17 only, so that list is genuinely
+ * narrower than this count and is a list rather than a number.
+ *
+ * **`Returned` is in two tiles**, deliberately: it is a filed request with a
+ * status of its own *and* something its owner can still edit, so it belongs to
+ * `total` and to ร่าง / ตีกลับ at once. The strip is a set of answers to
+ * different questions, not a partition.
  *
  * ## Time
  *
@@ -46,7 +54,7 @@ export interface HomeStatRow {
 }
 
 export interface HomeStatCounts {
-  /** Every request this person has filed, drafts excluded — see the header. */
+  /** Every request this person has filed, drafts included — see the header. */
   total: number;
   /** Of those, submitted within the current calendar month. */
   month: number;
@@ -56,6 +64,17 @@ export interface HomeStatCounts {
   approved: number;
   rejected: number;
   cancelled: number;
+  /**
+   * Filed but sent back, or never filed at all — the ร่าง / ตีกลับ tile.
+   *
+   * **It is counted from the same rows as everything else**, which it was
+   * not until 2026-09-24: it came from the two drafts endpoints, which
+   * serve AP-1 and AP-17 alone, so an AP-3 draft was in nobody's count.
+   * `listMyRequestRows` stopped excluding drafts the same day, so one pass
+   * over one list now answers every tile — and the tile can link to a page
+   * that shows what it counted, which was the whole reason it had no link.
+   */
+  unfinished: number;
 }
 
 /**
@@ -107,6 +126,7 @@ export function countHomeStats(rows: readonly HomeStatRow[], now: Date): HomeSta
     approved: 0,
     rejected: 0,
     cancelled: 0,
+    unfinished: 0,
   };
 
   for (const row of rows) {
@@ -119,6 +139,12 @@ export function countHomeStats(rows: readonly HomeStatRow[], now: Date): HomeSta
     else if (isCompletedStatus(status)) counts.approved++;
     else if (status === "Rejected") counts.rejected++;
     else if (status === "Cancelled") counts.cancelled++;
+
+    /* Not an `else if`: `Returned` is a status of its own on the page AND
+       something its owner can still edit, so it belongs to this tile and to
+       none of the four above. `Draft` reaches neither, which is why both are
+       tested separately here rather than folded into the chain. */
+    if (status === "Draft" || status === "Returned") counts.unfinished++;
   }
 
   return counts;

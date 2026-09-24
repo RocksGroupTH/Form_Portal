@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx-js-style";
-import { Download } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import {
   ColumnToggleMenu,
@@ -69,6 +69,19 @@ function writeStored(key: string, value: unknown): void {
   } catch {
     // A private window, or storage the browser has blocked. The layout is a
     // convenience; losing it costs a reader two clicks and nothing else.
+  }
+}
+
+/**
+ * Forget a stored layout entirely, rather than storing today's defaults over
+ * it — see `handleResetColumns`. Same swallowed failure as `writeStored`,
+ * and for the same reason.
+ */
+function clearStored(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Nothing to do: the state is already reset in memory.
   }
 }
 
@@ -184,6 +197,45 @@ export function MyRequestsTable({
   );
 
   /**
+   * Back to the standard table (the user, 2026-09-24).
+   *
+   * The columns each page opens on are a **standard**, not merely a first
+   * guess: somebody who explores the picker and loses track of what was there
+   * has no way back otherwise, because the layout persists — and it persists
+   * per browser, so "log out and in again" does not undo it either.
+   *
+   * It restores the order as well as the visibility, and **clears the stored
+   * layout rather than storing the defaults**: a viewer who has never touched
+   * the picker and one who has just reset are in the same state, so a later
+   * change to `defaultVisibleKeys` reaches both. Writing the defaults down
+   * would freeze today's answer into that browser for ever.
+   */
+  /**
+   * True when nothing has been changed from the standard.
+   *
+   * Compared against the CURRENT defaults rather than against a stored flag,
+   * so a change to `defaultVisibleKeys` moves the button rather than leaving
+   * it offering to restore a layout that is already on screen.
+   */
+  const isStandardLayout = useMemo(() => {
+    const defaults = defaultVisibleKeys(kind);
+    for (const c of allColumns) {
+      if (!!visible[c.key] !== (defaults.indexOf(c.key) !== -1)) return false;
+    }
+    return allColumns.every((c, i) => order[i] === c.key);
+  }, [kind, allColumns, visible, order]);
+
+  const handleResetColumns = useCallback(() => {
+    const defaults = defaultVisibleKeys(kind);
+    const next = {} as Record<MyRequestColKey, boolean>;
+    for (const c of allColumns) next[c.key] = defaults.indexOf(c.key) !== -1;
+    setVisible(next);
+    setOrder(allColumns.map((c) => c.key));
+    clearStored(storageKey(kind, "cols"));
+    clearStored(storageKey(kind, "order"));
+  }, [kind, allColumns]);
+
+  /**
    * ONE clock for the whole render.
    *
    * Every day-count column measures against it, so two rows of one table cannot
@@ -246,6 +298,20 @@ export function MyRequestsTable({
           onChange={handleVisibleChange}
           onReorder={handleReorder}
         />
+        {/* Shown only once the layout differs from the standard: a reset
+            button beside an untouched table is a control that can do
+            nothing, and it is the picker that tells you a layout is yours. */}
+        {!isStandardLayout && (
+          <button
+            type="button"
+            onClick={handleResetColumns}
+            title="กลับไปใช้คอลัมน์มาตรฐานของหน้านี้"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border-none cursor-pointer"
+            style={{ background: "var(--bg-badge)", color: "var(--text-secondary)" }}
+          >
+            <RotateCcw size={13} /> คอลัมน์มาตรฐาน
+          </button>
+        )}
         <button
           type="button"
           onClick={handleExport}

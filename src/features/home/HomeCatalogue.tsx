@@ -105,11 +105,16 @@ function timeAgo(iso: string | null): string {
  * One tile of the stat strip.
  *
  * `href` makes it a link to the list it counted, with that filter already
- * applied — a number nobody can act on is a number nobody trusts. It is
- * optional because **ร่าง / ตีกลับ has nowhere honest to go**: My Requests reads
- * `/requests/mine`, whose SQL pins `Status <> 'Draft'`, so a link filtered to
- * `Returned` would open a shorter list than the tile promised. That tile stays
- * a plain div and the "ทำต่อจากที่ค้างไว้" section below is the way in.
+ * applied — a number nobody can act on is a number nobody trusts. **Every tile
+ * has one since 2026-09-24.**
+ *
+ * It stays optional because of what the last one cost to earn. ร่าง / ตีกลับ
+ * had no link at first: it was counted from the two drafts endpoints while My
+ * Requests pinned `Status <> 'Draft'`, so no destination could show what the
+ * tile claimed. Linking it meant changing both — the query lists drafts now and
+ * the count comes from the same rows as every tile beside it. That is the bar a
+ * new tile has to clear before it gets an `href`, and the type is what makes
+ * skipping it a deliberate act rather than an oversight.
  */
 function StatCard({
   value,
@@ -447,7 +452,7 @@ export function HomeCatalogue() {
           // (Draft and Returned) — AP-17 cannot tell them apart, so the wording must
           // be true for either. See ResumableGroup.returnedCount.
           <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            มีงานรออนุมัติ {pendingCount} รายการ และคำขอที่ยังทำไม่เสร็จ {resumableCount} รายการ
+            มีงานรออนุมัติ {pendingCount} รายการ และคำขอที่ยังทำไม่เสร็จ {stats.unfinished} รายการ
           </p>
         )}
       </div>
@@ -531,10 +536,18 @@ export function HomeCatalogue() {
               tone="var(--text-muted)"
               href="/my-request?status=Cancelled"
             />
-            {/* Draft + Returned — the drafts endpoints return both and AP-17 cannot
-                separate them, so the label names both rather than under-reporting.
-                No link: see `StatCard`. */}
-            <StatCard value={resumableCount} label="ร่าง / ตีกลับ" tone="var(--status-draft-text)" />
+            {/* It links now (the user, 2026-09-24). It could not before: it was
+                counted from the two drafts endpoints while My Requests pinned
+                `Status <> 'Draft'`, so every destination showed a shorter list
+                than the tile promised. Both halves moved — the count comes from
+                the same rows as every tile beside it, and the page lists
+                drafts — so the number and the list are now the same set. */}
+            <StatCard
+              value={stats.unfinished}
+              label="ร่าง / ตีกลับ"
+              tone="var(--status-draft-text)"
+              href="/my-request?status=Draft,Returned"
+            />
           </div>
 
           {/* Continue where you left off */}

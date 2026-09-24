@@ -21,11 +21,19 @@ import {
 
 /* ── the two vocabularies ── */
 
-test("My Requests offers the six words its own chips print", () => {
+test("My Requests offers the seven words its own chips print", () => {
+  // `Draft` joined them when `listMyRequestRows` stopped excluding drafts.
   assert.deepEqual(
     MINE_STATUS_OPTIONS.map((o) => o.label),
-    ["Submitted", "Pending", "Complete", "Revise", "Rejected", "Cancelled"],
+    ["Draft", "Submitted", "Pending", "Complete", "Revise", "Rejected", "Cancelled"],
   );
+});
+
+test("Draft is offered on คำขอของฉัน and never on งานของฉัน", () => {
+  // My Work matches on an approval row and a draft has none, so the option
+  // would match nothing for ever.
+  assert.ok(MINE_STATUS_OPTIONS.some((o) => o.id === "Draft"));
+  assert.equal(WORK_STATUS_OPTIONS.some((o) => o.id === "Draft"), false);
 });
 
 test("My Work offers five, and Submitted is not one of them", () => {
@@ -111,7 +119,19 @@ test("กำลังดำเนินการ is the two approval steps, and 
   const mine = statusSummaryBoxes("mine").find((b) => b.id === "inProcess")!;
   assert.deepEqual([...mine.ids], ["Submitted", "ManagerApproved"]);
   const returned = statusSummaryBoxes("mine").find((b) => b.id === "returned")!;
-  assert.deepEqual([...returned.ids], ["Returned"]);
+  assert.deepEqual([...returned.ids], ["Draft", "Returned"]);
+});
+
+test("the last box is ร่าง / ตีกลับ on คำขอของฉัน and ส่งกลับแก้ไข on งานของฉัน", () => {
+  /* It carries drafts on the page that can show them and says so; on My
+     Work a draft has no approval row and can never appear, so calling it
+     ร่าง there would promise a state the list cannot produce. Last on both,
+     because it is the one box about work that has not been filed. */
+  const mine = statusSummaryBoxes("mine");
+  assert.equal(mine[mine.length - 1].label, "ร่าง / ตีกลับ");
+  const work = statusSummaryBoxes("work");
+  assert.equal(work[work.length - 1].label, "ส่งกลับแก้ไข");
+  assert.deepEqual([...work[work.length - 1].ids], ["Returned"]);
 });
 
 test("My Work says รออนุมัติจากคุณ, and means it", () => {

@@ -49,6 +49,10 @@ import { useTravelBookingOptionIcons } from "@/features/travel-booking/hooks/use
 import { InfoStrip, typeInfo } from "@/features/travel-booking/components/BookingInfoStrip";
 import { mayActOnManagerStep } from "@/lib/acc/manager-auth";
 import {
+  approvalActorPrefixFor,
+  withdrawnApprovalLabel,
+} from "@/features/accounting/lib/withdrawn-approval";
+import {
   currencyWord,
   fmtMoneyTh,
   referenceRateNote,
@@ -338,7 +342,14 @@ function DirectionCard({ direction, request }: { direction: TravelDirection; req
 
 /* ── approval timeline bits ── */
 
-function ApprovalStatusBadge({ status }: { status: TravelBookingApproval["status"] }) {
+function ApprovalStatusBadge({
+  status,
+  requestStatus,
+}: {
+  status: TravelBookingApproval["status"];
+  /** See `withdrawn-approval.ts` — a self-cancel closes the row as `Returned`. */
+  requestStatus?: string | null;
+}) {
   const configs: Record<
     TravelBookingApproval["status"],
     { label: string; icon: React.ReactNode; bg: string; text: string; border: string }
@@ -348,7 +359,13 @@ function ApprovalStatusBadge({ status }: { status: TravelBookingApproval["status
     Rejected: { label: "ไม่อนุมัติ", icon: <XCircle size={12} />, bg: "rgba(220,38,38,0.08)", text: "var(--color-danger)", border: "rgba(220,38,38,0.2)" },
     Returned: { label: "ส่งกลับแก้ไข", icon: <RotateCcw size={12} />, bg: "var(--bg-info-yellow)", text: "var(--text-info-yellow)", border: "var(--border-info-yellow)" },
   };
-  const cfg = configs[status];
+  const base = configs[status];
+  // Same colours, honest wording — the row IS the record of the withdrawal,
+  // so it is relabelled rather than hidden. See `withdrawn-approval.ts`.
+  const withdrawnLabel = withdrawnApprovalLabel(requestStatus, status);
+  const cfg = withdrawnLabel
+    ? { ...base, label: withdrawnLabel, icon: <Ban size={12} /> }
+    : base;
   return (
     <span
       className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full"
@@ -394,12 +411,6 @@ function approvalActorLabel(approval: TravelBookingApproval): string | null {
   return email ?? null;
 }
 
-function approvalActorPrefix(status: TravelBookingApproval["status"]): string {
-  if (status === "Approved") return "อนุมัติโดย";
-  if (status === "Rejected") return "ไม่อนุมัติโดย";
-  if (status === "Returned") return "ส่งกลับโดย";
-  return "รอดำเนินการโดย";
-}
 
 /* ── Main component ── */
 
@@ -819,7 +830,7 @@ export function TravelBookingDetail({
                     </div>
                     <div className="flex-1 pb-4">
                       <div className="mb-1">
-                        <ApprovalStatusBadge status={approval.status} />
+                        <ApprovalStatusBadge status={approval.status} requestStatus={request.status} />
                       </div>
                       <div className="mb-0.5">
                         <span className="text-[13px] font-medium" style={{ color: "var(--text-heading)" }}>
@@ -831,7 +842,7 @@ export function TravelBookingDetail({
                         if (!actor) return null;
                         return (
                           <p className="text-[11px] m-0" style={{ color: "var(--text-muted)" }}>
-                            {approvalActorPrefix(approval.status)} {actor}
+                            {approvalActorPrefixFor(approval.status, request.status)} {actor}
                           </p>
                         );
                       })()}

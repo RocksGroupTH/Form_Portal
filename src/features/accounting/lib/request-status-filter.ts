@@ -46,6 +46,11 @@ export interface StatusFilterOption {
  * `?status=Approved` link already carries.
  */
 export const MINE_STATUS_OPTIONS: readonly StatusFilterOption[] = [
+  /* Reachable since `listMyRequestRows` stopped excluding drafts — see its
+     own comment. **My Work has no equivalent** and must not gain one: that
+     list matches on an approval row and a draft has none, so the option
+     would match nothing for ever. */
+  { id: "Draft", label: "Draft" },
   { id: "Submitted", label: "Submitted" },
   { id: "ManagerApproved", label: "Pending" },
   { id: "Approved", label: "Complete" },
@@ -140,13 +145,27 @@ export function statusSummaryBoxes(kind: "mine" | "work"): readonly StatusSummar
           ids: ["Submitted", "ManagerApproved"],
           tone: "pending",
         };
+  /* **Last, and named for what it holds** (the user, 2026-09-24). On
+     คำขอของฉัน it is ร่าง / ตีกลับ and carries both — the same pair Home's
+     tile counts, which is what lets that tile link here at all. On งานของฉัน
+     it stays ส่งกลับแก้ไข and carries `Returned` alone, because a draft has
+     no approval row and can never appear on that page; calling it ร่าง there
+     would promise a state the list cannot produce.
+
+     It sits at the end rather than in workflow order because it is the one
+     box about work that has not been filed — the others are stages of a
+     request in flight. */
+  const unfinished: StatusSummaryBox =
+    kind === "work"
+      ? { id: "returned", label: "ส่งกลับแก้ไข", ids: ["Returned"], tone: "warning" }
+      : { id: "returned", label: "ร่าง / ตีกลับ", ids: ["Draft", "Returned"], tone: "warning" };
   return [
     { id: "all", label: "ทั้งหมด", ids: [], tone: "neutral" },
     inProcess,
     { id: "approved", label: "อนุมัติแล้ว", ids: ["Approved"], tone: "ok" },
-    { id: "returned", label: "ส่งกลับแก้ไข", ids: ["Returned"], tone: "warning" },
     { id: "rejected", label: "ไม่อนุมัติ", ids: ["Rejected"], tone: "danger" },
     { id: "cancelled", label: "ยกเลิก", ids: ["Cancelled"], tone: "muted" },
+    unfinished,
   ];
 }
 

@@ -30,6 +30,7 @@ test("an empty list is all zeroes, not a missing tile", () => {
     approved: 0,
     rejected: 0,
     cancelled: 0,
+    unfinished: 0,
   });
 });
 
@@ -65,13 +66,35 @@ test("each terminal status lands in exactly one tile", () => {
   assert.equal(stats.cancelled, 1);
 });
 
-test("Returned is in total but in no status tile — it has its own", () => {
-  // It is a filed request AND something its owner can still edit, so it belongs
-  // to `total` and to the ร่าง / ตีกลับ tile the hook counts separately. The
-  // strip answers different questions; it is not a partition.
+test("Returned is in total and in ร่าง / ตีกลับ, and in no other tile", () => {
+  // It is a filed request AND something its owner can still edit, so it
+  // belongs to both at once. The strip answers different questions; it is
+  // not a partition.
   const stats = countHomeStats([row("Returned")], AUG);
   assert.equal(stats.total, 1);
+  assert.equal(stats.unfinished, 1);
   assert.equal(stats.pending + stats.approved + stats.rejected + stats.cancelled, 0);
+});
+
+test("a draft counts in total and in ร่าง / ตีกลับ, and nowhere else", () => {
+  /* Drafts reach this list since 2026-09-24 — `listMyRequestRows` stopped
+     pinning `Status <> 'Draft'` so the tile could link to a page that shows
+     what it counted. `total` includes them, which is what My Requests' own
+     ทั้งหมด box shows, so the two cannot disagree. */
+  const stats = countHomeStats([row("Draft", null), row("Draft", null)], AUG);
+  assert.equal(stats.total, 2);
+  assert.equal(stats.unfinished, 2);
+  assert.equal(stats.pending + stats.approved + stats.rejected + stats.cancelled, 0);
+  // A draft was never submitted, so it is in no month.
+  assert.equal(stats.month, 0);
+});
+
+test("nothing else counts as unfinished", () => {
+  const stats = countHomeStats(
+    [row("Submitted"), row("ManagerApproved"), row("Approved"), row("Rejected"), row("Cancelled")],
+    AUG,
+  );
+  assert.equal(stats.unfinished, 0);
 });
 
 test("a status this app has never heard of is counted in total and nowhere else", () => {
