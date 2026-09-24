@@ -47,9 +47,17 @@
 SET XACT_ABORT ON;
 GO
 
-IF DB_NAME() NOT LIKE 'Fast_Core%'
+-- `DB_NAME()` has to go through a variable: RAISERROR's substitution arguments
+-- are constants or variables and never expressions, so calling it inline is a
+-- parse error — `Incorrect syntax near 'DB_NAME'` — which fails this batch
+-- before the table is ever created. Migrations 156 and 161 already write it
+-- this way; this one did not, and the first apply is what found out.
+-- The `[_]` escapes LIKE's single-character wildcard, so the test names this
+-- database rather than anything shaped like it.
+IF DB_NAME() NOT LIKE 'Fast[_]Core%'
 BEGIN
-  RAISERROR('163 targets Fast_Core. Current database is %s — refusing.', 16, 1, DB_NAME());
+  DECLARE @wrongDb NVARCHAR(128) = DB_NAME();
+  RAISERROR('163 targets Fast_Core. Current database is %s — refusing.', 16, 1, @wrongDb);
 END
 GO
 

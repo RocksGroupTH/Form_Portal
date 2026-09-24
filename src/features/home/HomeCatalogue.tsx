@@ -19,7 +19,6 @@ import { sortByFormCode } from "@/lib/form-code-order";
 // cards were plain <Link>s and the only card surface in the app without it, so
 // the same tile felt inert here and interactive on /request.
 import { HoverCard } from "@/components/ui/HoverCard";
-import { StatIcon, type StatIconName } from "@/components/ui/StatIcon";
 // `Receipt` is AP-4's, `ReceiptText` is AP-3's — two forms, two icons, not a
 // rename either side made.
 import { Search, Route, Luggage, Receipt, ReceiptText, ClipboardCheck, FilePen, ArrowRight } from "lucide-react";
@@ -100,77 +99,6 @@ function timeAgo(iso: string | null): string {
   const h = Math.floor(diffMin / 60);
   if (h < 24) return `${h} ชม.ที่แล้ว`;
   return `${Math.floor(h / 24)} วันที่แล้ว`;
-}
-
-/**
- * One tile of the stat strip.
- *
- * `href` makes it a link to the list it counted, with that filter already
- * applied — a number nobody can act on is a number nobody trusts. **Every tile
- * has one since 2026-09-24.**
- *
- * It stays optional because of what the last one cost to earn. ร่าง / ตีกลับ
- * had no link at first: it was counted from the two drafts endpoints while My
- * Requests pinned `Status <> 'Draft'`, so no destination could show what the
- * tile claimed. Linking it meant changing both — the query lists drafts now and
- * the count comes from the same rows as every tile beside it. That is the bar a
- * new tile has to clear before it gets an `href`, and the type is what makes
- * skipping it a deliberate act rather than an oversight.
- */
-function StatCard({
-  value,
-  label,
-  tone,
-  icon,
-  href,
-}: {
-  value: number;
-  label: string;
-  tone: string;
-  icon: StatIconName;
-  href?: string;
-}) {
-  const style = {
-    background: "var(--bg-card)",
-    borderRadius: "var(--radius-card)",
-    boxShadow: "var(--shadow-card)",
-    border: "1px solid var(--border-card)",
-  } as const;
-
-  /* Right of the figure, in the tile's own colour and held well back — the
-     same placement the summary boxes on My Requests use, so the two strips
-     read as one idea rather than two. `StatIcon` explains which icon each
-     state gets and why they are the timeline's. */
-  const body = (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 min-w-0">
-        <div className="text-[19px] font-extrabold leading-none tabular-nums" style={{ color: tone }}>
-          {value}
-        </div>
-        <div className="text-[11px] mt-1.5 truncate" style={{ color: "var(--text-muted)" }}>
-          {label}
-        </div>
-      </div>
-      <StatIcon name={icon} color={tone} size={20} />
-    </div>
-  );
-
-  if (!href) {
-    return (
-      <div className="p-3.5" style={style}>
-        {body}
-      </div>
-    );
-  }
-  return (
-    <Link
-      href={href}
-      className="p-3.5 block transition-shadow hover:brightness-[0.99]"
-      style={{ ...style, textDecoration: "none" }}
-    >
-      {body}
-    </Link>
-  );
 }
 
 /**
@@ -388,7 +316,6 @@ export function HomeCatalogue() {
   const {
     pendingCount,
     stats,
-    monthRange,
     resumableCount,
     resumable,
     summaryError,
@@ -485,84 +412,14 @@ export function HomeCatalogue() {
         </p>
       ) : (
         <>
-          {/* Stat strip.
-              Two rows of four rather than one row of eight: at eight across a
-              tile is narrower than its own Thai label, and the labels are what
-              make the numbers mean anything. The first tile is the only one
-              about OTHER people's requests — it is this viewer's approval queue
-              — and the seven after it are their own, which is why it links to
-              My Work and they link to My Requests. */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4">
-            <StatCard
-              value={pendingCount}
-              label="รออนุมัติจากคุณ"
-              icon="inbox"
-              tone="var(--status-pending-text)"
-              /* Explicit, though My Work opens on this box anyway: every
-                 other tile names the filter it counted, and a tile that
-                 leans on a default silently stops agreeing with its own
-                 label the day that default moves. */
-              href="/my-work?status=pending"
-            />
-            <StatCard
-              value={stats.total}
-              label="คำขอทั้งหมด"
-              icon="all"
-              tone="var(--text-primary)"
-              href="/my-request?status=all"
-            />
-            {/* `submittedAt` on both sides: `countHomeStats` measures it and
-                `inDateRange` filters on it, so this link opens exactly the rows
-                the tile counted. */}
-            <StatCard
-              value={stats.month}
-              label="คำขอเดือนนี้"
-              icon="month"
-              tone="var(--status-ok-text)"
-              href={`/my-request?status=all&from=${monthRange.from}&to=${monthRange.to}`}
-            />
-            <StatCard
-              value={stats.pending}
-              label="คำขอที่รออนุมัติ"
-              icon="pending"
-              tone="var(--status-pending-text)"
-              href="/my-request?status=pending"
-            />
-            <StatCard
-              value={stats.approved}
-              label="อนุมัติแล้ว"
-              icon="approved"
-              tone="var(--status-ok-text)"
-              href="/my-request?status=Approved"
-            />
-            <StatCard
-              value={stats.rejected}
-              label="ไม่อนุมัติ"
-              icon="rejected"
-              tone="var(--color-danger)"
-              href="/my-request?status=Rejected"
-            />
-            <StatCard
-              value={stats.cancelled}
-              label="ยกเลิก"
-              icon="cancelled"
-              tone="var(--text-muted)"
-              href="/my-request?status=Cancelled"
-            />
-            {/* It links now (the user, 2026-09-24). It could not before: it was
-                counted from the two drafts endpoints while My Requests pinned
-                `Status <> 'Draft'`, so every destination showed a shorter list
-                than the tile promised. Both halves moved — the count comes from
-                the same rows as every tile beside it, and the page lists
-                drafts — so the number and the list are now the same set. */}
-            <StatCard
-              value={stats.unfinished}
-              label="ร่าง / ตีกลับ"
-              icon="draft"
-              tone="var(--status-draft-text)"
-              href="/my-request?status=Draft,Returned"
-            />
-          </div>
+          {/* The eight-tile stat strip that stood here is GONE (the user,
+              2026-09-24, asked for the whole strip to be hidden). What it
+              counted has not gone with it: `countHomeStats` still runs, the
+              greeting above still reads `stats.unfinished` from it, and the
+              `?status=` / `?from=&to=` filters the tiles linked to are still
+              honoured by My Requests — so restoring the strip is putting the
+              markup back, not rebuilding the rules underneath it. See
+              `home-stats.ts`, which says the same thing from the other side. */}
 
           {/* Continue where you left off */}
           {(resumable.length > 0 || pendingCount > 0) && (
