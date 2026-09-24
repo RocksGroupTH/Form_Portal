@@ -29,6 +29,8 @@
  * a runtime event. `/api/form-environment`, which both pages already fetch,
  * carries availability and no names.
  */
+import { formNameEn } from "@/lib/form-names";
+
 export const ACC_FORM_NAME_TH: Readonly<Record<string, string>> = {
   "AP-1": "เบิกค่าเดินทาง",
   "AP-2": "เบิกเงินทดรองจ่าย",
@@ -38,15 +40,33 @@ export const ACC_FORM_NAME_TH: Readonly<Record<string, string>> = {
 };
 
 /**
- * `AP-2 · เบิกเงินทดรองจ่าย`, or the bare code when nothing names it.
+ * `เบิกเงินทดรองจ่าย (Advance)`, or the bare code when nothing names it.
  *
- * `preferred` is the row's own `FormNameTh` where the caller has one: the
- * canonical name wins, and this map only fills the gap. A code with neither —
- * AP-11 and AP-15 are registered in `AccFormMaster` and have no card — still
- * renders, as itself, rather than disappearing from a filter that would then
- * silently exclude its rows.
+ * ## The precedence is INVERTED from what it was, and deliberately
+ *
+ * It used to lead with the code and prefer the row's own
+ * `AccFormMaster.FormNameTh` — the canonical name — falling back to this map.
+ * The user asked on 2026-09-24 for ชื่อไทย (ชื่อ ENG) and no code, and the
+ * canonical name cannot give that: it is the long, form-ish one that already
+ * carries its own parenthesis (`แบบฟอร์มเบิกค่าเดินทาง (ออฟฟิต)`), so
+ * appending an English name to it produces two brackets in a row. The short
+ * names here are the vocabulary Home teaches, which is where most people meet
+ * a form for the first time.
+ *
+ * So `preferred` is now the **fallback**, reached only for a code this map
+ * does not know. That is still the case it was added for — AP-11 and AP-15
+ * are registered in `AccFormMaster` and have no card — and such a code with
+ * neither still renders as itself, rather than disappearing from a filter
+ * that would then silently exclude its rows.
+ *
+ * **The table's ชื่อฟอร์ม column is unchanged** and still prints the
+ * canonical name, so the two now read differently for the same form. They
+ * answer the same question and the divergence is a cost, taken because the
+ * filter is a list of forms while the column is a property of a row.
  */
 export function formFilterLabel(code: string, preferred?: string | null): string {
-  const name = preferred?.trim() || ACC_FORM_NAME_TH[code] || "";
-  return name ? `${code} · ${name}` : code;
+  const th = ACC_FORM_NAME_TH[code] || preferred?.trim() || "";
+  if (!th) return code;
+  const en = formNameEn(code);
+  return en ? `${th} (${en})` : th;
 }

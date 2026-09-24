@@ -280,23 +280,15 @@ function AccountingFormCard({
       >
         <Icon size={17} />
       </span>
+      {/* No AP-nn badge (the user, 2026-09-24). The code is what a URL and
+          the form filter carry, not what somebody browsing the catalogue is
+          looking for — they came for เบิกค่าเดินทาง, and the Thai and English
+          names below say it. `code` itself is untouched and still does all
+          the work it did: `sortByFormCode` orders the cards by it,
+          `isFormAvailable` and `FormEnvironmentChip` resolve by it, and the
+          search still matches it, so typing "AP-17" finds the card even
+          though the card no longer prints it. */}
       <span className="min-w-0">
-        <span
-          className="inline-block text-[9.5px] font-extrabold px-1.5 py-0.5 mb-1"
-          style={{
-            borderRadius: 6,
-            // Recessed, but still legible. The card already reads as inactive
-            // from its flat surface and the watermark; the form code is the one
-            // thing on it that has to survive that, because finding out AP-17
-            // is coming rather than missing is the whole point of the card.
-            background: comingSoon
-              ? "color-mix(in srgb, var(--text-muted) 18%, transparent)"
-              : "var(--bg-badge)",
-            color: comingSoon ? "var(--text-muted)" : "var(--text-secondary)",
-          }}
-        >
-          {code}
-        </span>
         <span
           className="block text-[13px] font-bold"
           style={{ color: comingSoon ? "var(--text-secondary)" : "var(--text-primary)" }}
@@ -506,7 +498,11 @@ export function HomeCatalogue() {
               label="รออนุมัติจากคุณ"
               icon="inbox"
               tone="var(--status-pending-text)"
-              href="/my-work"
+              /* Explicit, though My Work opens on this box anyway: every
+                 other tile names the filter it counted, and a tile that
+                 leans on a default silently stops agreeing with its own
+                 label the day that default moves. */
+              href="/my-work?status=pending"
             />
             <StatCard
               value={stats.total}
