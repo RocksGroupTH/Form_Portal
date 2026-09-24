@@ -24,6 +24,7 @@ both are the kind of change that is cheap to make and expensive to make wrong.
 | 3 | The ERP description is **`ADC26-xxxxx` + the line's own รายละเอียด**, and the ADC number alone on a line that has none. | user, 2026-09-24 |
 | 4 | Both consoles, same release. | user, 2026-09-24 |
 | 5 | "Every Friday" is **not** expressed as `nths = [1,2,3,4,5]`. See the hazard below. | this design |
+| 6 | **The ADV number is left off the journal.** It reaches BC only through today's Description, and it is not moved to `employeeCode` to compensate. | user, 2026-09-24, told what would be lost |
 
 ---
 
@@ -209,12 +210,15 @@ const employeeCode = input.staffId != null ? String(input.staffId).slice(0, 35) 
 place, the Description, and this change removes it. After it, a posted AP-3 journal names the
 clearing and not the advance it clears.
 
-**That is accepted, not overlooked.** The ADC number is what somebody holding a posted journal
-can search AP-3 for, and AP-3's own screen shows which advance each clearing settles — so the
-link survives at one hop instead of zero. It is recorded here because it is a real loss for
-anyone reconciling inside BC alone, and because the cheap remedy, if that turns out to matter,
-is to put the ADV number in `employeeCode` the way AP-2 already does rather than to put it back
-in the Description and spend the characters again.
+**The user was told this and chose to lose it** (2026-09-24, "ไม่ต้องใส่ไปก่อนสำหรับ ADV"). The
+ADC number is what somebody holding a posted journal can search AP-3 for, and AP-3's own screen
+shows which advance each clearing settles — so the link survives at one hop instead of zero.
+
+Who this costs: **anyone reconciling inside Business Central alone**, who could read the advance
+off the line and now cannot. If that turns out to matter, the remedy is to put the ADV number in
+`employeeCode` the way AP-2 already does — BC maps it to External Document No., it is a field
+of its own, and it costs none of the Description's hundred characters. Putting it back into the
+Description would undo this change for the same reason it was made.
 
 ## What this is allowed to break, and what it is not
 
