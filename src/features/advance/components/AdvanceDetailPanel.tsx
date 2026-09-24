@@ -392,7 +392,7 @@ export function AdvanceDetailPanel({ requestId, onClose, onChanged }:
         <div className="px-4 py-3 flex flex-col gap-2" style={{ borderTop: "1px solid var(--border-card)" }}>
           {atApproval && atAccOfficer && (
             <div className="flex items-center gap-2">
-              <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
+              <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} hint="วันจ่ายทุกวันศุกร์ (เลื่อนกลับถ้าตรงวันหยุด)" />
               <button type="button" onClick={handleApprove} disabled={approving}
                 className="ml-auto text-[13px] font-bold px-4 py-2 rounded-lg cursor-pointer border-none disabled:opacity-60"
                 style={{ background: "var(--color-action, #A3121B)", color: "#fff" }}>

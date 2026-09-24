@@ -342,7 +342,7 @@ export function AdvanceApproveQueue() {
               <>
                 <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                   วันจ่าย:
-                  <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
+                  <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} hint="วันจ่ายทุกวันศุกร์ (เลื่อนกลับถ้าตรงวันหยุด)" />
                 </div>
                 <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                   <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />

@@ -8,11 +8,20 @@ interface PaymentDatePickerProps {
   value: string;
   onChange: (date: string) => void;
   allowedDates: string[]; // YYYY-MM-DD
+  /** The line under the calendar. Defaults to the fortnightly rule, which is
+   *  what AP-1 and AP-3 still pay on; AP-2 went weekly on 2026-09-24 and passes
+   *  its own. A shared component cannot state one form's calendar as a fact. */
+  hint?: string;
 }
 
 const DAY_HEADERS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
 
-export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDatePickerProps) {
+export function PaymentDatePicker({
+  value,
+  onChange,
+  allowedDates,
+  hint = "เฉพาะวันจ่ายที่กำหนด (ศุกร์ที่ 2/4 ของเดือน)",
+}: PaymentDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -165,7 +174,7 @@ export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDate
           </div>
 
           <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--border-card)" }}>
-            <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>เฉพาะวันจ่ายที่กำหนด (ศุกร์ที่ 2/4 ของเดือน)</p>
+            <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{hint}</p>
           </div>
         </div>
       )}
