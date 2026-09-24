@@ -38,6 +38,10 @@
 import type { ConnectionPool } from "mssql";
 import { sql } from "@/lib/acc/pool";
 import { perFormPredicate } from "@/lib/acc/per-form-config";
+import {
+  BOOKING_AREAS,
+  BOOKING_AREA_COLUMN,
+} from "@/lib/acc/travel-booking/booking-areas";
 import type { StepApprover, StepApproverMap } from "@/lib/acc/step-approvers";
 
 /** Rows as the rosters return them, before the brand expansion. */
@@ -115,25 +119,30 @@ async function scopeByApprover(
 }
 
 /**
- * `ApproverId → TabKeys`, read EXACTLY as stored.
+ * `ApproverId → the AP-17 menus that row holds`, from its own columns.
  *
- * Deliberately not `scopeByApprover`, which upper-cases every value because
- * brand codes are case-insensitive. A `TabKey` is a camelCase identifier
- * (`bookingQueue`, `accountApproval`) compared for equality everywhere else in
- * this application, so putting it through a brand normaliser would work only
- * for as long as both sides remembered to shout.
+ * **`CanQueue` / `CanAccount` / `CanReport`, not `AccBookingApproverTab`.**
+ * This read was a tab-row read for one commit on 2026-09-24 and it named one
+ * person per step while the desk actually had six, because ACC Portal — the
+ * sibling writing these same roster rows — has stored the answer in columns
+ * since migration 124. See `travel-booking/booking-areas.ts` for the
+ * measurement and for why the rows could never have survived anyway.
+ *
+ * It is a column list rather than a join, so it costs the roster read
+ * nothing; `BOOKING_AREA_COLUMN` is interpolated rather than typed out so a
+ * fourth area cannot be added without a column to read it from.
  */
 async function menusByApprover(pool: ConnectionPool): Promise<Map<number, string[]>> {
-  const r = await pool.request().query<{ ApproverId: number; TabKey: string }>(
-    `SELECT ApproverId, TabKey FROM [dbo].[AccBookingApproverTab] ORDER BY ApproverId, TabKey`,
+  const r = await pool.request().query<Record<string, number | boolean>>(
+    `SELECT Id, ${BOOKING_AREAS.map((a) => BOOKING_AREA_COLUMN[a.key]).join(", ")}
+       FROM [dbo].[AccBookingApprover]`,
   );
   const out = new Map<number, string[]>();
   for (const row of r.recordset) {
-    const key = (row.TabKey ?? "").trim();
-    if (!key) continue;
-    const list = out.get(row.ApproverId) ?? [];
-    list.push(key);
-    out.set(row.ApproverId, list);
+    out.set(
+      Number(row.Id),
+      BOOKING_AREAS.filter((a) => !!row[BOOKING_AREA_COLUMN[a.key]]).map((a) => a.key),
+    );
   }
   return out;
 }
@@ -188,9 +197,9 @@ export async function loadStepApprovers(pool: ConnectionPool): Promise<StepAppro
     })(),
 
     /* AP-17 — two steps over one roster, and since 2026-09-24 they are NOT the
-       same people. The Admin desk is whoever is ticked for คิวจอง and the HR
-       sign-off whoever is ticked for อนุมัติ (HR), because those menu ticks
-       became AUTHORITY rather than sight that day — see
+       same people. The Admin desk is whoever holds `CanQueue` and the HR
+       sign-off whoever holds `CanAccount`, because those menu ticks became
+       AUTHORITY rather than sight that day — see
        `travel-booking/require-booking-menu.ts`, which is the gate this list
        has to agree with. Listing the whole roster for both steps, as this did
        until then, now names people the approve button refuses.
@@ -219,8 +228,8 @@ export async function loadStepApprovers(pool: ConnectionPool): Promise<StepAppro
             const brands = scope.get(r.Id);
             return { name: displayName(r), brands: brands && brands.length > 0 ? brands : null };
           });
-      put("AP-17", "ADMIN", withMenu("bookingQueue"));
-      put("AP-17", "ACCOUNT", withMenu("accountApproval"));
+      put("AP-17", "ADMIN", withMenu("queue"));
+      put("AP-17", "ACCOUNT", withMenu("account"));
     })(),
 
     /* AP-4 — zero ticks is zero brands, the opposite of AP-1's fail-open, and

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdminRole } from "@/lib/roles";
-import { resolveBookingTabsByEmail } from "@/lib/acc/travel-booking/booking-approver-tabs";
-import type { BookingMenuKey } from "@/lib/acc/travel-booking/settings-tabs";
+import { resolveBookingAreasByEmail } from "@/lib/acc/travel-booking/booking-approver-areas";
+import { BOOKING_AREAS, type BookingAreaKey } from "@/lib/acc/travel-booking/booking-areas";
 
 /**
  * **An AP-17 menu tick decides who may ACT, not just who may look — since
@@ -40,20 +40,20 @@ import type { BookingMenuKey } from "@/lib/acc/travel-booking/settings-tabs";
  */
 export async function requireBookingMenu(
   user: { email?: string | null; role?: string | null },
-  menu: BookingMenuKey,
+  menu: BookingAreaKey,
 ): Promise<NextResponse | null> {
   if (isAdminRole(user.role ?? "")) return null;
 
-  const tabs = await resolveBookingTabsByEmail(user.email);
-  if (tabs.indexOf(menu) >= 0) return null;
+  const areas = await resolveBookingAreasByEmail(user.email);
+  if (areas.indexOf(menu) >= 0) return null;
 
+  /* Named from `BOOKING_AREAS` rather than branched on, so a third or
+     fourth area cannot reach a refusal that describes a different menu. */
+  const label = BOOKING_AREAS.filter((a) => a.key === menu)[0]?.label ?? menu;
   return NextResponse.json(
     {
       ok: false,
-      error:
-        menu === "bookingQueue"
-          ? "ไม่มีสิทธิ์ — ต้องได้รับสิทธิ์เมนู คิวจอง จึงจะดำเนินการขั้นตอน Admin ได้"
-          : "ไม่มีสิทธิ์ — ต้องได้รับสิทธิ์เมนู อนุมัติ (HR) จึงจะดำเนินการขั้นตอน HR ได้",
+      error: `ไม่มีสิทธิ์ — ต้องได้รับสิทธิ์เมนู ${label} จึงจะดำเนินการขั้นตอนนี้ได้`,
     },
     { status: 403 },
   );

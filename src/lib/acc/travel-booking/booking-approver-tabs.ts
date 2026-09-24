@@ -1,6 +1,6 @@
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
-import { filterStorableBookingKeys } from "@/lib/acc/travel-booking/settings-tabs";
+import { filterGrantableBookingTabKeys } from "@/lib/acc/travel-booking/settings-tabs";
 
 /**
  * Per-approver AP-17 settings-tab grants, stored in `AccBookingApproverTab`
@@ -15,6 +15,11 @@ import { filterStorableBookingKeys } from "@/lib/acc/travel-booking/settings-tab
  * pair is asserted by `npm run check:alignment`.
  *
  * The rows ARE the granted set: no rows means no grants, never "all".
+ *
+ * **Settings tabs ONLY.** AP-17's menu grants are columns on the roster row
+ * (`booking-areas.ts`); they were rows here until 2026-09-24 and must not
+ * come back, because ACC Portal rewrites this table through a filter that
+ * knows tabs alone and would delete them again.
  */
 export async function loadBookingTabsByApproverIds(
   approverIds: number[],
@@ -69,7 +74,7 @@ export async function loadBookingTabsByApproverIds(
   }
 
   for (const id of approverIds) {
-    map.set(id, filterStorableBookingKeys(byApprover.get(id) ?? []));
+    map.set(id, filterGrantableBookingTabKeys(byApprover.get(id) ?? []));
   }
   return map;
 }
@@ -91,7 +96,7 @@ export async function setBookingApproverTabs(
   approverId: number,
   keys: string[],
 ): Promise<void> {
-  const wanted = filterStorableBookingKeys(keys);
+  const wanted = filterGrantableBookingTabKeys(keys);
   await writeBothPools(async (tx) => {
     await tx
       .request()

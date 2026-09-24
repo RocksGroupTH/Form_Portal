@@ -74,7 +74,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // And the ACCOUNT step is the HR desk's, whose authority is the อนุมัติ (HR)
   // tick since 2026-09-24. Choosing the payout date is that desk's own work,
   // so it is gated with the approval rather than left beside it.
-  const menu = await requireBookingMenu(session.user, "accountApproval");
+  const menu = await requireBookingMenu(session.user, "account");
   if (menu) return menu;
 
   try {

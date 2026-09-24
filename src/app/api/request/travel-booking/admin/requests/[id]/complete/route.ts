@@ -39,7 +39,7 @@ export async function POST(
   /* The Admin desk belongs to the people ticked for คิวจอง, and since
      2026-09-24 that tick is authority rather than sight — see
      `requireBookingMenu`. */
-  const menu = await requireBookingMenu(session.user, "bookingQueue");
+  const menu = await requireBookingMenu(session.user, "queue");
   if (menu) return menu;
 
   try {

@@ -181,7 +181,7 @@ export async function POST(
       // And which people inside the area: since 2026-09-24 the คิวจอง tick is
       // authority rather than sight, and attaching or removing booking evidence
       // is that desk's own work — see `require-booking-menu.ts`.
-      const menu = await requireBookingMenu(session.user, "bookingQueue");
+      const menu = await requireBookingMenu(session.user, "queue");
       if (menu) return menu;
       // `CurrentStepCode` must be checked alongside `Status`: since the
       // accounting step split ADMIN and ACCOUNT apart, `Status` alone stays
@@ -445,7 +445,7 @@ export async function DELETE(
       // And which people inside the area: since 2026-09-24 the คิวจอง tick is
       // authority rather than sight, and attaching or removing booking evidence
       // is that desk's own work — see `require-booking-menu.ts`.
-      const menu = await requireBookingMenu(session.user, "bookingQueue");
+      const menu = await requireBookingMenu(session.user, "queue");
       if (menu) return menu;
       // Same `CurrentStepCode` scoping as the POST handler above — booking_*
       // attachments only, not the idcard branch.

@@ -15,10 +15,17 @@ import path from "node:path";
  *
  * What makes this guard worth more than the usual presence check is the
  * **pairing**: the key each route passes has to match the step it acts on.
- * `BookingMenuKey` is a two-member union of strings, so handing the Admin desk
- * `"accountApproval"` type-checks perfectly and silently gates the booking
- * queue on the HR tick — the same shape as feeding `returnVehicle` the
+ * `BookingAreaKey` is a three-member union of strings, so handing the Admin
+ * desk `"account"` type-checks perfectly and silently gates the booking queue
+ * on the HR tick — the same shape as feeding `returnVehicle` the
  * `goVehicleId`, which `id-card-gate-guard.test.ts` exists to catch.
+ *
+ * **And the storage itself is pinned**, because getting that wrong is how this
+ * shipped broken the first time: the grants are `CanQueue` / `CanAccount` /
+ * `CanReport` columns on the roster row, which ACC Portal reads and writes
+ * too. For one commit they were `AccBookingApproverTab` rows instead — a
+ * second answer to one question, which named one approver where the desk had
+ * six, and which the sibling app deleted on its next settings save.
  */
 
 const API = path.resolve(process.cwd(), "src/app/api/request/travel-booking");
@@ -50,12 +57,12 @@ const src = (r: string) => code(path.join(API, r));
  * manager, so the key they pass is a branch rather than a constant. They have
  * their own test below.
  */
-const SINGLE_KEY: Record<string, "bookingQueue" | "accountApproval"> = {
-  "admin/requests/[id]/booking/route.ts": "bookingQueue",
-  "admin/requests/[id]/complete/route.ts": "bookingQueue",
-  "requests/[id]/account-approve/route.ts": "accountApproval",
-  "requests/[id]/payment-date/route.ts": "accountApproval",
-  "requests/[id]/exchange-rate/route.ts": "accountApproval",
+const SINGLE_KEY: Record<string, "queue" | "account"> = {
+  "admin/requests/[id]/booking/route.ts": "queue",
+  "admin/requests/[id]/complete/route.ts": "queue",
+  "requests/[id]/account-approve/route.ts": "account",
+  "requests/[id]/payment-date/route.ts": "account",
+  "requests/[id]/exchange-rate/route.ts": "account",
 };
 
 const BRANCHING = ["requests/[id]/reject/route.ts", "requests/[id]/return/route.ts"];
@@ -87,7 +94,7 @@ test("each single-desk act route asks for ITS OWN menu, and no other", () => {
       `${r} should call requireBookingMenu exactly once; found ${calls.length}`,
     );
     const wanted = SINGLE_KEY[r];
-    const other = wanted === "bookingQueue" ? "accountApproval" : "bookingQueue";
+    const other = wanted === "queue" ? "account" : "queue";
     assert.ok(
       calls[0].indexOf(`"${wanted}"`) >= 0,
       `${r} acts on the ${wanted} desk's step but does not pass that key: ${calls[0]}`,
@@ -123,7 +130,7 @@ test("both booking-evidence branches take the คิวจอง tick", () => {
   assert.equal(calls.length, 2, `${FILES} should gate its POST and its DELETE`);
   for (const c of calls) {
     assert.ok(
-      c.indexOf('"bookingQueue"') >= 0,
+      c.indexOf('"queue"') >= 0,
       `booking evidence is the Admin desk's work, so it takes คิวจอง: ${c}`,
     );
   }
@@ -155,7 +162,7 @@ test("reject and return map the STAGE to the matching desk, never crossed", () =
   /* These two are reachable at the manager step as well, where neither desk is
      involved and no menu is required — which is why the key is `null` there and
      the call sits behind an `if`. The cross is the failure to catch: sending
-     `atAccountStage` to `bookingQueue` gates the HR desk on the Admin tick. */
+     `atAccountStage` to `queue` gates the HR desk on the Admin tick. */
   for (const r of BRANCHING) {
     const s = src(r);
     const m = /const\s+menuKey\s*=([\s\S]*?);\n/.exec(s);
@@ -164,8 +171,8 @@ test("reject and return map the STAGE to the matching desk, never crossed", () =
 
     const acct = expr.indexOf("atAccountStage");
     const admin = expr.indexOf("atAdminStage");
-    const acctKey = expr.indexOf('"accountApproval"');
-    const adminKey = expr.indexOf('"bookingQueue"');
+    const acctKey = expr.indexOf('"account"');
+    const adminKey = expr.indexOf('"queue"');
     assert.ok(acct >= 0 && admin >= 0, `${r}: menuKey must branch on BOTH stages: ${expr}`);
     assert.ok(acctKey >= 0 && adminKey >= 0, `${r}: menuKey must name both keys: ${expr}`);
 
@@ -218,27 +225,53 @@ test("admins pass the gate, because they hold every menu by construction", () =>
     "requireBookingMenu no longer lets an admin through before reading any row",
   );
   assert.ok(
-    s.indexOf("isAdminRole(") < s.indexOf("resolveBookingTabsByEmail("),
+    s.indexOf("isAdminRole(") < s.indexOf("resolveBookingAreasByEmail("),
     "the admin arm must come BEFORE the roster read, or an admin who is not on " +
       "AccBookingApprover is refused by the empty list",
   );
 });
 
+test("the gate reads the roster COLUMNS, never the tab table", () => {
+  /* `AccBookingApproverTab` is written by ACC Portal too, through a filter
+     that knows settings tabs alone and deletes everything else — so a menu
+     grant stored there is deleted the next time an admin ticks a settings tab
+     in the sibling app. That is not a race: it is every save. Between
+     2026-08-27 and 2026-09-24 this app stored them there anyway, and once the
+     tick became authority the same click silently revoked approval rights. */
+  const s = code(path.resolve(process.cwd(), "src/lib/acc/travel-booking/require-booking-menu.ts"));
+  assert.doesNotMatch(
+    s,
+    /AccBookingApproverTab|resolveBookingTabsByEmail/,
+    "requireBookingMenu is reading the tab table again — the sibling app deletes those rows",
+  );
+  assert.match(s, /resolveBookingAreasByEmail/);
+});
+
 test("the card lists the same people the gate admits", () => {
   /* The rule that made this necessary: the card answers "who may act on this
      step", and while sight and authority disagreed there was no honest list to
-     draw. `step-approvers-load.ts` must therefore read the SAME tick table this
+     draw. `step-approvers-load.ts` must therefore read the SAME columns this
      gate reads, and give each AP-17 step its own key — listing one roster for
-     both steps is what it did until 2026-09-24. */
+     both steps is what it did until 2026-09-24, and reading the tab table is
+     what it did for the one commit after that. */
   const s = code(path.resolve(process.cwd(), "src/lib/acc/step-approvers-load.ts"));
-  assert.match(s, /AccBookingApproverTab/, "the AP-17 card no longer reads the menu ticks at all");
+  assert.match(
+    s,
+    /BOOKING_AREA_COLUMN/,
+    "the AP-17 card is not reading the roster's own menu columns",
+  );
+  assert.doesNotMatch(
+    s,
+    /AccBookingApproverTab/,
+    "the AP-17 card is reading the tab table again — ACC Portal deletes those rows",
+  );
   const admin = /put\("AP-17",\s*"ADMIN",\s*([^)]*)\)/.exec(s);
   const account = /put\("AP-17",\s*"ACCOUNT",\s*([^)]*)\)/.exec(s);
   assert.ok(admin && account, "AP-17's two steps are no longer both populated");
-  assert.match(admin![1], /bookingQueue/, "AP-17's ADMIN step is not filtered to the คิวจอง tick");
+  assert.match(admin![1], /"queue"/, "AP-17's ADMIN step is not filtered to the คิวจอง tick");
   assert.match(
     account![1],
-    /accountApproval/,
+    /"account"/,
     "AP-17's ACCOUNT step is not filtered to the อนุมัติ (HR) tick",
   );
   assert.notEqual(

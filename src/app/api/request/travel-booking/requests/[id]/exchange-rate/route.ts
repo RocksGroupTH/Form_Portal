@@ -63,7 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // This route's own docblock says it is gated the way the form's other
   // ACCOUNT-step routes are, and since 2026-09-24 that includes the อนุมัติ (HR)
   // tick — correcting the rate rewrites what every booking figure is worth.
-  const menu = await requireBookingMenu(session.user, "accountApproval");
+  const menu = await requireBookingMenu(session.user, "account");
   if (menu) return menu;
 
   try {

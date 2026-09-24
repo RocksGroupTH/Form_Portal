@@ -34,7 +34,7 @@ async function requireAdminContext(
   /* And being allowed the brand is not the same as being the Admin desk.
      Filling the booking rows in IS that desk's work, so it takes the same
      คิวจอง tick the เสร็จสิ้น button takes — see `requireBookingMenu`. */
-  const menu = await requireBookingMenu(session.user, "bookingQueue");
+  const menu = await requireBookingMenu(session.user, "queue");
   if (menu) return menu;
   return { requestId, userId: Number(session.user.id), email: session.user.email ?? null };
 }

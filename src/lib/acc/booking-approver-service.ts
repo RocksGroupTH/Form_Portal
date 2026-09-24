@@ -2,6 +2,12 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
 import { loadBookingBrandsByApproverIds } from "@/lib/acc/travel-booking/booking-approver-brands";
 import { loadBookingTabsByApproverIds } from "@/lib/acc/travel-booking/booking-approver-tabs";
+import { loadBookingAreasByApproverIds } from "@/lib/acc/travel-booking/booking-approver-areas";
+import {
+  BOOKING_AREAS,
+  BOOKING_AREA_COLUMN,
+  type BookingAreaKey,
+} from "@/lib/acc/travel-booking/booking-areas";
 
 export interface BookingApproverRow {
   id: number;
@@ -25,6 +31,18 @@ export interface BookingApproverRow {
    * There is deliberately no representable "sees no brands".
    */
   brandCodes: string[] | null;
+  /**
+   * Which of AP-17's three menus this person may open — `CanQueue` /
+   * `CanAccount` / `CanReport` on this very row (migration 124), **the same
+   * columns ACC Portal reads and writes**.
+   *
+   * A third meaning of an empty list, and the three must be kept apart:
+   * `settingsTabs: []` is no grants, `brandCodes: null` is every brand, and
+   * `areas: []` is **no menus** — a roster member who can open nothing. The
+   * columns default to 1, so that state is reached only by an admin
+   * deliberately unticking all three.
+   */
+  areas: BookingAreaKey[];
 }
 
 /**
@@ -67,10 +85,16 @@ export async function listBookingApprovers(
   // opposite direction from the tab loader above and for the opposite reason:
   // those rows grant, these narrow.
   const brandMap = await loadBookingBrandsByApproverIds(ids);
+  // And the menu grants, which are columns on the rows already selected
+  // above rather than a child table — read through their own loader anyway,
+  // so the missing-column degrade lives in one place and this function does
+  // not have to name the columns twice.
+  const areaMap = await loadBookingAreasByApproverIds(ids);
   return rows.map((row) => ({
     ...row,
     settingsTabs: tabMap.get(row.id) ?? [],
     brandCodes: brandMap.get(row.id) ?? null,
+    areas: areaMap.get(row.id) ?? [],
   }));
 }
 
@@ -95,31 +119,54 @@ export async function getBookingApproverIdByStaffId(
 }
 
 /** Add or update by StaffId — the natural key, so both databases agree. */
+/**
+ * Add or update by StaffId — the natural key, so both databases agree.
+ *
+ * **`areas` is three-valued exactly as the route's `settingsTabs` is:**
+ * omitted leaves the columns as they are, an array is the whole granted set,
+ * and `[]` revokes all three. Adding somebody from the directory sends no
+ * `areas`, so the INSERT takes migration 124's `DEFAULT 1` and a new approver
+ * arrives holding every menu — which is what being on this roster meant
+ * before 124 split it, and what ACC Portal's own add does.
+ *
+ * The SET fragment is BUILT from `BOOKING_AREAS` rather than typed out, so a
+ * fourth area cannot be added to that list and silently miss the write that
+ * stores it.
+ */
 export async function upsertBookingApprover(a: {
   staffId: number;
   email: string;
   displayName: string;
   isActive?: boolean;
   createdBy?: number | null;
+  areas?: BookingAreaKey[];
 }): Promise<void> {
+  const setAreas = a.areas !== undefined;
+  const granted = a.areas ?? [];
   await writeBothPools(async (tx) => {
-    await tx
+    const req = tx
       .request()
       .input("staffId", sql.Int, a.staffId)
       .input("email", sql.NVarChar(200), a.email)
       .input("name", sql.NVarChar(200), a.displayName)
       .input("active", sql.Bit, a.isActive === undefined ? true : a.isActive)
-      .input("by", sql.Int, a.createdBy ?? null)
-      .query(`
-        MERGE [dbo].[AccBookingApprover] WITH (HOLDLOCK) AS t
-        USING (SELECT @staffId AS StaffId) AS s ON t.StaffId = s.StaffId
-        WHEN MATCHED THEN UPDATE SET
-          Email = @email, DisplayName = @name, IsActive = @active,
-          UpdatedBy = @by, UpdatedAt = SYSDATETIME()
-        WHEN NOT MATCHED THEN
-          INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)
-          VALUES (@staffId, @email, @name, @active, @by);
-      `);
+      .input("by", sql.Int, a.createdBy ?? null);
+    for (const area of BOOKING_AREAS) {
+      req.input(`area_${area.key}`, sql.Bit, granted.indexOf(area.key) >= 0);
+    }
+    const areaSet = BOOKING_AREAS.map(
+      (area) => `, ${BOOKING_AREA_COLUMN[area.key]} = @area_${area.key}`,
+    ).join("");
+    await req.query(`
+      MERGE [dbo].[AccBookingApprover] WITH (HOLDLOCK) AS t
+      USING (SELECT @staffId AS StaffId) AS s ON t.StaffId = s.StaffId
+      WHEN MATCHED THEN UPDATE SET
+        Email = @email, DisplayName = @name, IsActive = @active,
+        UpdatedBy = @by, UpdatedAt = SYSDATETIME()${setAreas ? areaSet : ""}
+      WHEN NOT MATCHED THEN
+        INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)
+        VALUES (@staffId, @email, @name, @active, @by);
+    `);
   });
 }
 

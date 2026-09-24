@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { isBookingApprover } from "@/lib/acc/booking-access";
 import { isAdminRole } from "@/lib/roles";
 import { resolveBookingTabsByEmail } from "@/lib/acc/travel-booking/booking-approver-tabs";
+import { resolveBookingAreasByEmail } from "@/lib/acc/travel-booking/booking-approver-areas";
 
 /* ── GET /api/request/travel-booking/access — viewer's AP-17 capabilities ──
  *
@@ -22,6 +23,14 @@ import { resolveBookingTabsByEmail } from "@/lib/acc/travel-booking/booking-appr
  * menu visibility only: the settings routes themselves are gated by
  * `requireBookingSettingsTab`, which resolves the grant server-side on every
  * call.
+ *
+ * **`areas` is a DIFFERENT table's answer and not the same kind of flag.**
+ * The three menu grants are `CanQueue` / `CanAccount` / `CanReport` on the
+ * roster row — the columns ACC Portal writes too — and since 2026-09-24 they
+ * are real authority rather than sight: `requireBookingMenu` refuses an
+ * action without them. So unlike `settingsTabs`, these must be resolved from
+ * the same source the routes will consult, or a page draws buttons its own
+ * server then answers 403 for.
  */
 export async function GET(_req: NextRequest) {
   const session = await requireAuth();
@@ -41,11 +50,20 @@ export async function GET(_req: NextRequest) {
     // settings half — while the area half is answered from a read that
     // succeeded.
     let settingsTabs: string[] = [];
+    let areas: string[] = [];
     if (!admin) {
       try {
         settingsTabs = await resolveBookingTabsByEmail(email);
       } catch (err) {
         console.error("[travel-booking/access] grant read failed — reporting no grants", err);
+      }
+      // Its own try for the reason the one above has one: the two reads
+      // answer different questions from different storage, and a settings
+      // table this person does not use must not cost them their menus.
+      try {
+        areas = await resolveBookingAreasByEmail(email);
+      } catch (err) {
+        console.error("[travel-booking/access] area read failed — reporting no menus", err);
       }
     }
     const canSettings = admin || settingsTabs.length > 0;
@@ -60,8 +78,10 @@ export async function GET(_req: NextRequest) {
         admin,
         settingsTabs,
         canSettings,
-        bookingQueue: admin || settingsTabs.indexOf("bookingQueue") !== -1,
-        accountApproval: admin || settingsTabs.indexOf("accountApproval") !== -1,
+        areas,
+        bookingQueue: admin || areas.indexOf("queue") !== -1,
+        accountApproval: admin || areas.indexOf("account") !== -1,
+        bookingReport: admin || areas.indexOf("report") !== -1,
       },
     });
   } catch (err) {

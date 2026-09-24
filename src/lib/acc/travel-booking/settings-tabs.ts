@@ -112,59 +112,23 @@ export function decideBookingTabAccess(
 }
 
 /**
- * The two AP-17 work queues an admin may hand to an individual approver.
+ * **AP-17's MENU grants are not in this table and no longer live in this
+ * file** — they are `CanQueue` / `CanAccount` / `CanReport` on the roster
+ * row, and the vocabulary is `@/lib/acc/travel-booking/booking-areas`.
  *
- * Stored in the same `AccBookingApproverTab` rows as the settings tabs above —
- * the table has no CHECK on `TabKey`, which is what makes a second vocabulary
- * possible without a migration, and what makes keeping them apart in code
- * essential. `isGrantableBookingTabKey` must refuse these and `isBookingMenuKey`
- * must refuse those, or a menu grant becomes a way past
- * `requireBookingSettingsTab` into the configuration routes.
+ * From 2026-08-27 to 2026-09-24 this module carried a second vocabulary —
+ * `bookingQueue` and `accountApproval` — stored as extra `TabKey` rows
+ * beside the settings tabs, with `filterStorableBookingKeys` widening the
+ * filter to let them through. It was removed rather than fixed, because the
+ * premise was wrong: **ACC Portal reads and writes these same
+ * `AccBookingApprover` rows**, had used migration 124's columns since
+ * 2026-08-29, and its own tab writer deletes an approver's whole `TabKey`
+ * set and rewrites it through a **settings-tabs-only** filter — so every
+ * menu row this app stored was deleted the next time an admin ticked a
+ * settings tab over there.
  *
- * Membership of `AccBookingApprover` is still what lets somebody *act*; a tick
- * only decides what they see.
+ * So `filterGrantableBookingTabKeys` is the only filter this table needs
+ * again, on both read and write, exactly as ACC Portal's is. Anything that
+ * widens it is re-opening that hole — see `booking-areas.ts` for the
+ * measurement.
  */
-export type BookingMenuKey = "bookingQueue" | "accountApproval";
-
-const BOOKING_MENU_LABELS: Record<BookingMenuKey, string> = {
-  bookingQueue: "คิวจองที่พัก/ตั๋วโดยสาร",
-  accountApproval: "อนุมัติ (HR)",
-};
-
-const BOOKING_MENU_ORDER: readonly BookingMenuKey[] = ["bookingQueue", "accountApproval"];
-
-export const GRANTABLE_BOOKING_MENUS: readonly { key: BookingMenuKey; label: string }[] =
-  BOOKING_MENU_ORDER.map((key) => ({ key, label: BOOKING_MENU_LABELS[key] }));
-
-export function isBookingMenuKey(key: string): boolean {
-  const k = String(key).trim();
-  for (const m of GRANTABLE_BOOKING_MENUS) if (m.key === k) return true;
-  return false;
-}
-
-/**
- * Everything `AccBookingApproverTab` may legitimately hold: settings tabs **and**
- * menu grants.
- *
- * Separate from `filterGrantableBookingTabKeys` on purpose, and this is the
- * distinction the whole design rests on. That one answers "may this grant open a
- * settings route" and must stay narrow; this one answers "may this row exist",
- * and menu keys must survive it or a tick saves nothing.
- *
- * The pre-flight scan caught the version of this plan that had no such split:
- * `booking-approver-tabs.ts` applies the grantable filter on **both** read (:72)
- * and write (:94), so a menu key was dropped twice over and the feature silently
- * did nothing.
- */
-export function filterStorableBookingKeys(keys: string[]): string[] {
-  const seen: Record<string, true> = {};
-  const out: string[] = [];
-  for (const raw of keys) {
-    const k = String(raw).trim();
-    if ((isGrantableBookingTabKey(k) || isBookingMenuKey(k)) && !seen[k]) {
-      seen[k] = true;
-      out.push(k);
-    }
-  }
-  return out;
-}

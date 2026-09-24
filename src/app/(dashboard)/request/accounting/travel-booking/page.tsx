@@ -18,11 +18,15 @@ interface HubCard {
   adminOnly?: boolean;
   accountOnly?: boolean;
   /**
-   * The AccBookingApproverTab menu key that ALSO opens this card, on top of
-   * roster membership — see the filter below for why it is "also" and not
-   * "instead".
+   * The menu grant that ALSO opens this card, on top of roster membership —
+   * see the filter below for why it is "also" and not "instead".
+   *
+   * These are the roster row's own `CanQueue` / `CanAccount` / `CanReport`
+   * columns (`booking-areas.ts`), **not** `AccBookingApproverTab` rows, which
+   * is where this app kept a second answer until 2026-09-24 while ACC Portal
+   * used the columns.
    */
-  menu?: "bookingQueue" | "accountApproval";
+  menu?: "bookingQueue" | "accountApproval" | "bookingReport";
 }
 
 const CARDS: HubCard[] = [
@@ -48,6 +52,12 @@ const CARDS: HubCard[] = [
     href: "/request/accounting/travel-booking-report",
     icon: <FileSpreadsheet size={20} />,
     accountOnly: true,
+    // Gated from 2026-09-24, when this app adopted the roster's own menu
+    // columns: `CanReport` had been ticked for seven of eight people and
+    // unticked for one, by an admin working in ACC Portal, and honouring the
+    // other two columns while ignoring this one would have made the same
+    // grid mean two different things.
+    menu: "bookingReport",
   },
   {
     title: "ตั้งค่า",
@@ -94,9 +104,10 @@ export default function TravelBookingHubPage() {
     canSettings,
     bookingQueue,
     accountApproval,
+    bookingReport,
     error: accessError,
   } = useBookingAccess();
-  const menuGrants = { bookingQueue, accountApproval };
+  const menuGrants = { bookingQueue, accountApproval, bookingReport };
   const role = session?.user?.role;
   const isAdmin = role === "IT Admin" || role === "System Admin";
   const cards = CARDS.filter((c) => {
@@ -109,17 +120,19 @@ export default function TravelBookingHubPage() {
       if (c.accountOnly) return false;
       return true;
     }
-    // Roster membership OR the menu grant — deliberately "or", not the
-    // grant alone. Measured 2026-08-27: AccBookingApproverTab holds **zero**
-    // rows while AccBookingApprover holds two active ones, and one of those
-    // two is a Staff-role Accounting Manager. Gating on the grant alone would
-    // have taken the booking queue away from exactly the person the queue is
-    // for, the day this shipped. The grant therefore *adds* reach — it opens a
-    // menu to somebody who is not on the roster — rather than being a second
-    // thing a roster member must also be given.
+    // Roster membership OR the menu grant — still deliberately "or", and the
+    // reason has changed rather than gone. It used to be that the grant table
+    // was empty (measured 2026-08-27) so gating on it alone would have taken
+    // the queue from the one person it was for. The columns that replaced it
+    // default to granted, so that particular emptiness cannot recur — but an
+    // admin whose role opens every page still has no roster row, and `admin`
+    // is folded into each flag by the access endpoint rather than by a fourth
+    // arm here.
     //
-    // Nothing is leaked by showing a card: the pages behind both queues
-    // authorize with canAccessBookingArea server-side regardless.
+    // Nothing is leaked by showing a card: the pages behind all three
+    // authorize with canAccessBookingArea server-side regardless, and the
+    // ACTIONS behind the two queues additionally re-read the same column
+    // through `requireBookingMenu`.
     if (c.accountOnly && !canAccount && !(c.menu && menuGrants[c.menu])) return false;
     return true;
   });

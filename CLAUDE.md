@@ -1025,19 +1025,74 @@ ACC Portal gates both forms with AP-1's `AccApprover`. **We deliberately do
 not**: someone who arranges hotel bookings should not thereby gain the
 travel-expense approval queue, or the reverse.
 
-**`AccBookingApproverTab` carries two vocabularies since 2026-08-27, and keeping
-them apart is the design.** Beside the five settings-tab keys it now holds two
-**menu** keys — `bookingQueue` and `accountApproval` — granting sight of the
-Admin booking queue and the accounting sign-off queue. **No migration**: the
-table has no CHECK on `TabKey`, which is what makes a second vocabulary possible
-without one, and exactly what makes the code-side separation load-bearing.
-`isGrantableBookingTabKey` must refuse a menu key and `isBookingMenuKey` must
-refuse a tab key, or a menu tick becomes a way past `requireBookingSettingsTab`
-into the configuration routes. Storage goes through `filterStorableBookingKeys`
-(tabs ∪ menus) while authorization stays on the narrow grantable filter — and
-that split is the whole feature, because `booking-approver-tabs.ts` applies its
-filter on **both** read and write, so before it a menu tick was dropped twice
-over and saved nothing at all.
+**AP-17's menu grants are COLUMNS on the roster row, and they are SHARED WITH
+ACC PORTAL — `CanQueue` / `CanAccount` / `CanReport` (migration 124).** The
+vocabulary is `src/lib/acc/travel-booking/booking-areas.ts` (pure) over
+`booking-approver-areas.ts` (pools), keys `queue` · `account` · `report`.
+
+**This replaced a second, private answer to the same question, and the
+correction is worth reading before touching any of it.** From 2026-08-27 to
+2026-09-24 this application stored those grants as extra `TabKey` rows in
+`AccBookingApproverTab` under its own names, `bookingQueue` and
+`accountApproval`, with `filterStorableBookingKeys` widening that table's
+filter to let them through. The premise was wrong in a way nothing here could
+see: **ACC Portal reads and writes these same `AccBookingApprover` rows in the
+same database** and had been using 124's columns since 2026-08-29.
+
+- **Measured 2026-09-24, identically in both form databases**: the columns said
+  six people could work the booking queue and six the sign-off; our rows held
+  **two in total**. The `รออนุมัติโดย` card therefore named one person per step
+  and — once the tick became real authority earlier the same day — the routes
+  refused everybody else, while the admin who had ticked them in ACC Portal had
+  every reason to think the job was done. It surfaced as *"ทำไมไม่เหมือนกับของ
+  ACC Portal"*, which is the right question.
+- **The sharper half was silent data loss.** ACC Portal's own
+  `setBookingApproverTabs` deletes an approver's whole tab set and rewrites it
+  through `filterGrantableBookingTabKeys` — **settings tabs only** — so every
+  menu row this app stored was deleted the next time an admin ticked a settings
+  tab over there. Not a race: every save. While the tick meant "sees a menu"
+  that cost a menu; once it meant "may approve", the same click silently revoked
+  AP-17 approval authority here.
+- **So `filterStorableBookingKeys`, `isBookingMenuKey`, `BookingMenuKey` and
+  `GRANTABLE_BOOKING_MENUS` are DELETED**, and `AccBookingApproverTab` is back
+  to one filter on both read and write, exactly as the sibling's is. Anything
+  that widens it re-opens that hole; `settings-tabs.test.ts` pins the refusal
+  and `booking-areas.test.ts` pins the vocabulary. **The keys and the column
+  names are a contract with another application** — renaming one here renames
+  nothing over there and splits the answer again.
+- **A third area came with the move: `report`.** It gates AP-17's report card,
+  which was ungated here and gated over there. Measured the same day, `CanReport`
+  was ticked for seven of eight and deliberately unticked for one, so honouring
+  two columns and ignoring the third would have made one grid mean two things.
+- **They default to 1, which is the safe direction HERE and nowhere else in
+  this schema.** `AccBookingApproverTab` and `AccReimburseAccess` both record
+  that no rows means no grants, never "all", because they hand out something new.
+  These do not: being on `AccBookingApprover` already opened all three, so
+  defaulting to 0 would have taken that from everyone the moment 124 landed. A
+  new approver added from the directory therefore holds every menu — the add
+  call sends no `areas` and the INSERT takes the default, as ACC Portal's does.
+- **`loadBookingAreasByApproverIds` degrades a MISSING COLUMN to every area**,
+  the opposite direction from the tab loader beside it and for the opposite
+  reason: those rows grant, these narrow. A database without 124 then behaves
+  exactly as it did before 124 rather than locking the whole roster out at once.
+  Any other failure rethrows, so the admin grid shows its error state instead of
+  rendering an unreadable answer as ticks the next save would write in as fact.
+  The error to grep for is **Msg 207 `Invalid column name 'CanQueue'`** — these
+  are columns, so a missing 124 is not the Msg 208 a missing table gives.
+- **Two rows still carry the retired keys** (measured 2026-09-24, one each in
+  both databases). They are inert — the reader drops them, and the next
+  settings-tab save for that person deletes them — so there is no migration and
+  no cleanup script.
+- **`npm`-less check**: `npx tsx --env-file=.env.local
+  scripts/checks/verify-ap17-menu-grants.ts` prints, per database, who holds
+  each menu and whether any menu has nobody but admins behind it. Run it when
+  somebody reports "I ticked it and nothing happened", or when the card names
+  fewer people than the grid shows.
+
+**The settings-tab keys are still `AccBookingApproverTab` rows and still need
+the code-side care they always did.** The table has no CHECK on `TabKey`, so a
+row naming any string can appear; `isGrantableBookingTabKey` refusing it is
+what makes that inert, and `access` is refused even when a row for it exists.
 
 **A MENU TICK IS AUTHORITY, NOT SIGHT — since 2026-09-24, and this reverses
 what the rest of this section said until then.** The user's instruction was
@@ -1056,10 +1111,12 @@ and **cannot press the button**.
   was sound and somebody will re-make it.
 - **`src/lib/acc/travel-booking/require-booking-menu.ts` is the whole gate**,
   on **eight** call sites across seven route files: `account-approve`,
-  `payment-date` and `exchange-rate` take `accountApproval`; `complete`,
+  `payment-date` and `exchange-rate` take `account`; `complete`,
   `admin/…/booking` and **both** booking branches of `requests/[id]/files`
-  take `bookingQueue`; `reject` and `return` branch on the stage and pass
-  **null at the manager step**, where neither desk is involved.
+  take `queue`; `reject` and `return` branch on the stage and pass **null at
+  the manager step**, where neither desk is involved. It reads the roster's own
+  `Can*` columns — **never `AccBookingApproverTab`**, which it did for one
+  commit and which the sibling app deletes; the guard has an arm for that.
   **`payment-date`, `exchange-rate` and the attachment path are not padding**
   — leaving a desk's own work open while gating only its last click would
   make the tick govern the button and nothing the button is about.
@@ -1080,12 +1137,12 @@ and **cannot press the button**.
   `canAccessBookingArea` and `requireBookingBrandScope`, so "not in this area
   at all" and "not your brand" keep answering first; this one only ever
   explains the narrower thing. Order is the message, not the outcome.
-- **The card reads the same table the gate reads.**
-  `step-approvers-load.ts` gives AP-17's two steps `withMenu("bookingQueue")`
-  and `withMenu("accountApproval")` over `AccBookingApproverTab`, through its
-  own `menusByApprover` and deliberately **not** `scopeByApprover`, which
-  upper-cases every value because brand codes are case-insensitive — a
-  `TabKey` is a camelCase identifier compared for equality everywhere else.
+- **The card reads the same storage the gate reads.**
+  `step-approvers-load.ts` gives AP-17's two steps `withMenu("queue")` and
+  `withMenu("account")` over the roster's own columns — a column list on a
+  read it was already making, not a join. Measured after the move: the card
+  names **six** people for Admin and **six** for HR, which is what the grid
+  shows and what the buttons admit.
   **One residual, the same one the brand scope has**: an ADMIN-role approver
   passes both gates with no row at all, and this read sees rows rather than
   roles, so such a person is under-listed. Under-listing is the safe
@@ -1102,6 +1159,27 @@ and **cannot press the button**.
   lists from going stale — that **no route checks the brand and then skips
   the menu**. `requests/[id]/route.ts` is the one exemption, with its reason:
   its scope call is inside the **GET**, and reading is not acting.
+
+**The สิทธิ์เข้าถึง grid is ACC Portal's, since 2026-09-24** (the user, having
+been shown both: *"จัดให้เหมือน ACC Portal"*). **เมนูที่เห็น first** — the three
+menu columns under an accent-coloured heading — then **เมนูตั้งค่าที่เห็น**, the
+five settings tabs under their own. Our own three columns stay to the right of
+both (`เจ้าของฟอร์ม` · `สถานะ` · `แบรนด์ที่เห็น`); ACC Portal has none of them,
+and they are not part of what was being matched.
+
+- **There is deliberately NO merged column list any more.** One `GrantCells`
+  component serves both groups, parameterised by which body field it posts —
+  `areas` or `settingsTabs` — because the two halves live in different storage
+  and **both writers replace rather than merge**. A single list posted as one
+  field is what this panel did until that date, and it is why every menu tick
+  made here was deleted by the sibling app. The other half's field is *absent*
+  rather than empty on each save, and the route reads absent as "leave it
+  alone" and `[]` as "revoke it" — the same three-valued rule `brandCodes` and
+  the API-key PATCH's `expiresAt` use.
+- **`areas` rides on the roster upsert itself** rather than taking a second
+  transaction, because they are columns on the very row that MERGE writes. The
+  SET fragment is built from `BOOKING_AREAS`, so a fourth area cannot be added
+  and silently miss the write that stores it.
 
 **The hub FILTER is still roster membership OR the grant, and that has not
 changed.** Measured 2026-08-27, `AccBookingApproverTab` held **zero** rows
@@ -2553,7 +2631,7 @@ repo — it exists only on the server, and a rebuilt server loses it.
   - **Nothing is seeded.** Every form has no owner on the day it lands and keeps none until an admin ticks somebody in the `เจ้าของฟอร์ม` column on that form's สิทธิ์เข้าถึง tab — and AP-11 and AP-15, which have no settings page, keep none for ever. Unlike migration 154's default, that costs nothing while it lasts: the line falls back to the sentence it always had.
   - **Applied to `Fast_Core` on 2026-09-24, on the user's instruction, and verified against the database rather than from the apply output.** Measured immediately after: `dbo.FormOwner` exists, its seven columns carry the declared types, both `UQ_FormOwner_Form_Email` and `IX_FormOwner_FormCode` are there, and it holds **0 rows** — nothing is seeded, so every form still prints the bare sentence until an admin names somebody. `npm run check:alignment` re-run straight afterwards: **PASS at 30 tables, 197 rows.**
   - **The first apply FAILED, and the bug was in this file rather than in the database.** Its guard called `DB_NAME()` inline as a `RAISERROR` substitution argument, which is a **parse error** — `Incorrect syntax near 'DB_NAME'` — so batch 2 of 6 died and the table was never created. RAISERROR takes constants and variables there, never expressions; migrations 156 and 161 already route it through a `DECLARE`d variable and this one did not. **What made it worth finding rather than merely fixing** is which half broke: the code shipped first and degrades silently by design, so the only symptom anybody saw was `Internal server error` on Settings → Form Environment when an admin pressed Save — `listFormOwners` swallows the missing table and `setFormOwners` does not. The `LIKE` test was also `'Fast_Core%'`, where `_` is a single-character wildcard; it is `'Fast[_]Core%'` now.
-- **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. **Since 2026-09-24 that person also needs the `accountApproval` tick** — membership opens the queue and the tick is what permits the action (`require-booking-menu.ts`), so a roster with nobody ticked leaves every AP-17 request stuck at `ACCOUNT` with the queue visible and its buttons answering 403. `AccBookingApproverTab` shipped empty, so this is a real commissioning step: tick อนุมัติ (HR) for at least one person, and คิวจอง for whoever works the Admin desk, at Settings → ตั้งค่าแบบฟอร์มขอเดินทาง → สิทธิ์เข้าถึง.
+- **AP-17's accounting step needs no migration, but it does need a person.** After this deploy the Admin desk stops closing requests and hands them to `ACCOUNT`, so nothing reaches `Completed` until somebody on `AccBookingApprover` works `/request/accounting/travel-booking/approvals`. **Since 2026-09-24 that person also needs the `account` tick** — membership opens the queue and the tick is what permits the action (`require-booking-menu.ts`), so a roster with nobody ticked leaves every AP-17 request stuck at `ACCOUNT` with the queue visible and its buttons answering 403. **It is NOT a commissioning step on an existing database**, which is the opposite of what this line said for one commit: the ticks are migration 124's `CanQueue` / `CanAccount` / `CanReport` columns, they default to 1, and ACC Portal's admins have been setting them since 2026-08-29 — measured 2026-09-24, six people held each of the two desks and seven the report. Check rather than assume with `npx tsx --env-file=.env.local scripts/checks/verify-ap17-menu-grants.ts`; it names anybody-but-admins per menu. A **fresh** database is the case that needs a look, and 124 is what to apply.
 - Liveness probe: `curl http://127.0.0.1:3081/api/health` → `{"ok":true,"data":{"service":"form-portal",…}}`.
 - **`/api/health/db` no longer publishes the topology.** `auth.config.ts` exempts every `/api/health*` path from authentication, and that endpoint was returning the MSSQL host, port, service-account username, database name and the raw driver error text to anyone who asked. It now answers `database: "reachable" | "unreachable"` plus a 200/503, and includes the detail only for a System Admin. The diagnostic line goes to the server log unconditionally, which is where an operator should read it.
 

@@ -45,7 +45,7 @@ export async function POST(
   /* And being on the roster is not the same as holding this step. The HR
      sign-off belongs to the people ticked for อนุมัติ (HR) — see
      `requireBookingMenu` for why a menu tick became authority. */
-  const menu = await requireBookingMenu(session.user, "accountApproval");
+  const menu = await requireBookingMenu(session.user, "account");
   if (menu) return menu;
 
   try {

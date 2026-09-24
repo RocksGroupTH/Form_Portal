@@ -5,7 +5,8 @@ import useSWR from "swr";
 import { AlertTriangle, Check, Loader2, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { ADSearchModal, type ADResult } from "@/components/settings/ADSearchModal";
-import { GRANTABLE_BOOKING_TABS, GRANTABLE_BOOKING_MENUS } from "@/lib/acc/travel-booking/settings-tabs";
+import { GRANTABLE_BOOKING_TABS } from "@/lib/acc/travel-booking/settings-tabs";
+import { BOOKING_AREAS } from "@/lib/acc/travel-booking/booking-areas";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 import { FormOwnerCheckbox } from "@/features/settings/FormOwnerCheckbox";
 
@@ -22,6 +23,16 @@ interface BookingApproverRow {
   settingsTabs: string[];
   /** null = every brand. There is no "no brands" — see booking-brand-access-shared.ts. */
   brandCodes: string[] | null;
+  /**
+   * The AP-17 menus this person holds — `CanQueue` / `CanAccount` / `CanReport`
+   * on their own roster row, the columns ACC Portal writes too.
+   *
+   * A third meaning of an empty list on one row, and the three must be kept
+   * apart: `settingsTabs: []` is no grants, `brandCodes: null` is every brand,
+   * and `areas: []` is **no menus at all** — reachable only by an admin
+   * unticking all three, since migration 124 defaults them to granted.
+   */
+  areas: string[];
 }
 
 /* ── Confirm Modal — same shape as the UAT Users panel's ── */
@@ -140,13 +151,20 @@ function TabGrantCheckbox({
   );
 }
 
-// The whole grant vocabulary this panel can tick, tabs first then menus — the
-// order the columns render in, and the order posted so what is stored never
-// depends on which box happened to be ticked last.
-const ALL_GRANT_COLUMNS: readonly { key: string; label: string }[] = [
-  ...GRANTABLE_BOOKING_TABS,
-  ...GRANTABLE_BOOKING_MENUS,
-];
+/**
+ * **There is no merged column list any more, and there must not be one.**
+ *
+ * The two halves of this grid are stored in different places: the menu ticks
+ * are `CanQueue` / `CanAccount` / `CanReport` columns on the roster row (the
+ * storage ACC Portal shares with us), the settings-tab ticks are
+ * `AccBookingApproverTab` rows. A single list posted as one field is what this
+ * panel did until 2026-09-24, and it is why every menu tick made here was
+ * deleted the next time an admin ticked a settings tab in the sibling app.
+ *
+ * Each half therefore posts its OWN field and each field is the whole granted
+ * set for its own storage — so a menu tick can never rewrite a tab grant, or
+ * the reverse.
+ */
 
 /**
  * One approver's brand scope.
@@ -309,20 +327,36 @@ function BrandScopeCell({
   );
 }
 
-function TabGrantCells({
+/**
+ * One row's ticks for ONE of the two storages.
+ *
+ * `field` names the body field this half posts and `stored` is what the server
+ * currently holds for it — so the same component serves the menu columns
+ * (`areas`, the roster's own `Can*` columns) and the settings-tab columns
+ * (`settingsTabs`, `AccBookingApproverTab` rows) without either being able to
+ * post the other's field. The route reads both three-valued: absent leaves
+ * that half alone, so a tick on one side never touches the other.
+ */
+function GrantCells({
   row,
+  columns,
+  field,
+  stored,
   onSaved,
 }: {
   row: BookingApproverRow;
+  columns: readonly { key: string; label: string }[];
+  field: "areas" | "settingsTabs";
+  stored: readonly string[];
   onSaved: () => void;
 }) {
-  const [checked, setChecked] = useState<Set<string>>(() => new Set(row.settingsTabs));
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(stored));
   const [saving, setSaving] = useState(false);
 
   // The server's answer is the truth; re-seed whenever SWR brings a new one.
   useEffect(() => {
-    setChecked(new Set(row.settingsTabs));
-  }, [row.id, row.settingsTabs]);
+    setChecked(new Set(stored));
+  }, [row.id, stored]);
 
   const toggle = async (key: string) => {
     const next = new Set(checked);
@@ -342,12 +376,12 @@ function TabGrantCells({
           email: row.email,
           displayName: row.displayName,
           isActive: row.isActive,
-          // The whole granted set — settings tabs AND the two menu grants —
-          // travels together in one POST. `setBookingApproverTabs` replaces
-          // the stored set rather than merging it, so posting only the tab
-          // half (or only the menu half) would silently erase the other half
-          // of whatever this person already held.
-          settingsTabs: ALL_GRANT_COLUMNS.filter((t) => next.has(t.key)).map((t) => t.key),
+          // The whole granted set for THIS half only, in the columns' own
+          // order so what is stored never depends on which box was ticked
+          // last. Both writers replace rather than merge, which is exactly
+          // why the other half's field is absent rather than empty: the route
+          // leaves an omitted field alone, and `[]` would revoke it.
+          [field]: columns.filter((c) => next.has(c.key)).map((c) => c.key),
         }),
       });
       const json = await res.json();
@@ -355,11 +389,11 @@ function TabGrantCells({
         onSaved();
       } else {
         toast.error(json.error ?? "บันทึกไม่สำเร็จ");
-        setChecked(new Set(row.settingsTabs));
+        setChecked(new Set(stored));
       }
     } catch {
       toast.error("บันทึกไม่สำเร็จ");
-      setChecked(new Set(row.settingsTabs));
+      setChecked(new Set(stored));
     } finally {
       setSaving(false);
     }
@@ -367,23 +401,13 @@ function TabGrantCells({
 
   return (
     <>
-      {GRANTABLE_BOOKING_TABS.map((tab) => (
-        <td key={tab.key} className="px-3 py-2.5 text-center">
+      {columns.map((c) => (
+        <td key={c.key} className="px-3 py-2.5 text-center">
           <TabGrantCheckbox
-            checked={checked.has(tab.key)}
+            checked={checked.has(c.key)}
             saving={saving}
-            onChange={() => void toggle(tab.key)}
-            ariaLabel={`${row.displayName || row.email} — ${tab.label}`}
-          />
-        </td>
-      ))}
-      {GRANTABLE_BOOKING_MENUS.map((menu) => (
-        <td key={menu.key} className="px-3 py-2.5 text-center">
-          <TabGrantCheckbox
-            checked={checked.has(menu.key)}
-            saving={saving}
-            onChange={() => void toggle(menu.key)}
-            ariaLabel={`${row.displayName || row.email} — ${menu.label}`}
+            onChange={() => void toggle(c.key)}
+            ariaLabel={`${row.displayName || row.email} — ${c.label}`}
           />
         </td>
       ))}
@@ -583,22 +607,34 @@ export function BookingApproverSettings() {
                   {/* Group heading for the settings-tab columns below — no text
                       of its own, since the tab strip already names each one and
                       "แท็บตั้งค่า" would only repeat that. */}
+                  {/* MENUS FIRST, then the settings tabs — ACC Portal's order,
+                      adopted on the user's instruction (2026-09-24) now that
+                      the two applications store these same ticks in the same
+                      columns. The two groups carry different colours for the
+                      reason they are two groups: one says which PAGES a person
+                      opens and, since that day, which buttons they may press;
+                      the other says which SETTINGS TABS they may configure. */}
                   <th
-                    colSpan={GRANTABLE_BOOKING_TABS.length}
-                    className="text-center px-3 py-1 font-semibold"
-                    style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-light)" }}
-                  />
-                  {/* The two work-queue menu grants get their own heading so an
-                      admin can tell a menu grant from a settings grant at a
-                      glance — they are a different vocabulary, stored in the
-                      same rows, and mean "sees this queue", not "may configure
-                      this". */}
-                  <th
-                    colSpan={GRANTABLE_BOOKING_MENUS.length}
-                    className="text-center px-3 py-1 font-semibold whitespace-nowrap"
-                    style={{ color: "var(--text-faint)", borderBottom: "1px solid var(--border-light)" }}
+                    colSpan={BOOKING_AREAS.length}
+                    className="text-center px-3 pt-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-wide"
+                    style={{
+                      color: "var(--color-accent)",
+                      background: "var(--color-accent-light)",
+                      borderBottom: "1px solid var(--border-light)",
+                    }}
                   >
                     เมนูที่เห็น
+                  </th>
+                  <th
+                    colSpan={GRANTABLE_BOOKING_TABS.length}
+                    className="text-center px-3 pt-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-wide"
+                    style={{
+                      color: "var(--nav-active-text)",
+                      background: "var(--nav-active-bg)",
+                      borderBottom: "1px solid var(--border-light)",
+                    }}
+                  >
+                    เมนูตั้งค่าที่เห็น
                   </th>
                   {/* Before สถานะ (the user, 2026-09-24), and outside every
                       grant group above it on purpose: an owner is a contact
@@ -628,6 +664,20 @@ export function BookingApproverSettings() {
                     background: "var(--bg-card-header)",
                   }}
                 >
+                  {/* The three AP-17 menus, in the order of the work itself:
+                      fill the booking in, sign it off, then read about it. The
+                      header and the cells are both built from BOOKING_AREAS, so
+                      a fourth appears in both or in neither. */}
+                  {BOOKING_AREAS.map((area) => (
+                    <th
+                      key={area.key}
+                      title={area.pageTitle}
+                      className="text-center px-3 py-2 font-semibold whitespace-nowrap"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {area.label}
+                    </th>
+                  ))}
                   {/* The grantable settings tabs, in the settings page's own
                       order — both lists are built from GRANTABLE_BOOKING_TABS,
                       so a fifth tab appears in both or in neither. */}
@@ -638,18 +688,6 @@ export function BookingApproverSettings() {
                       style={{ color: "var(--text-muted)" }}
                     >
                       {tab.label}
-                    </th>
-                  ))}
-                  {/* The grantable work-queue menus, in the page's own order —
-                      both lists are built from GRANTABLE_BOOKING_MENUS, so a
-                      third menu appears in both or in neither. */}
-                  {GRANTABLE_BOOKING_MENUS.map((menu) => (
-                    <th
-                      key={menu.key}
-                      className="text-center px-3 py-2 font-semibold whitespace-nowrap"
-                      style={{ color: "var(--text-muted)" }}
-                    >
-                      {menu.label}
                     </th>
                   ))}
                   {/* Not a checkbox column, deliberately. The tick columns above
@@ -692,7 +730,20 @@ export function BookingApproverSettings() {
                         deactivated person still holds, or to set it up before
                         switching them on. The save cannot flip the status: the
                         payload echoes `isActive` back unchanged. */}
-                    <TabGrantCells row={r} onSaved={() => void mutate()} />
+                    <GrantCells
+                      row={r}
+                      columns={BOOKING_AREAS}
+                      field="areas"
+                      stored={r.areas}
+                      onSaved={() => void mutate()}
+                    />
+                    <GrantCells
+                      row={r}
+                      columns={GRANTABLE_BOOKING_TABS}
+                      field="settingsTabs"
+                      stored={r.settingsTabs}
+                      onSaved={() => void mutate()}
+                    />
                     <BrandScopeCell row={r} onSaved={() => void mutate()} />
                     {/* Ticked for an inactive row too, for the same reason the
                         grant ticks are shown there: this one is not access at

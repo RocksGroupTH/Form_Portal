@@ -10,6 +10,7 @@ interface BookingAccessData {
   canSettings: boolean;
   bookingQueue: boolean;
   accountApproval: boolean;
+  bookingReport: boolean;
 }
 
 const fetcher = async (url: string) => {
@@ -51,13 +52,20 @@ export function useBookingAccess() {
     /** admin OR at least one granted tab. */
     canSettings: access?.canSettings ?? false,
     /**
-     * Menu grant (`AccBookingApproverTab`, `bookingQueue` key) for the Admin
-     * booking-fill queue — admin OR that grant. Separate from `canAccount`
-     * (roster membership, which is what lets somebody act once the page is
-     * open) — see `settings-tabs.ts`.
+     * Menu grant for the Admin booking-fill queue — admin OR `CanQueue` on
+     * this person's own roster row (`booking-areas.ts`), which is the column
+     * ACC Portal writes too.
+     *
+     * **Since 2026-09-24 this is no longer only about which menu renders.**
+     * `requireBookingMenu` refuses the actions behind it without the same
+     * column, so a card drawn here without the grant would open a page whose
+     * every button answers 403. It stays separate from `canAccount` — roster
+     * membership is the outer gate and these three only narrow it.
      */
-    bookingQueue: access?.bookingQueue ?? false,
-    /** Same shape, for the accounting sign-off queue this page's own gate reads. */
+      bookingQueue: access?.bookingQueue ?? false,
+    /** Same shape, for the HR sign-off queue this page's own gate reads. */
     accountApproval: access?.accountApproval ?? false,
+    /** Same shape, for the AP-17 report. */
+    bookingReport: access?.bookingReport ?? false,
   };
 }

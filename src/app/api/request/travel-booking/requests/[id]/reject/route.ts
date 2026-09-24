@@ -125,9 +125,9 @@ export async function POST(
        must not reach it. Placed here rather than at the top because the
        stage is only known once the request has been read. */
     const menuKey = atAccountStage
-      ? ("accountApproval" as const)
+      ? ("account" as const)
       : atAdminStage
-        ? ("bookingQueue" as const)
+        ? ("queue" as const)
         : null;
     if (menuKey) {
       const menu = await requireBookingMenu(session.user, menuKey);
