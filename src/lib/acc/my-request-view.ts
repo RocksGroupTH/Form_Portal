@@ -252,6 +252,87 @@ export function stepLabel(code: string | null | undefined): string {
 }
 
 /**
+ * Who holds a step when nobody is named — the **department**, not the step.
+ *
+ * Deliberately coarser than `stepLabel` above, and they are not interchangeable.
+ * `ขั้นตอนปัจจุบัน` wants the exact step, because AP-4's two accounting steps
+ * are different events; `รออนุมัติโดย` wants the answer to "who is this with",
+ * and for a step assigned to a pool that is a department. So AP-4's two
+ * accounting steps both answer **บัญชี** here and stay distinct there.
+ */
+const DEPARTMENT_LABEL: Record<string, string> = {
+  MANAGER: "ผู้จัดการ",
+  ACCOUNT: "บัญชี",
+  ACCOUNT_FINAL: "บัญชี",
+  ADMIN: "Admin",
+  HEAD_ACC: "หัวหน้าบัญชี",
+  DIRECTOR: "ผู้บริหาร",
+  ACC_OFFICER: "บัญชี",
+  HEAD: "หัวหน้า",
+};
+
+export function departmentLabel(code: string | null | undefined): string {
+  const key = (code ?? "").trim();
+  if (!key) return BLANK;
+  return DEPARTMENT_LABEL[key] ?? key;
+}
+
+/* ------------------------------------------------------------------ *
+ * Status
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the table calls a status, and how it is coloured.
+ *
+ * **Six labels over eight stored values** (the user's list of five, 2026-09-24,
+ * plus `Cancelled` kept separate at their instruction). The stored vocabulary
+ * is `AccRequest.Status`, whose CHECK permits ten values — measured that day,
+ * seven are in use across the five live forms, and `Ready` / `Received` belong
+ * to AP-11 alone, a retired form with one row of each.
+ *
+ * Two of the mappings are the point of doing this at all:
+ *
+ * - **`Submitted` and `ManagerApproved` are told APART.** `statusLabelDisplay`
+ *   in `features/accounting/constants.ts` collapses both to `รออนุมัติ`, which
+ *   is right for a chip in a list and wrong for a column somebody is scanning
+ *   to find what is stuck: those are different desks.
+ * - **`Returned` is `Revise`, not a kind of pending.** The requester has to act
+ *   on it, and a label saying "waiting" tells them the opposite.
+ *
+ * Anything unrecognised renders **as itself**, so a status added later appears
+ * rather than silently reading as the last arm of a switch.
+ */
+export type MyRequestStatusTone =
+  | "submitted"
+  | "pending"
+  | "complete"
+  | "rejected"
+  | "revise"
+  | "cancelled"
+  | "other";
+
+export interface MyRequestStatusDisplay {
+  label: string;
+  tone: MyRequestStatusTone;
+}
+
+const STATUS_DISPLAY: Record<string, MyRequestStatusDisplay> = {
+  Submitted: { label: "Submitted", tone: "submitted" },
+  ManagerApproved: { label: "Pending", tone: "pending" },
+  Approved: { label: "Complete", tone: "complete" },
+  Completed: { label: "Complete", tone: "complete" },
+  Rejected: { label: "Rejected", tone: "rejected" },
+  Returned: { label: "Revise", tone: "revise" },
+  Cancelled: { label: "Cancelled", tone: "cancelled" },
+};
+
+export function statusDisplay(raw: string | null | undefined): MyRequestStatusDisplay {
+  const key = (raw ?? "").trim();
+  if (!key) return { label: BLANK, tone: "other" };
+  return STATUS_DISPLAY[key] ?? { label: key, tone: "other" };
+}
+
+/**
  * One cell, as text — the same string the screen shows and the export writes.
  *
  * `now` is passed rather than read, so the three day-count columns are testable
@@ -273,20 +354,25 @@ export function cellText(row: ReportRow, key: MyRequestColKey, nowIso: string): 
     case "requesterDepartment":
       return row.requesterDepartmentName ?? BLANK;
     case "status":
-      return row.status || BLANK;
+      return statusDisplay(row.status).label;
     case "pendingBy": {
-      // The step AND who holds it: "บัญชี" alone does not say whether anybody
-      // in particular is sitting on it, and a bare name does not say what they
-      // are being asked to do. Both accounting steps are assigned to a pool
-      // rather than a person, which is why the name is often absent and the
-      // step is what remains.
+      /* **A name if there is one, otherwise the department — and never both**
+         (the user's rule, 2026-09-24: "ให้ใส่เป็นชื่อ ถ้าไม่มีใส่แค่แผนก").
+         So: `Sattawat Jaiyen`, `บัญชี`, `Admin`.
+
+         The email is deliberately NOT a third fallback, and dropping it loses
+         less than it looks. `pendingApproverName` is resolved from HR against
+         the step's `AssignedTo`, so a missing name means that approver has no
+         active HR row — which AP-4 explicitly allows. The address was reaching
+         the column raw (`บัญชี · sattawat.c@rocksgroup.com`), which is noise in
+         a scanned column; the table keeps it as the cell's tooltip, so it is
+         one hover away rather than gone. */
       if (isSettled(row.status)) return BLANK;
       const step = row.pendingStepCode ?? row.currentStepCode ?? null;
-      const who = row.pendingApproverName?.trim() || row.pendingApproverEmail?.trim() || "";
-      if (!step && !who) return BLANK;
-      if (!who) return stepLabel(step);
-      if (!step) return who;
-      return `${stepLabel(step)} · ${who}`;
+      const name = row.pendingApproverName?.trim();
+      if (name) return name;
+      if (step) return departmentLabel(step);
+      return BLANK;
     }
     case "currentStep":
       return stepLabel(row.currentStepCode);

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { ReportRow } from "@/lib/acc/report-service";
 import { MyRequestsTable } from "@/features/accounting/components/MyRequestsTable";
+import { formFilterLabel } from "@/lib/acc/form-names";
 import type { AccRequest } from "@/features/accounting/types";
 import { formatNextApprovalDetail, getMyWorkStatusBucket, myWorkStatusLabel, myWorkStatusStyle, type MyWorkStatusBucket, type MyWorkViewerContext } from "@/lib/acc/approval-display";
 import { REQUEST_CARDS } from "@/lib/constants";
@@ -380,12 +381,17 @@ function RequestRowList({
 
   const formLabelByCode = useMemo(() => {
     const map: Record<string, string> = {};
+    /* A form the viewer could file but has not: its name cannot come from a
+       row, because there is no row. It used to fall through to the bare code,
+       so AP-2 and AP-3 sat unnamed beside four named entries — `form-names.ts`
+       is the fallback, and AccFormMaster's own name still wins below wherever
+       a row supplies one. */
     for (const c of REQUEST_CARDS) {
-      if (c.badge && isFormAvailable(c.badge)) map[c.badge] = c.badge;
+      if (c.badge && isFormAvailable(c.badge)) map[c.badge] = formFilterLabel(c.badge);
     }
     for (const r of rows) {
       if (!r.formCode) continue;
-      map[r.formCode] = r.formName ? `${r.formCode} · ${r.formName}` : r.formCode;
+      map[r.formCode] = formFilterLabel(r.formCode, r.formName);
     }
     return map;
   }, [rows, isFormAvailable]);

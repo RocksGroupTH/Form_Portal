@@ -10,8 +10,10 @@ import {
   daysPending,
   daysUntilPayment,
   defaultVisibleKeys,
+  departmentLabel,
   isSettled,
   managerTurnaroundDays,
+  statusDisplay,
   stepLabel,
   type MyRequestColKey,
 } from "@/lib/acc/my-request-view";
@@ -190,19 +192,86 @@ test("a baht claim says THB rather than a dash", () => {
   assert.equal(cellText(row({ currency: "MYR" }), "currency", NOW), "MYR");
 });
 
-test("รออนุมัติโดย names the step AND the person, and neither alone is enough", () => {
-  /* Both accounting steps are assigned to a pool rather than a person, so the
-     name is often absent and the step is what remains; a bare name would not
-     say what they are being asked to do. */
+test("รออนุมัติโดย is a NAME, or failing that a department — never both", () => {
+  /* The user's rule, 2026-09-24: "ให้ใส่เป็นชื่อ ถ้าไม่มีใส่แค่แผนก". The step
+     prefix used to sit in front of the name, which is the one case where it
+     adds nothing: a named person IS the answer to "who is this with". */
   assert.equal(
     cellText(row({ pendingStepCode: "MANAGER", pendingApproverName: "Somchai" }), "pendingBy", NOW),
-    "ผู้จัดการ · Somchai",
+    "Somchai",
   );
   assert.equal(cellText(row({ pendingStepCode: "ACCOUNT" }), "pendingBy", NOW), "บัญชี");
+  assert.equal(cellText(row({ pendingStepCode: "ADMIN" }), "pendingBy", NOW), "Admin");
+});
+
+test("an email is NOT a third fallback for รออนุมัติโดย", () => {
+  /* It was reaching the column raw — "บัญชี · sattawat.c@rocksgroup.com" — which
+     is noise in a column being scanned. A missing name means that approver has
+     no active HR row, which AP-4 explicitly allows; the address survives as the
+     cell's tooltip rather than as its text. */
   assert.equal(
-    cellText(row({ pendingApproverEmail: "a@b.com" }), "pendingBy", NOW),
-    "a@b.com",
+    cellText(row({ pendingStepCode: "ACCOUNT", pendingApproverEmail: "a@b.com" }), "pendingBy", NOW),
+    "บัญชี",
   );
+  // With no step either, there is genuinely nothing to say.
+  assert.equal(cellText(row({ pendingApproverEmail: "a@b.com" }), "pendingBy", NOW), "—");
+});
+
+test("AP-4's two accounting steps are ONE department and TWO steps", () => {
+  /* `รออนุมัติโดย` answers "who is this with" and both are บัญชี;
+     `ขั้นตอนปัจจุบัน` answers "which step" and they are different events. The
+     two labels are separate functions for exactly this reason. */
+  assert.equal(departmentLabel("ACCOUNT"), "บัญชี");
+  assert.equal(departmentLabel("ACCOUNT_FINAL"), "บัญชี");
+  assert.equal(stepLabel("ACCOUNT_FINAL"), "บัญชี (ขั้นสุดท้าย)");
+});
+
+/* ---------------------------------------------------------------- *
+ * Status
+ * ---------------------------------------------------------------- */
+
+test("Submitted and ManagerApproved are told APART", () => {
+  /* The whole reason for a display vocabulary of its own:
+     `statusLabelDisplay` collapses both to "รออนุมัติ", which is right for a
+     chip in a list and wrong for a column somebody scans to find what is
+     stuck — those are two different desks. */
+  assert.deepEqual(statusDisplay("Submitted"), { label: "Submitted", tone: "submitted" });
+  assert.deepEqual(statusDisplay("ManagerApproved"), { label: "Pending", tone: "pending" });
+});
+
+test("Returned is Revise, and not a kind of pending", () => {
+  /* The requester has to act on it. A label saying "waiting" tells them the
+     opposite of what is true. */
+  assert.deepEqual(statusDisplay("Returned"), { label: "Revise", tone: "revise" });
+});
+
+test("Approved and Completed are one label, Cancelled is its own", () => {
+  // Two forms' terminal statuses, one outcome — AP-17 ends at Completed where
+  // AP-1 ends at Approved. Cancelled stays separate at the user's instruction:
+  // folding it into Rejected would say somebody refused it.
+  assert.equal(statusDisplay("Approved").label, "Complete");
+  assert.equal(statusDisplay("Completed").label, "Complete");
+  assert.deepEqual(statusDisplay("Cancelled"), { label: "Cancelled", tone: "cancelled" });
+  assert.deepEqual(statusDisplay("Rejected"), { label: "Rejected", tone: "rejected" });
+});
+
+test("every tone is used by exactly one status, so no two look alike", () => {
+  /* "ปรับสีให้แตกต่างกัน" is only true if the tones are distinct — two statuses
+     sharing one would render identically and defeat the column. */
+  const tones = ["Submitted", "ManagerApproved", "Approved", "Rejected", "Returned", "Cancelled"].map(
+    (s) => statusDisplay(s).tone,
+  );
+  assert.equal(new Set(tones).size, tones.length, "two statuses share a tone");
+});
+
+test("an unrecognised status renders ITSELF rather than a catch-all", () => {
+  /* `AccRequest.Status`'s CHECK permits ten values and this maps seven; `Ready`
+     and `Received` belong to AP-11, a retired form still holding one row of
+     each. Showing the raw value keeps them visible, and a status added later
+     appears instead of silently reading as something else. */
+  assert.deepEqual(statusDisplay("Received"), { label: "Received", tone: "other" });
+  assert.deepEqual(statusDisplay("Ready"), { label: "Ready", tone: "other" });
+  assert.equal(statusDisplay("").label, "—");
 });
 
 test("a settled request is waiting for nobody", () => {

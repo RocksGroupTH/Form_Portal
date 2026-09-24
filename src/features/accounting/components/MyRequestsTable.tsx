@@ -17,7 +17,9 @@ import {
   daysUntilPayment,
   defaultVisibleKeys,
   isSettled,
+  statusDisplay,
   type MyRequestColKey,
+  type MyRequestStatusTone,
   type MyRequestColumn,
   type MyRequestKind,
 } from "@/lib/acc/my-request-view";
@@ -266,9 +268,13 @@ export function MyRequestsTable({
                       fontVariantNumeric: col.align === "right" ? "tabular-nums" : undefined,
                       fontWeight: col.key === "requestNo" || col.key === "totalAmount" ? 700 : 400,
                     }}
-                    title={col.key === "workDetail" ? cellText(row, col.key, nowIso) : undefined}
+                    title={cellTitle(row, col.key, nowIso)}
                   >
-                    {cellText(row, col.key, nowIso)}
+                    {col.key === "status" ? (
+                      <StatusChip status={row.status} />
+                    ) : (
+                      cellText(row, col.key, nowIso)
+                    )}
                   </td>
                 ))}
               </tr>
@@ -278,6 +284,79 @@ export function MyRequestsTable({
       </div>
     </div>
   );
+}
+
+/**
+ * Six statuses, six colours — the user's instruction of 2026-09-24
+ * ("ปรับสีให้แตกต่างกัน"), and the reason the labels were separated in the
+ * first place: `Submitted` and `Pending` are different desks, and a reader
+ * scanning for what is stuck has to be able to tell them apart without reading.
+ *
+ * Every colour is a token. `--status-*` offers only four pairs, so the two
+ * extra tones are washes over `--color-warning` and `--color-danger` built
+ * with `color-mix`, which is what the list's own chips already do.
+ */
+const STATUS_TONE: Record<MyRequestStatusTone, React.CSSProperties> = {
+  submitted: {
+    background: "var(--nav-active-bg)",
+    color: "var(--nav-active-text)",
+    border: "1px solid color-mix(in srgb, var(--nav-active-text) 25%, transparent)",
+  },
+  pending: {
+    background: "var(--bg-info-yellow)",
+    color: "var(--text-info-yellow)",
+    border: "1px solid var(--border-info-yellow)",
+  },
+  complete: {
+    background: "var(--bg-info-green)",
+    color: "var(--text-info-green)",
+    border: "1px solid var(--border-info-green)",
+  },
+  revise: {
+    background: "color-mix(in srgb, var(--color-warning) 14%, transparent)",
+    color: "var(--color-warning)",
+    border: "1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)",
+  },
+  rejected: {
+    background: "color-mix(in srgb, var(--color-danger) 10%, transparent)",
+    color: "var(--color-danger)",
+    border: "1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)",
+  },
+  cancelled: {
+    background: "var(--bg-badge)",
+    color: "var(--text-muted)",
+    border: "1px solid var(--border-light)",
+  },
+  other: {
+    background: "transparent",
+    color: "var(--text-muted)",
+    border: "1px dashed var(--border-light)",
+  },
+};
+
+function StatusChip({ status }: { status: string }) {
+  const d = statusDisplay(status);
+  return (
+    <span
+      className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+      style={STATUS_TONE[d.tone]}
+    >
+      {d.label}
+    </span>
+  );
+}
+
+/**
+ * The tooltip, where a cell had to drop something to stay scannable.
+ *
+ * รออนุมัติโดย shows a name or a department and never an email address — so
+ * the address, which is the only thing naming the person when HR has no row
+ * for them, lives here rather than being lost.
+ */
+function cellTitle(row: ReportRow, key: MyRequestColKey, nowIso: string): string | undefined {
+  if (key === "workDetail") return cellText(row, key, nowIso);
+  if (key === "pendingBy") return row.pendingApproverEmail?.trim() || undefined;
+  return undefined;
 }
 
 /**
