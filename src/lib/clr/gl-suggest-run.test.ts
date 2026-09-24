@@ -7,6 +7,11 @@ import {
   type PlanLine,
 } from "./gl-suggest-run";
 
+/** Line index → the account that line's description has always been given
+ *  before, the way the route computes it from `decideRemembered`. */
+const remembered = (entries: Record<number, string>) =>
+  new Map<number, string>(Object.entries(entries).map(([i, acct]) => [Number(i), acct]));
+
 /**
  * What the account step's suggest button does with the model's answers.
  *
@@ -58,7 +63,9 @@ test("only the targets are asked about", async () => {
   const out = await runGlSuggestions(items, candidates(), always(calls));
 
   assert.deepEqual(calls, ["ค่าแท็กซี่"], "a line outside targets was sent to the model");
-  assert.deepEqual(out.suggestions, [{ index: 0, glAccountNo: "610322005", nameTh: "บัญชี 610322005" }]);
+  assert.deepEqual(out.suggestions, [
+    { index: 0, glAccountNo: "610322005", nameTh: "บัญชี 610322005", source: "model" },
+  ]);
   assert.equal(out.noDescription, 1);
   assert.equal(out.noBranch, 1);
   assert.equal(out.noAnswer, 0);
@@ -162,4 +169,104 @@ test("nothing to ask means nothing to load and nothing to report", async () => {
   assert.deepEqual(branchesToLoad(items), []);
   const out = await runGlSuggestions(items, new Map(), always([]));
   assert.deepEqual(out, { itemCount: 2, suggestions: [], noDescription: 0, noBranch: 0, noAnswer: 0 });
+});
+
+/* ───────────── what was already decided, before asking ───────────── */
+
+/**
+ * The remembered half. The route works out WHICH account a line's description
+ * has always been given (`decideRemembered`); this module's job is only to
+ * prefer it, to hold it to the same standard as the model's answer, and to say
+ * where each filled value came from.
+ *
+ * The case worth the most here is the third one: a remembered account that is
+ * no longer on the branch's list must be dropped. Being right once does not
+ * survive an account being deactivated, and nothing on screen would show the
+ * difference — a dead account reads exactly like a live one until someone
+ * tries to post it.
+ */
+
+test("a remembered line is filled without asking the model", async () => {
+  const calls: string[] = [];
+  const items = [line({ description: "ค่าแท็กซี่" }), line({ description: "ค่าที่จอดรถ" })];
+  const out = await runGlSuggestions(items, candidates(), always(calls), remembered({ 0: "610322006" }));
+
+  assert.deepEqual(calls, ["ค่าที่จอดรถ"], "a line that was already remembered was sent to the model");
+  assert.deepEqual(out.suggestions, [
+    { index: 0, glAccountNo: "610322006", nameTh: "บัญชี 610322006", source: "history" },
+    { index: 1, glAccountNo: "610322005", nameTh: "บัญชี 610322005", source: "model" },
+  ]);
+  assert.equal(out.noAnswer, 0);
+});
+
+test("a remembered account the branch may no longer charge falls through to the model", async () => {
+  const calls: string[] = [];
+  // 620100001 is PC01's account, not HQ01's — the same shape as an account
+  // deactivated or moved to another dimension type since it was chosen.
+  const items = [line({ description: "ค่าแท็กซี่" })];
+  const out = await runGlSuggestions(items, candidates(), always(calls), remembered({ 0: "620100001" }));
+
+  assert.deepEqual(calls, ["ค่าแท็กซี่"], "a remembered account skipped the candidate check");
+  assert.deepEqual(out.suggestions, [
+    { index: 0, glAccountNo: "610322005", nameTh: "บัญชี 610322005", source: "model" },
+  ]);
+});
+
+test("a remembered account is matched against its own line's branch, not the claim's", async () => {
+  const items = [line({ branchCode: "HQ01" }), line({ branchCode: "PC01" })];
+  const out = await runGlSuggestions(
+    items,
+    candidates({ HQ01: HQ, PC01: PC01 }),
+    always([]),
+    // Each is the OTHER branch's account: neither may be taken from history.
+    remembered({ 0: "620100001", 1: "610322005" }),
+  );
+  assert.deepEqual(out.suggestions.map((s) => s.source), ["model", "model"]);
+});
+
+test("the model calls are still sequential when only some lines are remembered", async () => {
+  const events: string[] = [];
+  const delays: Record<string, number> = { one: 20, two: 10, three: 0 };
+  const suggest = async (description: string, list: GlCandidate[]) => {
+    events.push(`start ${description}`);
+    await new Promise((r) => setTimeout(r, delays[description] ?? 0));
+    events.push(`end ${description}`);
+    return list[0].glAccountNo;
+  };
+
+  const items = [
+    line({ description: "one" }),
+    line({ description: "remembered" }),
+    line({ description: "two" }),
+    line({ description: "three" }),
+  ];
+  await runGlSuggestions(items, candidates(), suggest, remembered({ 1: "610322006" }));
+
+  assert.deepEqual(events, [
+    "start one", "end one",
+    "start two", "end two",
+    "start three", "end three",
+  ], "a call began before the one before it had finished — Promise.all, not a loop");
+});
+
+test("every target is still accounted for once history is in play", async () => {
+  const answers = ["610322005", "", "610322006"];
+  let i = 0;
+  const suggest = async () => answers[i++] ?? "";
+  const items = [line(), line(), line(), line(), line({ glAccountNo: "610322005" })];
+  const out = await runGlSuggestions(items, candidates(), suggest, remembered({ 1: "610322006" }));
+
+  assert.equal(out.suggestions.length + out.noAnswer, 4, "a target fell out of both buckets");
+  assert.equal(out.suggestions.filter((s) => s.source === "history").length, 1);
+  assert.equal(out.suggestions.filter((s) => s.source === "model").length, 2);
+  assert.equal(out.noAnswer, 1);
+});
+
+test("a remembered entry for a line nobody is asking about changes nothing", async () => {
+  const calls: string[] = [];
+  const items = [line({ glAccountNo: "610322005", description: "ตั้งบัญชีแล้ว" }), line()];
+  const out = await runGlSuggestions(items, candidates(), always(calls), remembered({ 0: "610322006" }));
+
+  assert.deepEqual(calls, ["ค่าแท็กซี่"]);
+  assert.deepEqual(out.suggestions.map((s) => s.index), [1], "a line the officer had already answered was overwritten");
 });

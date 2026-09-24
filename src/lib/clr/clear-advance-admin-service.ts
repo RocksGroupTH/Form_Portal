@@ -219,10 +219,28 @@ export async function listClrErpBranchOptions(brandCode: string): Promise<ErpBra
  * list rather than an error.
  */
 export async function resolveClrCompany(brandCode: string | null | undefined): Promise<string> {
+  const ctx = await loadErpJournalBuildContext("AP-3");
+  return clrCompanyForBrand(brandCode, ctx.interfaceByClaim);
+}
+
+/**
+ * The same rule, for a caller that already holds the map and has MANY brands to
+ * resolve — the G/L history read, which gets back rows from every claim that
+ * ever used a description and must turn each one's brand into its company.
+ *
+ * Split out rather than copied: `resolveClrCompany` is one brand one await, and
+ * a loop of it over a few hundred history rows is a few hundred awaits of a
+ * cached context for an answer that is pure lookup. This is that lookup, with
+ * the fallback and the upper-casing kept in the one place the docblock above
+ * says they belong.
+ */
+export function clrCompanyForBrand(
+  brandCode: string | null | undefined,
+  interfaceByClaim: Readonly<Record<string, string>>,
+): string {
   const brand = (brandCode ?? "").trim().toUpperCase();
   if (!brand) return "";
-  const ctx = await loadErpJournalBuildContext("AP-3");
-  return (ctx.interfaceByClaim[brand] ?? brand).toUpperCase();
+  return (interfaceByClaim[brand] ?? brand).toUpperCase();
 }
 
 function num(v: unknown): number | null {

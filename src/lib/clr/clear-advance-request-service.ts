@@ -383,6 +383,100 @@ export async function listGlAccounts(
   }));
 }
 
+/** One past expense line that already has an account, as the database knows it.
+ *
+ *  `brandCode`, not a company: the brand→company mapping is
+ *  `interfaceByClaim`, which lives in the journal build context and not in this
+ *  database. The caller resolves it (`clrCompanyForBrand`) before handing these
+ *  rows to `decideRemembered`, which keys on the company. */
+export type GlHistoryDbRow = {
+  description: string | null;
+  branchCode: string | null;
+  brandCode: string | null;
+  glAccountNo: string | null;
+};
+
+/** The loose match this query fetches on — every whitespace character removed,
+ *  then lower-cased.
+ *
+ *  Deliberately NOT `glHistoryKey`'s `norm`, and deliberately looser than it.
+ *  Two strings that `norm` calls equal are always equal here too (it collapses
+ *  runs of whitespace; this deletes them outright), so nothing `decideRemembered`
+ *  would have matched is lost in the fetch. The reverse is not true — `ab c` and
+ *  `a bc` collide here — and that is the trade being taken on purpose: an extra
+ *  row costs a comparison `decideRemembered` makes anyway, a missing row costs a
+ *  suggestion nobody can see was missed. */
+const looseGlDescriptionKey = (s: string | null | undefined) =>
+  (s ?? "").replace(/\s/g, "").toLowerCase();
+
+/**
+ * Past AP-3 expense lines whose รายละเอียด might be one of these, with the
+ * account somebody chose for them.
+ *
+ * **Candidates, not answers.** Whether any of these rows actually count is
+ * `decideRemembered`'s decision, keyed on `glHistoryKey` — description, company
+ * and the HQ/branch classification, all of which it re-derives per row. This
+ * function's only job is to not lose a row that decision would have wanted.
+ *
+ * ## Matching loosely on purpose
+ *
+ * Reproducing `norm` in T-SQL exactly — trim, collapse runs of whitespace,
+ * lower-case — needs nested `REPLACE` tricks whose agreement with the
+ * TypeScript nobody can check, and where they disagree the result is a hit that
+ * silently never happens. So the SQL side matches on `looseGlDescriptionKey`
+ * instead, which is a strict superset of `norm` equality, and the exact
+ * comparison stays in the one place it is tested.
+ *
+ * The cost is a scan: the expression is not sargable. It is one query per claim
+ * over AP-3's own expense lines, run from a button an officer presses, and the
+ * alternative buys an index with invisible misses.
+ *
+ * ## Why Cancelled and Rejected claims are left out
+ *
+ * A rejected claim is weak evidence, and it may have been rejected *because* of
+ * the account on it. Every other status is kept, Draft included: an account an
+ * officer typed is their decision whether or not the claim has finished moving.
+ */
+export async function listGlHistoryRows(
+  descriptions: readonly string[],
+): Promise<GlHistoryDbRow[]> {
+  // Distinct by the same loose key the SQL matches on, so N lines of one claim
+  // saying the same thing are one parameter, not N.
+  const keys = Array.from(
+    new Set((descriptions ?? []).map(looseGlDescriptionKey).filter((k) => k !== "")),
+  );
+  // Nothing to look up is not an empty result set — it is no question. Asking
+  // it anyway would be `IN ()`, which is a syntax error, and a scan for nothing.
+  if (keys.length === 0) return [];
+
+  const pool = await getAccPool();
+  const req = pool.request().input("form", sql.NVarChar, AP3_FORM_CODE);
+  // Parameterised, one per key. The only thing interpolated into the SQL text
+  // is the parameter NAMES this loop just generated.
+  const names = keys.map((key, i) => {
+    req.input(`d${i}`, sql.NVarChar, key);
+    return `@d${i}`;
+  });
+  const res = await req.query(`
+    SELECT i.Description, i.BranchCode, r.BrandCode, i.GlAccountNo
+    FROM [dbo].[AccClearAdvanceItem] AS i
+    JOIN [dbo].[AccClearAdvance] AS c ON c.Id = i.ClearAdvanceId
+    JOIN [dbo].[AccRequest] AS r ON r.Id = c.RequestId
+    WHERE r.FormCode = @form
+      AND r.Status NOT IN ('Cancelled', 'Rejected')
+      AND LTRIM(RTRIM(ISNULL(i.Description, ''))) <> ''
+      AND LTRIM(RTRIM(ISNULL(i.GlAccountNo, ''))) <> ''
+      AND LOWER(REPLACE(REPLACE(REPLACE(REPLACE(
+            i.Description, CHAR(9), ''), CHAR(10), ''), CHAR(13), ''), ' ', '')) IN (${names.join(", ")})
+  `);
+  return (res.recordset as Record<string, unknown>[]).map((x) => ({
+    description: (x.Description as string) ?? null,
+    branchCode: (x.BranchCode as string) ?? null,
+    brandCode: (x.BrandCode as string) ?? null,
+    glAccountNo: (x.GlAccountNo as string) ?? null,
+  }));
+}
+
 /** Branch/BU dimension options for a brand (reuses AP-1's brand-branch master). */
 export async function listBranches(brandCode: string | null): Promise<BranchOption[]> {
   if (!brandCode) return [];
