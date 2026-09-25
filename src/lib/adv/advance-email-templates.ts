@@ -5,6 +5,7 @@ import {
   esc,
   rejectedLead,
   returnedLead,
+  submittedAckLead,
   submittedLead,
 } from "@/lib/acc/mail-copy";
 
@@ -33,6 +34,8 @@ function row(k: string, v: unknown): string {
 
 export type AdvEmailTrigger =
   | "Submitted"
+  /** The requester's own receipt for filing — not a request to act. */
+  | "SubmittedAck"
   | "StepPending"
   | "Approved"
   | "Rejected"
@@ -63,6 +66,7 @@ export function buildAdvanceEmail(
 
   const titles: Record<AdvEmailTrigger, string> = {
     Submitted:   `เบิกเงินทดรองจ่าย ${d.requestNo} รออนุมัติ${stepSuffix}`,
+    SubmittedAck: `เบิกเงินทดรองจ่าย ${d.requestNo} — ส่งคำขอเรียบร้อยแล้ว`,
     StepPending: `เบิกเงินทดรองจ่าย ${d.requestNo} รออนุมัติ${stepSuffix}`,
     Approved:    `เบิกเงินทดรองจ่าย ${d.requestNo} อนุมัติแล้ว`,
     Rejected:    `เบิกเงินทดรองจ่าย ${d.requestNo} ไม่อนุมัติ`,
@@ -72,7 +76,8 @@ export function buildAdvanceEmail(
 
   const title = titles[trigger];
 
-  const showStep = trigger === "Submitted" || trigger === "StepPending";
+  const showStep =
+    trigger === "Submitted" || trigger === "StepPending" || trigger === "SubmittedAck";
 
   const rows = [
     row("เลขที่", d.requestNo),
@@ -98,6 +103,10 @@ export function buildAdvanceEmail(
   const name = MAIL_FORM_NAMES["AP-2"];
   const lead =
     trigger === "Submitted" ? submittedLead(name, d.requestNo)
+    /* A different sentence, not a different recipient on the same one:
+       `submittedLead` asks the reader to approve, and the requester is not
+       who approves their own claim. */
+    : trigger === "SubmittedAck" ? submittedAckLead(name, d.requestNo, d.stepLabel)
     : trigger === "Approved" ? approvedLead(name, d.requestNo)
     : trigger === "Rejected" ? rejectedLead(name, d.requestNo, d.note)
     : trigger === "Returned" ? returnedLead(name, d.requestNo, d.note)

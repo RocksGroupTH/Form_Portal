@@ -8,9 +8,14 @@ import path from "node:path";
  *
  * The copy is the user's (2026-09-24) and the point of it was that a mail
  * should state what happened rather than leave a reader to infer it from a
- * table. Five forms build their mail five different ways — two share a
- * `shell`, AP-3 concatenates HTML strings by hand — so nothing but a guard
- * keeps the wording together. Reword one and the other four drift.
+ * table. The forms build their mail in their own modules — AP-1, AP-2, AP-3 and
+ * AP-17 each through a `shell`, AP-4 by hand — so nothing but a guard keeps the
+ * wording together. Reword one and the others drift.
+ *
+ * AP-3 joined the `shell` forms on 2026-09-25 (*"ใช้ Format Email เดียวกันกับ
+ * AP-2"*), which moved its copy out of two call-site files and into
+ * `clear-advance-email-templates.ts`. This guard is what noticed — it named
+ * those two files and they stopped calling `submittedLead`.
  *
  * **Source-shape, and the weaker of the two layers.** `mail-copy.test.ts` is
  * the one with teeth: it asserts the sentences themselves. This one asserts
@@ -26,8 +31,10 @@ const MAIL_BUILDERS = [
   "src/lib/acc/email-templates.ts", // AP-1
   "src/lib/acc/travel-booking/email-templates.ts", // AP-17
   "src/lib/adv/advance-email-templates.ts", // AP-2
-  "src/lib/clr/clear-advance-approval-engine.ts", // AP-3, the three outcomes
-  "src/lib/clr/clear-advance-request-service.ts", // AP-3, the submit
+  /* AP-3 is split: the layout and every sentence live in the pure core, and
+     `clear-advance-email-templates.ts` adds only the link, which needs `@/env`.
+     The copy is here, so this is the file that has to reach for it. */
+  "src/lib/clr/clear-advance-email-core.ts", // AP-3
   "src/lib/acc/reimburse/approval-service.ts", // AP-4, the three outcomes
   "src/lib/acc/reimburse/request-service.ts", // AP-4, the submit
 ];
@@ -63,7 +70,7 @@ test("the submit sentence reaches ALL FIVE forms", () => {
     "src/lib/acc/email-templates.ts",
     "src/lib/acc/travel-booking/email-templates.ts",
     "src/lib/adv/advance-email-templates.ts",
-    "src/lib/clr/clear-advance-request-service.ts",
+    "src/lib/clr/clear-advance-email-core.ts",
     "src/lib/acc/reimburse/request-service.ts",
   ];
   for (const file of submitters) {

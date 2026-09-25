@@ -101,6 +101,35 @@ export function submittedLead(formName: string, requestNo: string | null | undef
   return lead(`ท่านมี Request <b>${esc(formName)}</b>${docNo(requestNo, "เลขที่")} กรุณาพิจารณาและอนุมัติ`);
 }
 
+/**
+ * **To the requester, confirming their own submit** — the receipt for the act of
+ * sending, not a request to act.
+ *
+ * `submittedLead` above is the approver's copy and says กรุณาพิจารณาและอนุมัติ.
+ * Sending that to the person who filed the request tells them to approve their
+ * own claim, which is why this is a second wording rather than a second
+ * recipient on the first.
+ *
+ * Reported missing by a tester, 2026-09-25: *"ไม่มีเมลแจ้งเตือนสำหรับคนเบิก
+ * ว่าส่งข้อมูลสำเร็จ"*. Until then no form sent one: every `Submitted` mail went
+ * to an approver, and the requester first heard about their own request when
+ * its outcome arrived.
+ *
+ * `nextStep` names who has it now, so the message says what happens next rather
+ * than only that something happened. Omitted, the sentence still stands.
+ */
+export function submittedAckLead(
+  formName: string,
+  requestNo: string | null | undefined,
+  nextStep?: string | null,
+): string {
+  const waiting = (nextStep ?? "").trim();
+  const next = waiting ? ` ขณะนี้อยู่ระหว่างรอการพิจารณาจาก <b>${esc(waiting)}</b>` : " ขณะนี้อยู่ระหว่างรอการพิจารณา";
+  return lead(
+    `ระบบได้รับคำขอ <b>${esc(formName)}</b>${docNo(requestNo, "เลขที่เอกสาร :")} เรียบร้อยแล้ว` + next,
+  );
+}
+
 /** To the requester, when the last approval lands. */
 export function approvedLead(formName: string, requestNo: string | null | undefined): string {
   return lead(`<b>${esc(formName)}</b>${docNo(requestNo, "เลขที่เอกสาร :")} ได้รับการอนุมัติแล้ว`);

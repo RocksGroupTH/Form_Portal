@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { canAccessAccountArea } from "@/lib/acc/access";
 import { isClrApprover } from "@/lib/clr/clear-advance-approver-service";
 import { listApprovalQueue } from "@/lib/clr/clear-advance-admin-service";
+import { sweepEmailQueueOnLoad } from "@/lib/acc/email-queue-sweep";
 
 /** GET /api/request/clear-advance/approvals?step=MANAGER|ACCOUNT — AP-3 approval queue */
 export async function GET(req: NextRequest) {
@@ -20,6 +21,11 @@ export async function GET(req: NextRequest) {
   try {
     const step = req.nextUrl.searchParams.get("step");
     const data = await listApprovalQueue(step);
+    // Recover anything the post-action drains left behind. Awaited on purpose:
+    // a fire-and-forget recovery recovers from a fire-and-forget failure only
+    // by luck. Throttled, batched small, and it never throws — see
+    // `sweepEmailQueueOnLoad`.
+    await sweepEmailQueueOnLoad();
     return NextResponse.json({ ok: true, data });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "error" }, { status: 500 });

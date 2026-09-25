@@ -1,14 +1,8 @@
 import { env } from "@/env";
 import { documentButton, documentUrl } from "@/lib/acc/mail-link";
+import { buildClearAdvanceEmail, type ClrEmailData } from "@/lib/clr/clear-advance-email-templates";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queueEmail } from "@/lib/acc/email-queue";
-import {
-  MAIL_FORM_NAMES,
-  approvedLead,
-  esc,
-  rejectedLead,
-  returnedLead,
-} from "@/lib/acc/mail-copy";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest, setAccountAction } from "@/lib/clr/clear-advance-request-service";
@@ -76,6 +70,30 @@ async function notifyRequesterAndFiler(
  */
 function link(id: number): string {
   return documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
+}
+
+/**
+ * What the mail builder needs, read off a loaded request.
+ *
+ * One place, so a figure that stops being carried stops being carried on every
+ * AP-3 message at once rather than on whichever ones somebody remembered.
+ */
+function mailData(
+  requestId: number,
+  req: Awaited<ReturnType<typeof getRequest>>,
+  note?: string | null,
+): ClrEmailData {
+  return {
+    id: requestId,
+    requestNo: req?.requestNo ?? String(requestId),
+    requesterFullName: req?.requesterFullName ?? null,
+    brandCode: req?.brandCode ?? null,
+    advanceRequestNo: req?.clear?.advanceRequestNo ?? null,
+    actualTotal: req?.clear?.actualTotal ?? null,
+    refundToCompany: req?.clear?.refundToCompany ?? null,
+    paymentDate: req?.clear?.paymentDate ?? null,
+    note: note ?? null,
+  };
 }
 
 /**
@@ -210,12 +228,8 @@ export async function approveCurrentStep(
      approver roster's own queue page is where that work is found. Only the
      final approval below still writes, and it writes to the requester. */
   if (!nextStep) {
-    const subject = `เคลียร์เงินทดรองจ่าย ${no} อนุมัติครบแล้ว`;
-    const body =
-      approvedLead(MAIL_FORM_NAMES["AP-3"], no) +
-      `<p>ต้องโอนคืนบริษัท: ${esc((req.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
-      link(requestId);
-    await notifyRequesterAndFiler(requestId, subject, body, req, "Approved");
+    const mail = buildClearAdvanceEmail("Approved", mailData(requestId, req));
+    await notifyRequesterAndFiler(requestId, mail.subject, mail.html, req, "Approved");
   }
 }
 
@@ -262,14 +276,14 @@ export async function reject(
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
+    /* The comment reaches `rejectedLead` as data, never as markup — it was
+       interpolated RAW here until 2026-09-24, free text from an approver
+       straight into an HTML mail body. */
+    const mail = buildClearAdvanceEmail("Rejected", mailData(requestId, req, comment));
     await notifyRequesterAndFiler(
       requestId,
-      `เคลียร์เงินทดรองจ่าย ${no} ไม่อนุมัติ`,
-      /* The comment was interpolated RAW here until 2026-09-24 — free text
-         from an approver, straight into an HTML mail body. `rejectedLead`
-         returns finished, escaped HTML, which is why it takes the reason
-         rather than handing a caller a string to remember to escape. */
-      rejectedLead(MAIL_FORM_NAMES["AP-3"], no, comment) + link(requestId),
+      mail.subject,
+      mail.html,
       req,
       "Rejected",
     );
@@ -319,10 +333,11 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
+    const mail = buildClearAdvanceEmail("Returned", mailData(requestId, req, comment));
     await notifyRequesterAndFiler(
       requestId,
-      `เคลียร์เงินทดรองจ่าย ${no} ส่งกลับแก้ไข`,
-      returnedLead(MAIL_FORM_NAMES["AP-3"], no, comment) + link(requestId),
+      mail.subject,
+      mail.html,
       req,
       "Returned",
     );
@@ -384,11 +399,11 @@ export async function cancelApprovedClearing(
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
+    const mail = buildClearAdvanceEmail("CancelledByAccount", mailData(requestId, req, note));
     await notifyRequesterAndFiler(
       requestId,
-      `เคลียร์เงินทดรองจ่าย ${no} ถูกยกเลิกโดยฝ่ายบัญชี`,
-      `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ที่อนุมัติแล้ว ถูกยกเลิกก่อนส่งเข้า Business Central</p>` +
-        `<p>เหตุผล: ${note}</p>` + link(requestId),
+      mail.subject,
+      mail.html,
       req,
       "Cancelled",
     );
@@ -430,11 +445,8 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
-    const subject = `เคลียร์เงินทดรองจ่าย ${no} ถูกยกเลิกโดยผู้ขอ`;
-    const body =
-      `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ถูกยกเลิกโดยผู้ขอ (ก่อนถึงขั้นบัญชี) — ไม่ต้องดำเนินการอนุมัติ</p>` +
-      `<p>ผู้ขอ: ${req.requesterFullName ?? "-"}</p>` + link(requestId);
-    await notify(requestId, subject, body, req.managerEmail, "Cancelled");
-    await notifyRequesterAndFiler(requestId, subject, body, req, "Cancelled");
+    const mail = buildClearAdvanceEmail("CancelledByRequester", mailData(requestId, req));
+    await notify(requestId, mail.subject, mail.html, req.managerEmail, "Cancelled");
+    await notifyRequesterAndFiler(requestId, mail.subject, mail.html, req, "Cancelled");
   }
 }
