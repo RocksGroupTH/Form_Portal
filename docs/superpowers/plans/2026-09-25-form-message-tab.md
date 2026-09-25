@@ -16,6 +16,7 @@
 - **The token is exactly `{เจ้าของฟอร์ม}`.** No other token exists. No fuzzy matching.
 - **Bounds:** body ≤ 5,000 chars; ≤ 20 blocks; each block ≤ 1,000 chars. Over any bound is a **400**, never a truncation.
 - **`formCode` is a literal in each route file and is NEVER read from the request body.**
+- **The Message tab is ADMIN-ONLY on all five forms** — `requireRole(["IT Admin", "System Admin"])`, and `messages` / `advanceMessages` / `clearMessages` appear in **no** grantable list. The four settings-tab tables are shared with ACC Portal, which deletes an approver's rows and re-inserts only the keys its own list knows, so the grant cannot be stored. See spec §8 and ledger ruling R1.
 - **Migration 164 targets `Fast_Core` and only `Fast_Core`.** Not dual-written, not in `MASTER_TABLES`. `npm run check:alignment` must still report **30**.
 - **The body renders as text, never HTML/Markdown.** React's default escaping is the control.
 - **The existing constants are not deleted** — they are the fallback when the table is missing.
@@ -344,13 +345,24 @@ The table, plus seeds for AP-1, AP-17 and AP-4. **The AP-4 seed is compliance co
 
 - [ ] **Step 1: Generate the seed text — do NOT type it by hand**
 
-Write this scratch script and run it. Its output is what goes into the migration.
+Write this script **inside the repo** and run it. Its output is what goes into
+the migration.
 
-Create `C:\Users\PC\AppData\Local\Temp\claude\c--Users-PC-source-repos-Web-Form-Portal\9b525192-e12b-46b3-a016-f134dc9412de\scratchpad\print-seed.ts`:
+> It lives in `scripts/checks/` rather than a scratch directory because `tsx`
+> resolves the `@/` alias from the tsconfig nearest the file — outside the repo
+> the alias does not resolve at all. **Keep the file**: regenerating is the only
+> safe way to touch AP-4's compliance copy if it ever changes.
+
+Create `scripts/checks/print-form-message-seed.ts`:
 
 ```ts
-import { AP17_HEADER_MESSAGE_LINES } from "../../../../../../source/repos/Web/Form_Portal/src/features/travel-booking/constants";
-import { REIMBURSE_NOTICE } from "../../../../../../source/repos/Web/Form_Portal/src/features/reimburse/constants";
+/**
+ * Print migration 164's seed bodies, so AP-4's compliance copy is never
+ * retyped by hand. `src/features/reimburse/constants.test.ts` asserts the
+ * migration still contains exactly this output.
+ */
+import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
+import { REIMBURSE_NOTICE } from "@/features/reimburse/constants";
 
 const AP1 = [
   "รอบการเบิกจ่ายค่าเดินทาง — ตัดรอบวันจันทร์ (อนุมัติแล้ว) และจ่ายตามปฏิทินการชำระของบริษัท (ทุกศุกร์ที่ 2 และศุกร์ที่ 4 ของเดือน)",
@@ -370,9 +382,13 @@ for (const [code, lines] of [
 }
 ```
 
-Run: `npx tsx --env-file=.env.local "C:\Users\PC\AppData\Local\Temp\claude\c--Users-PC-source-repos-Web-Form-Portal\9b525192-e12b-46b3-a016-f134dc9412de\scratchpad\print-seed.ts"`
+Run from the repo root: `npx tsx scripts/checks/print-form-message-seed.ts`
 
-Expected: three `N'…'` literals. If it throws on an apostrophe, double it (`''`) in the migration by hand and note that Step 4's test will then need the same treatment.
+Expected: three `N'…'` literals. No `--env-file` is needed and none should be
+passed — the three constants modules import nothing at runtime, which is the
+whole reason this script can exist. If it throws on an apostrophe, double it
+(`''`) in the migration by hand and note that Step 4's `includes` test will then
+need the same treatment.
 
 - [ ] **Step 2: Write the migration, pasting those three literals in**
 
@@ -571,43 +587,51 @@ git commit -m "feat(form-message): migration 164 — Fast_Core.FormMessage, seed
 Read and write, modelled on `form-owner.ts` line for line, including which error it is allowed to swallow.
 
 **Files:**
-- Create: `src/lib/form-environment/form-message.ts`
+- Create: `src/lib/form-environment/form-message-fallback.ts` (pure)
+- Create: `src/lib/form-environment/form-message.ts` (pools)
+- Create: `src/lib/form-environment/form-message-resolve.test.ts`
+
+> **The split is mandatory, not a preference.** `npm test` is `tsx --test` with
+> **no `--env-file`** (`scripts/run-tests.ts`), so `@/env` throws at import and
+> a test that imports `form-message.ts` — which reaches `@/lib/db/mssql` — dies
+> before a single assertion runs. The fallback map and the resolver are the
+> half worth testing, so they live in a module that imports no pool. This is
+> the same policy/pool split `request-acl-policy` and `current-manager-sql`
+> use. The three notice constants import nothing at runtime (checked: only one
+> `import type`), so the pure module may import all three.
 
 **Interfaces:**
-- Consumes: `getCorePool`, `sql` from `@/lib/db/mssql`; `parseFormMessage` (Task 1); the three notice constants
-- Produces:
+- Consumes: `getCorePool`, `sql` from `@/lib/db/mssql`; `parseFormMessage`, `expandFormMessage` (Task 1); the three notice constants
+- Produces from `form-message-fallback.ts`:
+  - `FORM_MESSAGE_FALLBACK: Readonly<Record<string, readonly string[]>>`
+  - `resolveFormMessageBlocks(formCode, stored, owners): string[]`
+- Produces from `form-message.ts` (which **re-exports both of the above**, so every caller has one import path):
   - `FormMessageRow { body: string; updatedBy: string | null; updatedAt: string | null }`
   - `listFormMessageBodies(): Promise<Readonly<Record<string, string>> | null>` — `null` means "the table is not there"
   - `getFormMessage(formCode: string): Promise<FormMessageRow | null>`
   - `setFormMessage(formCode: string, body: string, actorEmail: string | null): Promise<void>`
-  - `FORM_MESSAGE_FALLBACK: Readonly<Record<string, readonly string[]>>`
-  - `resolveFormMessageBlocks(formCode, stored, owners): string[]`
 
-- [ ] **Step 1: Write the implementation**
+- [ ] **Step 1a: Write the pure module**
+
+`src/lib/form-environment/form-message-fallback.ts`:
 
 ```ts
 /**
- * Each form's notice copy — the box at the top of the form.
+ * What each form shows when the database cannot answer, and the rule that
+ * decides when that applies.
  *
- * Storage is `Fast_Core.dbo.FormMessage` (migration 164); see that file's
- * header for why it lives there and why there is no identity column.
+ * Separate from `form-message.ts` because that module opens a pool, which
+ * drags `@/env` in — and `npm test` runs with no env file, so a test importing
+ * it never reaches its first assertion. This is the half worth testing.
  *
- * **It grants nothing and decides nothing.** It is text on a page, and every
- * gate in this application is unaware of it — the property to preserve if a
- * later change is tempted to read this table to decide something.
+ * The three notice constants it imports have no runtime imports of their own,
+ * which is what makes this module safe to load in a test.
  */
-import { getCorePool, sql } from "@/lib/db/mssql";
-import { parseFormMessage, expandFormMessage } from "./form-message-text";
+import { expandFormMessage } from "./form-message-text";
 import type { FormOwnerRef } from "./form-owner-text";
 import { AP1_HEADER_MESSAGE_LINES } from "@/features/accounting/constants";
 import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
 import { REIMBURSE_NOTICE } from "@/features/reimburse/constants";
-
-export interface FormMessageRow {
-  body: string;
-  updatedBy: string | null;
-  updatedAt: string | null;
-}
 
 /**
  * What each form printed before this table existed.
@@ -622,6 +646,57 @@ export const FORM_MESSAGE_FALLBACK: Readonly<Record<string, readonly string[]>> 
   "AP-17": AP17_HEADER_MESSAGE_LINES,
   "AP-4": REIMBURSE_NOTICE,
 });
+
+/**
+ * The bullets a reader sees, given what the table answered.
+ *
+ * Three cases, and the middle one is the one worth stating: a **missing table**
+ * or a **missing row** falls back to the constant, while a **row with an empty
+ * body** is `[]` — an admin who clears the message means it.
+ */
+export function resolveFormMessageBlocks(
+  formCode: string,
+  stored: Readonly<Record<string, string>> | null,
+  owners: readonly FormOwnerRef[] | null | undefined,
+): string[] {
+  if (stored === null || !(formCode in stored)) {
+    return expandFormMessage(
+      Array.from(FORM_MESSAGE_FALLBACK[formCode] ?? []).join("\n\n"),
+      owners,
+    );
+  }
+  return expandFormMessage(stored[formCode], owners);
+}
+```
+
+- [ ] **Step 1b: Write the pool module**
+
+Write `src/lib/form-environment/form-message.ts` exactly as below, but **omit
+`FORM_MESSAGE_FALLBACK` and `resolveFormMessageBlocks`** — they are in Step 1a.
+Instead add this re-export at the end, so every caller has one import path:
+
+```ts
+export { FORM_MESSAGE_FALLBACK, resolveFormMessageBlocks } from "./form-message-fallback";
+```
+
+```ts
+/**
+ * Each form's notice copy — the box at the top of the form.
+ *
+ * Storage is `Fast_Core.dbo.FormMessage` (migration 164); see that file's
+ * header for why it lives there and why there is no identity column.
+ *
+ * **It grants nothing and decides nothing.** It is text on a page, and every
+ * gate in this application is unaware of it — the property to preserve if a
+ * later change is tempted to read this table to decide something.
+ */
+import { getCorePool, sql } from "@/lib/db/mssql";
+
+export interface FormMessageRow {
+  body: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
 
 /**
  * True for the one error this is allowed to swallow: the table is not there.
@@ -714,26 +789,8 @@ export async function setFormMessage(
     );
 }
 
-/**
- * The bullets a reader sees, given what the table answered.
- *
- * Three cases, and the middle one is the one worth stating: a **missing table**
- * or a **missing row** falls back to the constant, while a **row with an empty
- * body** is `[]` — an admin who clears the message means it.
- */
-export function resolveFormMessageBlocks(
-  formCode: string,
-  stored: Readonly<Record<string, string>> | null,
-  owners: readonly FormOwnerRef[] | null | undefined,
-): string[] {
-  if (stored === null || !(formCode in stored)) {
-    return expandFormMessage(
-      Array.from(FORM_MESSAGE_FALLBACK[formCode] ?? []).join("\n\n"),
-      owners,
-    );
-  }
-  return expandFormMessage(stored[formCode], owners);
-}
+/* One import path for every caller, even though the rule lives next door. */
+export { FORM_MESSAGE_FALLBACK, resolveFormMessageBlocks } from "./form-message-fallback";
 ```
 
 - [ ] **Step 2: Write tests for the pure half**
@@ -743,7 +800,9 @@ Create `src/lib/form-environment/form-message-resolve.test.ts`:
 ```ts
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveFormMessageBlocks, FORM_MESSAGE_FALLBACK } from "./form-message";
+// The PURE module, never "./form-message" — that one opens a pool, and the
+// test runner has no env file, so importing it throws before any assertion.
+import { resolveFormMessageBlocks, FORM_MESSAGE_FALLBACK } from "./form-message-fallback";
 
 test("a missing TABLE falls back to the form's constant", () => {
   const out = resolveFormMessageBlocks("AP-1", null, []);
@@ -774,7 +833,9 @@ test("a stored body wins over the constant and expands its token", () => {
 });
 ```
 
-> `form-message.ts` imports `@/lib/db/mssql`, which reaches `@/env`. If this test throws at import, move `FORM_MESSAGE_FALLBACK` and `resolveFormMessageBlocks` into `form-message-text.ts` (which imports nothing) and re-export them from `form-message.ts`, then point this test at the pure module. Do **not** delete the test.
+> If this test throws at import, the import path is wrong — it must name
+> `./form-message-fallback`, never `./form-message`. Do **not** delete the test
+> and do **not** work around it by adding an env file to the runner.
 
 - [ ] **Step 3: Run the tests**
 
@@ -867,76 +928,78 @@ git commit -m "feat(form-message): the notice rides on /api/form-environment bes
 
 ---
 
-### Task 5: The tab key on all five forms
+### Task 5: The Message tab is ADMIN-ONLY on all five forms
 
-Pure vocabulary changes. No routes yet — this task makes the key exist and the grids offer it.
+> **⚠ This task was rewritten on 2026-09-25, before any code was written.** It
+> originally made `messages` a *grantable* key on every form. It is
+> **ungrantable** — see spec §8's amendment. The short version, because it is
+> the thing most likely to be "helpfully" undone:
+>
+> **All four settings-tab tables are shared with the ACC Portal sibling, which
+> rewrites them through its own key filter.** `ACC_Portal/src/lib/acc/approver-settings-tabs.ts:47-56`
+> does `DELETE FROM AccApproverSettingsTab WHERE ApproverId = @aid` then
+> re-INSERTs only `filterGrantableTabKeys(keys)` — a five-key list with no
+> `messages`. So a Message grant stored here is **silently deleted** the next
+> time an admin saves that person's tabs in ACC Portal. That is the exact
+> defect commit 8a3ab358 fixed for AP-17's menu ticks.
+>
+> **Do not add `messages` to any grantable list.** If a reviewer flags the
+> inconsistency with the other tabs, this note is the answer.
+
+Pure vocabulary changes. No routes yet — this task makes the tab exist as an
+admin-only one and gives each grid the text to explain why.
 
 **Files:**
 - Modify: `src/lib/acc/settings-tabs.ts` (AP-1)
-- Modify: `src/lib/acc/travel-booking/settings-tabs.ts` (AP-17)
 - Modify: `src/lib/acc/reimburse/settings-tabs.ts` (AP-4)
 - Modify: `src/lib/adv/settings-tabs.ts` (AP-2 and AP-3)
 
+> **AP-17 needs no change to `settings-tabs.ts` at all.** Its strip is
+> `GRANTABLE_BOOKING_TABS.map(...).concat([per-diem, access])` in the page, so
+> an ungrantable tab is added to that `.concat` in Task 8 — exactly how
+> `per-diem` is already handled. Adding it to `GrantableBookingTabKey` would
+> make it grantable, which is what this task exists to avoid.
+
 **Interfaces:**
-- Produces: tab keys `"messages"` (AP-1, AP-17, AP-4), `"advanceMessages"` (AP-2), `"clearMessages"` (AP-3)
+- Produces: admin-only tab keys `"messages"` (AP-1, AP-17, AP-4), `"advanceMessages"` (AP-2), `"clearMessages"` (AP-3). **None is in any grantable list.**
 
 - [ ] **Step 1: AP-1**
 
-In `src/lib/acc/settings-tabs.ts`:
-
-```ts
-export type GrantableSettingsTabKey =
-  | "brands"
-  | "sameDayBrand"
-  | "vehicles"
-  | "messages"
-  | "departments"
-  | "erpInterface";
-```
-
-and in `GRANTABLE_SETTINGS_TABS`, between `vehicles` and `departments`:
-
-```ts
-  { key: "messages", label: "Message" },
-```
-
-and in `SETTINGS_ROUTE_TABS`, after the two `vehicles` entries:
+In `src/lib/acc/settings-tabs.ts`, **leave `GrantableSettingsTabKey` and
+`GRANTABLE_SETTINGS_TABS` untouched.** Add only the route rule, in
+`SETTINGS_ROUTE_TABS`, after the two `vehicles` entries:
 
 ```ts
   {
     route: "messages",
-    tab: "messages",
-    // A message grants nothing — it decides no approval, no posting target,
-    // no brand scope and no read. It is the least consequential grant here.
-    note: "the form's own notice copy",
+    tab: null,
+    // Admin-only, and NOT because a message is dangerous — it grants nothing,
+    // decides no approval, no posting target and no read. It is because the
+    // grant could not be stored: `AccApproverSettingsTab` is shared with ACC
+    // Portal, whose own save deletes every row for an approver and re-inserts
+    // only the keys ITS list knows (`approver-settings-tabs.ts:47-56`). A
+    // `messages` grant would vanish the next time somebody edited that
+    // person's tabs over there, with no error on either side — the defect
+    // 8a3ab358 fixed for AP-17's menu ticks. Making it grantable means adding
+    // the key to BOTH applications in one change, not to this list alone.
+    note: "grant unstorable — ACC Portal rewrites AccApproverSettingsTab through its own key filter",
   },
 ```
 
-- [ ] **Step 2: AP-17**
+- [ ] **Step 2: AP-17 — nothing to do here**
 
-In `src/lib/acc/travel-booking/settings-tabs.ts`:
+Deliberately empty. `GrantableBookingTabKey`, `BOOKING_TAB_LABELS` and
+`BOOKING_TAB_ORDER` are all **unchanged** — every key in them is grantable by
+construction, and this tab must not be. AP-17's Message tab is appended to the
+page's own `TABS` array in Task 8, beside `per-diem` and `access`, which are
+ungrantable for their own reasons and handled the same way.
 
-```ts
-/**
- * The keys an admin can tick: every `[kind]` segment, plus `brands` and
- * `messages` — the two that are not option tables and have routes of their own.
- */
-export type GrantableBookingTabKey = SettingsKind | "brands" | "messages";
+Confirm you changed nothing:
+
+```bash
+git diff --stat src/lib/acc/travel-booking/settings-tabs.ts
 ```
-
-and add to `BOOKING_TAB_LABELS`:
-
-```ts
-  messages: "Message",
-```
-
-and to `BOOKING_TAB_ORDER`, **last** — the page appends `per-diem` and `access` after this array, so this position puts Message immediately before them:
-
-```ts
-  "rent-vehicles",
-  "messages",
-];
-```
+Expected: no output.
 
 - [ ] **Step 3: AP-4**
 
@@ -948,11 +1011,26 @@ In `src/lib/acc/reimburse/settings-tabs.ts`, in `REIMBURSE_SETTINGS_TAB_ORDER` b
   "glAccounts",
 ```
 
-and add to `REIMBURSE_ALL_TAB_META` (a `Record` over the union, so omitting this is a compile error):
+and add to `REIMBURSE_ALL_TAB_META` (a `Record` over the union, so omitting this is a compile error). **`adminOnly` is what keeps it ungrantable and what the grid prints in its cell:**
 
 ```ts
-  messages: { label: "Message" },
+  messages: {
+    label: "Message",
+    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
+  },
 ```
+
+**And widen the grantable exclusion**, or the key becomes grantable by default —
+`GrantableReimburseTabKey` is written as an `Exclude`, and its own docblock says
+that a tab added to the strip is grantable **unless excluded here**:
+
+```ts
+export type GrantableReimburseTabKey = Exclude<ReimburseSettingsTabKey, "access" | "messages">;
+```
+
+> This is the fail-open default that module warns about, meeting a tab that
+> must not be granted. Skipping it does not fail the typecheck — it silently
+> ships a tick that ACC Portal will delete.
 
 - [ ] **Step 4: AP-2 and AP-3**
 
@@ -980,26 +1058,40 @@ export const CLEAR_SETTINGS_TAB_ORDER = [
 ] as const;
 ```
 
-Add to `GRANTABLE_ADV_CLR_TABS`:
+**Do NOT add either key to `GRANTABLE_ADV_CLR_TABS`.** Add them to
+`ALL_ADV_CLR_TABS` only, each carrying `adminOnly` — that field is what makes
+the grid render a disabled box with the reason instead of a tick, and
+`storableAdvClrKeysForForm` skips anything `isGrantableAdvClrTabKey` refuses:
 
 ```ts
-  { key: "advanceMessages", label: "Message" },
-  { key: "clearMessages", label: "Message" },
+  {
+    key: "advanceMessages",
+    label: "Message",
+    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
+  },
+  {
+    key: "clearMessages",
+    label: "Message",
+    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
+  },
 ```
 
-Add to `ALL_ADV_CLR_TABS`:
-
-```ts
-  { key: "advanceMessages", label: "Message" },
-  { key: "clearMessages", label: "Message" },
-```
-
-> **Two keys, not one shared `messages`.** `storableAdvClrKeysForForm` must stay **disjoint** across the two forms — the bounded `DELETE` in `setAdvClrAccessTabs` rests on it — and a single tickable key on both strips would put it in both sets, so a save from AP-2's grid would clear AP-3's grant. Exactly the reason `advanceErpInterface` / `clearErpInterface` are already split.
+> **Still two keys, not one shared `messages`, even though neither is
+> grantable.** `advClrTabsForForm` derives each page's strip by matching strip
+> entries against `ALL_ADV_CLR_TABS`, so one shared key would put the same row
+> on both pages and make "which form does this tab configure?" unanswerable —
+> and the two routes write different `FormCode`s. Keeping them split also means
+> nothing has to change here if they are ever made grantable in both
+> applications at once.
+>
+> Being ungrantable, they stay out of `storableAdvClrKeysForForm` entirely, so
+> the **disjointness and coverage** assertions in `settings-tabs.test.ts` are
+> untouched — exactly as `access` is today.
 
 - [ ] **Step 5: Run the vocabulary tests**
 
-Run: `npm test -- src/lib/adv/settings-tabs.test.ts src/lib/acc/travel-booking/settings-tabs.test.ts`
-Expected: PASS — in particular the disjointness and coverage assertions over `storableAdvClrKeysForForm`.
+Run: `npm test -- src/lib/adv/settings-tabs.test.ts src/lib/acc/travel-booking/settings-tabs.test.ts src/lib/acc/reimburse/settings-tabs.test.ts`
+Expected: PASS. The AP-2/AP-3 disjointness and coverage assertions must still pass **unchanged** — if either now fails, a key was wrongly added to `GRANTABLE_ADV_CLR_TABS`.
 
 `npm test -- src/lib/acc/settings-tabs.test.ts` is **expected to FAIL** at this point: `SETTINGS_ROUTE_TABS` now names a `messages` route that does not exist on disk. Task 6 creates it. Do not "fix" it by removing the entry.
 
@@ -1007,8 +1099,8 @@ Expected: PASS — in particular the disjointness and coverage assertions over `
 
 ```bash
 npm run typecheck
-git add src/lib/acc/settings-tabs.ts src/lib/acc/travel-booking/settings-tabs.ts src/lib/acc/reimburse/settings-tabs.ts src/lib/adv/settings-tabs.ts
-git commit -m "feat(form-message): a Message tab key on all five forms"
+git add src/lib/acc/settings-tabs.ts src/lib/acc/reimburse/settings-tabs.ts src/lib/adv/settings-tabs.ts
+git commit -m "feat(form-message): an admin-only Message tab on all five forms"
 ```
 
 ---
@@ -1038,17 +1130,25 @@ Each route pins its own form code and its own tab key.
 
 ```ts
 import { NextRequest, NextResponse } from "next/server";
-import { requireSettingsTab } from "@/lib/acc/require-settings-tab";
+import { requireRole } from "@/lib/api-auth";
 import { getFormMessage, setFormMessage } from "@/lib/form-environment/form-message";
 import { messageBodyProblem } from "@/lib/form-environment/form-message-text";
 
 /**
  * AP-1's notice copy — the box at the top of the travel-expense form.
  *
- * **`FORM_CODE` is a literal and is never read from the body.** A grant is per
- * form, so a posted form code would let somebody holding AP-2's tab rewrite
- * AP-1's notice. Which form a route governs is a property of the route, the
- * same rule `requireSettingsTab` states for the tab key.
+ * **`FORM_CODE` is a literal and is never read from the body.** Which form a
+ * route governs is a property of the route, the same rule `requireSettingsTab`
+ * states for its tab key; a posted form code would let this route rewrite
+ * another form's notice.
+ *
+ * **Admin-only rather than tab-granted, and the reason is storage rather than
+ * risk.** A message grants nothing — no approval, no posting target, no read.
+ * But `AccApproverSettingsTab` is shared with the ACC Portal sibling, whose own
+ * save deletes every row for an approver and re-inserts only the keys its list
+ * knows (`approver-settings-tabs.ts:47-56`), so a `messages` grant would vanish
+ * on that app's next save with no error either side. Making it grantable means
+ * adding the key to both applications in one change. See spec §8.
  *
  * The rows live in `Fast_Core`, reached through `getCorePool()`, so this route
  * needs no `ROUTE_RULES` entry and is unaffected by the settings prefix being
@@ -1057,7 +1157,7 @@ import { messageBodyProblem } from "@/lib/form-environment/form-message-text";
 const FORM_CODE = "AP-1";
 
 export async function GET() {
-  const session = await requireSettingsTab("messages");
+  const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;
   try {
     const row = await getFormMessage(FORM_CODE);
@@ -1069,7 +1169,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireSettingsTab("messages");
+  const session = await requireRole(["IT Admin", "System Admin"]);
   if (session instanceof Response) return session;
   try {
     const body = await req.json();
@@ -1087,16 +1187,21 @@ export async function POST(req: NextRequest) {
 
 - [ ] **Step 2: Write the other four**
 
-Identical but for three things — the import, the guard call and `FORM_CODE`. Repeat the whole file each time; do not factor it into a shared handler, because the literal per file is the control.
+Identical but for **`FORM_CODE` and the `console.error` prefix**. The gate is
+`requireRole(["IT Admin", "System Admin"])` on all five, so the import line is
+the same everywhere too. Repeat the whole file each time; do not factor it into
+a shared handler, because the literal per file is the control.
 
-| file | import | guard call | `FORM_CODE` |
-|---|---|---|---|
-| `travel-booking/settings/messages` | `requireBookingSettingsTab` from `@/lib/acc/travel-booking/require-booking-settings-tab` | `requireBookingSettingsTab("messages")` | `"AP-17"` |
-| `reimburse/settings/messages` | `requireReimburseSettingsTab` from `@/lib/acc/reimburse/require-reimburse-settings-tab` | `requireReimburseSettingsTab("messages")` | `"AP-4"` |
-| `advance/settings/messages` | `requireAdvClrSettingsTab` from `@/lib/adv/require-adv-clr-settings-tab` | `requireAdvClrSettingsTab("advanceMessages")` | `"AP-2"` |
-| `clear-advance/settings/messages` | `requireAdvClrSettingsTab` from `@/lib/adv/require-adv-clr-settings-tab` | `requireAdvClrSettingsTab("clearMessages")` | `"AP-3"` |
+| file | `FORM_CODE` | `console.error` prefix |
+|---|---|---|
+| `travel-booking/settings/messages` | `"AP-17"` | `[api/request/travel-booking/settings/messages]` |
+| `reimburse/settings/messages` | `"AP-4"` | `[api/request/reimburse/settings/messages]` |
+| `advance/settings/messages` | `"AP-2"` | `[api/request/advance/settings/messages]` |
+| `clear-advance/settings/messages` | `"AP-3"` | `[api/request/clear-advance/settings/messages]` |
 
-Update each `console.error` prefix to that route's own path.
+Adjust the docblock's first line and its shared-table reference per form —
+AP-17's is `AccBookingApproverTab`, AP-4's `AccReimburseAccessTab`, AP-2's and
+AP-3's `AccAdvClrAccessTab`. The rest of the reasoning is the same on all five.
 
 - [ ] **Step 3: Write the source-shape guard test**
 
@@ -1117,12 +1222,14 @@ import { readFileSync } from "node:fs";
  * is a string on three of the five guards, so passing AP-2's key on AP-3's
  * route compiles and gates the wrong grant.
  */
+const GATE = 'requireRole(["IT Admin", "System Admin"])';
+
 const ROUTES = [
-  { path: "src/app/api/request/accounting/settings/messages/route.ts", code: "AP-1", gate: 'requireSettingsTab("messages")' },
-  { path: "src/app/api/request/travel-booking/settings/messages/route.ts", code: "AP-17", gate: 'requireBookingSettingsTab("messages")' },
-  { path: "src/app/api/request/reimburse/settings/messages/route.ts", code: "AP-4", gate: 'requireReimburseSettingsTab("messages")' },
-  { path: "src/app/api/request/advance/settings/messages/route.ts", code: "AP-2", gate: 'requireAdvClrSettingsTab("advanceMessages")' },
-  { path: "src/app/api/request/clear-advance/settings/messages/route.ts", code: "AP-3", gate: 'requireAdvClrSettingsTab("clearMessages")' },
+  { path: "src/app/api/request/accounting/settings/messages/route.ts", code: "AP-1" },
+  { path: "src/app/api/request/travel-booking/settings/messages/route.ts", code: "AP-17" },
+  { path: "src/app/api/request/reimburse/settings/messages/route.ts", code: "AP-4" },
+  { path: "src/app/api/request/advance/settings/messages/route.ts", code: "AP-2" },
+  { path: "src/app/api/request/clear-advance/settings/messages/route.ts", code: "AP-3" },
 ];
 
 for (const r of ROUTES) {
@@ -1144,10 +1251,27 @@ for (const r of ROUTES) {
     assert.ok(!/body\??\.\s*formCode/.test(src), `${r.path} reads formCode off the wire`);
   });
 
-  test(`${r.code}: both handlers open with its own gate`, () => {
+  test(`${r.code}: both handlers open with the admin gate`, () => {
     const calls = src.match(/await require[A-Za-z]+\([^)]*\)/g) ?? [];
     assert.equal(calls.length, 2, `${r.path} should gate exactly GET and POST`);
-    for (const c of calls) assert.ok(c.includes(r.gate), `${r.path} uses the wrong gate: ${c}`);
+    for (const c of calls) {
+      assert.ok(c.includes(GATE), `${r.path} uses the wrong gate: ${c}`);
+    }
+  });
+
+  /**
+   * The grant is unstorable: all four settings-tab tables are shared with ACC
+   * Portal, whose save deletes an approver's rows and re-inserts only the keys
+   * its own list knows — so a `messages` tick made here disappears on that
+   * app's next save, with no error either side (spec §8). Swapping this gate
+   * for a tab guard compiles and passes every other test in the repo, so this
+   * is the only thing standing between that and shipping.
+   */
+  test(`${r.code}: is NOT tab-gated — the grant cannot be stored`, () => {
+    assert.ok(
+      !/require(Settings|Booking|Reimburse|AdvClr)[A-Za-z]*Tab\s*\(/.test(src),
+      `${r.path} is tab-gated; the grant would be deleted by ACC Portal — see spec §8`,
+    );
   });
 
   test(`${r.code}: the refusal is returned, not computed and dropped`, () => {
@@ -1166,12 +1290,11 @@ for (const r of ROUTES) {
 
 - [ ] **Step 4: Update the three existing route-gate tests**
 
-1. `src/lib/acc/settings-tabs.test.ts` — change the pinned handler count from `31` to `33` (the new route adds GET and POST). The comment above it explains why the number is pinned; leave it.
-2. `src/lib/acc/reimburse/settings-route-gates.test.ts` — add to `ROUTE_GATES`:
-   ```ts
-   { route: "messages", gate: { kind: "tab", tab: "messages" } },
-   ```
-3. `src/lib/adv/settings-route-gates.test.ts` — read the file first to learn its entry shape, then add one entry for `advance/settings/messages` gated on `advanceMessages` and one for `clear-advance/settings/messages` gated on `clearMessages`, matching the existing entries exactly.
+1. `src/lib/acc/settings-tabs.test.ts` — change the pinned handler count from `31` to `33` (the new route adds GET and POST). The comment above it explains why the number is pinned; leave it. **Read how that file asserts an admin-only rule** (`tab: null`, e.g. the `approvers` and `departments/sync` entries) and make sure the new `messages` entry satisfies the same assertion — it expects a `requireRole` gate, not a tab guard.
+2. `src/lib/acc/reimburse/settings-route-gates.test.ts` — add a `ROUTE_GATES` entry for `messages` using the **role** gate shape, not the tab shape. Copy it from the existing `erp-sync` entry, which is admin-only for its own reason; do **not** write `{ kind: "tab", tab: "messages" }`.
+3. `src/lib/adv/settings-route-gates.test.ts` — read the file first to learn its entry shape, then add one entry for `advance/settings/messages` and one for `clear-advance/settings/messages`, both with the **role** gate shape, matching whatever that file's existing admin-only entries use (`vendors/sync`, `erp-batches`, `locations/sync` and `erp-sync` are all admin-only there).
+
+> If any of those three test files asserts "every grantable key has a tab-gated route" in the other direction too, nothing needs doing — `messages` is not a grantable key on any form, so it is outside that assertion entirely.
 
 - [ ] **Step 5: Run everything**
 
@@ -1431,7 +1554,26 @@ and in the panel switch:
 
 - [ ] **Step 2: AP-17**
 
-`TabKey` becomes `TravelOptionKind | "brands" | "access" | "per-diem" | "messages"`. Add `messages: <MessageSquare size={15} />` to `TAB_ICONS`. **Do not touch `TABS`** — it is built from `GRANTABLE_BOOKING_TABS`, which Task 5 already extended, so the tab appears in the right place on its own. Render the panel for `tab === "messages"` with endpoint `/api/request/travel-booking/settings/messages` and `formCode="AP-17"`.
+`TabKey` becomes `TravelOptionKind | "brands" | "access" | "per-diem" | "messages"`. Add `messages: <MessageSquare size={15} />` to `TAB_ICONS`.
+
+**Here you DO touch `TABS`** — unlike the other four pages. `TABS` is
+`GRANTABLE_BOOKING_TABS.map(...).concat([per-diem, access])`, and Task 5
+deliberately left `GRANTABLE_BOOKING_TABS` alone, so `messages` has to join the
+`.concat` — ahead of `per-diem`, to sit last among the configuration tabs:
+
+```tsx
+    .concat([
+      { key: "messages", label: "Message", icon: TAB_ICONS.messages },
+      { key: "per-diem", label: "เบี้ยเลี้ยงต่างประเทศ", icon: TAB_ICONS["per-diem"] },
+      { key: "access", label: "สิทธิ์เข้าถึง", icon: TAB_ICONS.access },
+    ]);
+```
+
+The comment above that `.concat` says neither of its entries may come from
+`GRANTABLE_BOOKING_TABS`; extend it to name `messages` and why (the grant is
+unstorable — ACC Portal rewrites `AccBookingApproverTab`).
+
+Render the panel for `tab === "messages"` with endpoint `/api/request/travel-booking/settings/messages` and `formCode="AP-17"`.
 
 - [ ] **Step 3: AP-4, AP-2, AP-3**
 
@@ -1442,6 +1584,13 @@ Same pattern on each page: an icon entry if that page keeps one, and a panel bra
 | AP-4 | `/api/request/reimburse/settings/messages` | `AP-4` | `messages` |
 | AP-2 | `/api/request/advance/settings/messages` | `AP-2` | `advanceMessages` |
 | AP-3 | `/api/request/clear-advance/settings/messages` | `AP-3` | `clearMessages` |
+
+> **Nothing extra is needed to hide the tab from a non-admin.** Every one of
+> these pages already filters its visible tabs through its own
+> `isGrantable*TabKey`, and `messages` is grantable nowhere — so an admin sees
+> it and nobody else does, with no new condition to write. If you find yourself
+> adding a role check to a page, stop: it means the key was wrongly added to a
+> grantable list in Task 5.
 
 - [ ] **Step 4: Typecheck, test, commit**
 
@@ -1608,7 +1757,16 @@ Expected: **PASS at 30 tables.** 31 means the table was wrongly added to `MASTER
 
 - [ ] **Step 6: Update CLAUDE.md**
 
-Add a section documenting: the table and why it is in `Fast_Core` with no identity column; the blank-line block rule and that AP-4 forces it; the `{เจ้าของฟอร์ม}` token and that deleting it deletes the contact line (a reversal of `form-owner-text.ts`'s "always renders" rule); the five routes and that `FORM_CODE` is pinned per route; that `messages` is grantable on all five forms; the three fallback cases; and migration 164's deployment note (degrades rather than breaking, `check:alignment` stays 30).
+Add a section documenting: the table and why it is in `Fast_Core` with no identity column; the blank-line block rule and that AP-4 forces it; the `{เจ้าของฟอร์ม}` token and that deleting it deletes the contact line (a reversal of `form-owner-text.ts`'s "always renders" rule); the five routes and that `FORM_CODE` is pinned per route; the three fallback cases; and migration 164's deployment note (degrades rather than breaking, `check:alignment` stays 30).
+
+**And the one a future reader is most likely to undo: why the Message tab is
+admin-only.** Write it as a fact about ACC Portal, not as a judgement about
+risk — a message grants nothing, and the tab is ungrantable purely because the
+grant would be deleted by the sibling's next save
+(`approver-settings-tabs.ts:47-56`, `booking-approver-tabs.ts:93-102`). Name the
+remedy: adding the key to **both** applications in one change. This belongs
+beside the existing AP-17 "one roster, one answer" note, which records the same
+failure happening for real.
 
 - [ ] **Step 7: Commit**
 

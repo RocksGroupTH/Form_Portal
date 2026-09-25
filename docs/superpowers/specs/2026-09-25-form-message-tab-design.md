@@ -279,11 +279,13 @@ have no notice to fall back to.
 
 | form | route | gate |
 |---|---|---|
-| AP-1 | `/api/request/accounting/settings/messages` | `requireSettingsTab("messages")` |
-| AP-17 | `/api/request/travel-booking/settings/messages` | `requireBookingSettingsTab("messages")` |
-| AP-4 | `/api/request/reimburse/settings/messages` | `requireReimburseSettingsTab("messages")` |
-| AP-2 | `/api/request/advance/settings/messages` | `requireAdvClrSettingsTab("advanceMessages")` |
-| AP-3 | `/api/request/clear-advance/settings/messages` | `requireAdvClrSettingsTab("clearMessages")` |
+| AP-1 | `/api/request/accounting/settings/messages` | `requireRole(["IT Admin", "System Admin"])` |
+| AP-17 | `/api/request/travel-booking/settings/messages` | `requireRole(["IT Admin", "System Admin"])` |
+| AP-4 | `/api/request/reimburse/settings/messages` | `requireRole(["IT Admin", "System Admin"])` |
+| AP-2 | `/api/request/advance/settings/messages` | `requireRole(["IT Admin", "System Admin"])` |
+| AP-3 | `/api/request/clear-advance/settings/messages` | `requireRole(["IT Admin", "System Admin"])` |
+
+*(Every gate is a role rather than a tab grant — see §8, amended 2026-09-25.)*
 
 All five call one `setFormMessage(formCode, body, actorEmail)`.
 
@@ -316,34 +318,59 @@ sidesteps the question entirely.
 
 ---
 
-## 8. Permissions — grantable on all five
+## 8. Permissions — admin-only on all five
 
-`messages` is a grantable settings-tab key on every form:
+> **AMENDED 2026-09-25, before any code was written.** This section originally
+> made `messages` a grantable settings-tab key on every form, on the argument
+> that a message grants nothing and is therefore the least consequential grant
+> in the application. That argument is still true and is no longer the
+> operative one: **the grant cannot be stored.** What follows replaces it.
 
-| form | vocabulary | key |
-|---|---|---|
-| AP-1 | `GrantableSettingsTabKey` | `messages` |
-| AP-17 | `GrantableBookingTabKey` | `messages` |
-| AP-4 | `REIMBURSE_SETTINGS_TAB_ORDER` | `messages` |
-| AP-2 | `ADVANCE_SETTINGS_TAB_ORDER` | `advanceMessages` |
-| AP-3 | `CLEAR_SETTINGS_TAB_ORDER` | `clearMessages` |
+**Every route is `requireRole(["IT Admin", "System Admin"])`. There is no
+`messages` grant on any form.**
 
-**A message grants nothing.** It decides no approval, no posting target, no
-brand scope and no read — it is text on a page. That makes it the *least*
-consequential grant in this application, well below `erpInterface`, which the
-user opened to grants on 2026-09-22 knowing it sets any brand's bank account.
-So it carries **no `note`** under the grid; there is nothing to warn about.
+**Why: all four settings-tab tables are shared with ACC Portal, which rewrites
+them through its own key filter.** Measured 2026-09-25 against the sibling
+checkout:
 
-`access` remains the only ungrantable tab everywhere, unchanged. AP-17's
-`per-diem` also stays off `GRANTABLE_BOOKING_TABS`, unchanged.
+```
+ACC_Portal/src/lib/acc/approver-settings-tabs.ts:47-56
+  DELETE FROM [dbo].[AccApproverSettingsTab] WHERE ApproverId = @aid
+  for (const key of filterGrantableTabKeys(keys)) INSERT ...
+```
 
-Admins pass as they always have, through each guard's existing `isAdminRole` arm.
+`filterGrantableTabKeys` there resolves ACC Portal's own list — `brands`,
+`sameDayBrand`, `vehicles`, `departments`, `erpInterface` — which does not
+contain `messages`. `booking-approver-tabs.ts:93-102` does the same for
+`AccBookingApproverTab`, and ACC Portal carries writers for
+`AccReimburseAccessTab` and `AccAdvClrAccessTab` as well.
 
-**What it does reach, stated plainly:** a grant holder can change what every
-requester of that form reads before filing, including deleting a compliance
-notice or the contact line. That is a real capability and it is the point of the
-feature. It is bounded to one form, recorded in `UpdatedBy` / `UpdatedAt`, and
-reversible from the same screen.
+So a Message grant made here would survive exactly until an admin next saved
+that person's tabs in ACC Portal, and would then vanish with no error on either
+side. **That is precisely the defect the 2026-09-24 work fixed for AP-17's
+`bookingQueue` / `accountApproval` keys** — CLAUDE.md records that those ticks
+were deleted on *every* sibling save, and that once the tick became real
+authority the same click silently revoked approval rights. Introducing a second
+instance of it knowingly is not defensible, and a grant that silently
+disappears is worse than no grant at all.
+
+Editing ACC Portal to teach it the key is out of scope: CLAUDE.md is explicit
+that the two siblings were never touched, and the keys are a contract between
+the applications rather than a local list.
+
+**What this costs, plainly:** a non-admin who ought to be able to reword their
+own form's notice has to ask an IT Admin. That is a convenience, not a
+capability — IT Admin+ can still edit every form's message, and the wording is
+changed a few times a year.
+
+**It is reversible.** If the grant is ever wanted, the way to get it is to add
+the key to *both* applications in the same change — not to add it here alone.
+
+**Precedent and presentation.** `access` is already ungrantable on every form,
+so an admin-only settings tab is an established shape rather than a new one.
+AP-4's and AP-2/3's สิทธิ์เข้าถึง grids already render an ungrantable tab as a
+disabled box carrying the reason, so each grid has somewhere to *say* why —
+the text should name ACC Portal, not merely say "admin only".
 
 ---
 
@@ -367,8 +394,9 @@ the *form's own* options, before the ERP/posting tabs, and always before
 | AP-3 | glAccounts · buGlMap · locations · **clearMessages** · clearErpInterface · access |
 
 AP-17's strip is built by `GRANTABLE_BOOKING_TABS.map(...).concat([per-diem,
-access])`, so adding `messages` to `BOOKING_TAB_ORDER` lands it in exactly that
-position with no edit to the page.
+access])`. Since §8's amendment makes `messages` ungrantable, it joins that
+`.concat` rather than `BOOKING_TAB_ORDER` — the same place `per-diem` and
+`access` sit, and for the same kind of reason.
 
 The label is **`Message`**, in English, because that is the word the user used
 and because every other label being Thai makes it findable rather than
@@ -476,15 +504,18 @@ Pure and unit-testable, no database:
 - `form-message-bounds.test.ts` — each bound at and either side of its limit.
 - `constants.test.ts` (AP-4) — the existing byte-identical test, plus the new
   round-trip of migration 164's seed.
-- `settings-tabs.test.ts` — already walks the route tree; the five new routes
-  need their `SETTINGS_ROUTE_TABS` entries or it fails. AP-2/AP-3's
-  disjointness assertion already exists and covers the two new keys.
+- `settings-tabs.test.ts` — already walks the route tree; AP-1's new route needs
+  its `SETTINGS_ROUTE_TABS` entry (with `tab: null`, per §8) or it fails, and it
+  pins a handler count that the new GET/POST pair moves. **No disjointness
+  assertion is involved any more** — §8's amendment means no new grantable key
+  is added on any form, so AP-2/AP-3's per-form partition is untouched.
 - `form-message-route-guard.test.ts` — source-shape, because these routes reach
   a pool and `@/env` validates the whole environment at import. It pins that
   each route passes **its own** form code (all five are strings, so handing
-  AP-4's route `"AP-1"` compiles and silently edits the wrong form's copy) and
-  **its own** tab key, and that the gate's refusal is returned rather than
-  computed and dropped. The tactic `require-booking-menu-guard.test.ts` uses.
+  AP-4's route `"AP-1"` compiles and silently edits the wrong form's copy), that
+  both handlers are role-gated per §8, and that the gate's refusal is returned
+  rather than computed and dropped. The tactic `require-booking-menu-guard.test.ts`
+  uses.
 
 **Not covered by anything here:** that the seeded Thai reads correctly on the
 rendered page. That needs a person opening AP-1 after 164 is applied.
