@@ -1,9 +1,9 @@
 /**
- * Who an AP-2 notification goes to once the on-behalf pair is known.
+ * Who a notification goes to once the on-behalf pair is known.
  *
- * AP-2 lets one person file a request **for** another — the account officer
- * who raises advances for a whole department. Every notification the form
- * sends was addressed to `AccRequest.RequesterEmail`, which is the person the
+ * AP-2 and AP-3 both let one person file a request **for** another — the account officer
+ * who raises advances for a whole department. Every notification those forms
+ * sent was addressed to `AccRequest.RequesterEmail`, which is the person the
  * request is *for*, or to a step's role roster. Nothing ever reached the person
  * who actually filed it.
  *
@@ -26,6 +26,15 @@
  * email them about the submit they just performed.
  */
 
+/**
+ * Pure on purpose, and kept apart from `resolveOnBehalfPair` for that reason.
+ *
+ * The resolver imports `@/lib/team-member/service`, which reaches a pool and so
+ * pulls in `@/env` — and `@/env` validates the whole environment the moment it
+ * is imported. Putting the two in one module made these rules unimportable from
+ * a test, which is the same wall `mail-on-step-advance-guard` records for the
+ * approval engines. The split is what keeps them unit-testable.
+ */
 function norm(email: string | null | undefined): string {
   return (email ?? "").trim().toLowerCase();
 }
@@ -61,7 +70,7 @@ export function isOnBehalf(pair: OnBehalfPair): boolean {
  * writes it. De-duplication is not cosmetic: `Cancelled` already unions a role
  * roster with the requester, and the filer is frequently on that roster.
  */
-export function advanceNotifyList(
+export function onBehalfNotifyList(
   base: readonly (string | null | undefined)[],
   pair: OnBehalfPair,
   opts: { alsoRequester?: boolean } = {},

@@ -6,11 +6,12 @@ import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
-  Maximize2, Minimize2,
+  Maximize2, Minimize2, UserCog,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
+import { RequesterPickerModal, type RequesterOption } from "@/components/RequesterPickerModal";
 import {
   AttachmentViewer,
   attachmentKind,
@@ -214,6 +215,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
   // Requester (ผู้ขอ) + first approver (ผู้จัดการ), resolved from HR — shown like AP-2.
   type Person = { staffId: number | null; fullName: string | null; position: string | null; departmentName?: string | null; email: string | null; photoUrl: string | null };
+  /* เคลียร์แทน: the colleagues this person may raise a clearing for, and which
+     of them this claim is for (null = themself). The list is what the picker
+     offers; `assertMayClearFor` on the server is the rule. */
+  type Colleague = RequesterOption & { manager?: Person | null };
+  const [colleagues, setColleagues] = useState<Colleague[]>([]);
+  const [requesterStaffId, setRequesterStaffId] = useState<number | null>(null);
+  const [requesterPickerOpen, setRequesterPickerOpen] = useState(false);
   const [emp, setEmp] = useState<Person | null>(null);
   const [manager, setManager] = useState<Person | null>(null);
   const [managerReason, setManagerReason] = useState<string | null>(null);
@@ -367,7 +375,19 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       const m = me.data?.manager;
       setManager(m ? { staffId: m.staffId ?? null, fullName: m.fullName ?? null, position: m.position ?? null, email: m.email ?? null, photoUrl: m.photoUrl ?? null } : null);
       setManagerReason(me.data?.managerReason ?? null);
+      /* Resume a เคลียร์แทน draft: the saved StaffId is the colleague's, so a
+         difference from the logged-in user is what says this claim is not
+         theirs. Seeded here rather than from `initial` alone, because "not
+         mine" cannot be decided without knowing who I am. */
+      if (initial?.staffId != null && e?.staffId != null && initial.staffId !== e.staffId) {
+        setRequesterStaffId(initial.staffId);
+      }
     }).catch(() => {}).finally(() => { if (!cancelled) setEmployeeLoading(false); });
+
+    fetch("/api/request/clear-advance/requesters")
+      .then((r) => r.json())
+      .then((rq) => { if (!cancelled && rq?.ok) setColleagues(rq.data?.colleagues ?? []); })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [initial?.id]);
 
@@ -382,18 +402,22 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     if (!brandCode) { setBranches([]); setPending([]); setPendingLoading(false); return; }
     let cancelled = false;
     const excludeQ = initial?.id != null ? `&exclude=${initial.id}` : "";
+    /* Whose advances to offer. A clearing must name an advance belonging to the
+       person it is FOR — submit refuses otherwise — so this has to follow the
+       picker or the list is full of rows that cannot be submitted. */
+    const forQ = requesterStaffId != null ? `&staffId=${requesterStaffId}` : "";
     setPendingLoading(true);
     fetch(`/api/request/clear-advance/options/branches?brand=${encodeURIComponent(brandCode)}`)
       .then((r) => r.json())
       .then((j: { ok: boolean; data?: BranchOption[] }) => { if (!cancelled && j.ok) setBranches(j.data ?? []); })
       .catch(() => { if (!cancelled) setBranches([]); });
-    fetch(`/api/request/clear-advance/pending-advances?brand=${encodeURIComponent(brandCode)}${excludeQ}`)
+    fetch(`/api/request/clear-advance/pending-advances?brand=${encodeURIComponent(brandCode)}${excludeQ}${forQ}`)
       .then((r) => r.json())
       .then((j: { ok: boolean; data?: PendingAdvanceOption[] }) => { if (!cancelled && j.ok) setPending(j.data ?? []); })
       .catch(() => { if (!cancelled) setPending([]); })
       .finally(() => { if (!cancelled) setPendingLoading(false); });
     return () => { cancelled = true; };
-  }, [brandCode, initial?.id]);
+  }, [brandCode, initial?.id, requesterStaffId]);
 
   // Load existing attachments once the request is saved (split by refType).
   useEffect(() => {
@@ -568,13 +592,31 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     );
   }
 
+  /* เคลียร์แทน: the chosen colleague replaces BOTH cards, not just the name.
+     AP-3's first approver is the requester's own manager, so a claim raised for
+     a colleague routes to THEIR manager — showing mine beside their name would
+     state the approval chain wrongly on the one screen that explains it.
+     `DepartmentColleague.manager` is in the list payload for exactly this. */
+  const selectedColleague = requesterStaffId != null
+    ? (colleagues.find((c) => c.staffId === requesterStaffId) ?? null)
+    : null;
+  const reqName = selectedColleague?.fullName ?? initial?.requesterFullName ?? emp?.fullName ?? null;
+  const reqStaffId = selectedColleague?.staffId ?? initial?.staffId ?? emp?.staffId ?? null;
+  const reqPos = selectedColleague?.position ?? initial?.requesterPosition ?? emp?.position ?? null;
+  const reqDept = selectedColleague?.departmentName ?? initial?.requesterDepartmentName ?? emp?.departmentName ?? null;
+  const reqEmail = selectedColleague?.email ?? initial?.requesterEmail ?? emp?.email ?? null;
+  const reqPhoto = selectedColleague?.photoUrl ?? emp?.photoUrl ?? null;
+  const reqManager = selectedColleague ? (selectedColleague.manager ?? null) : manager;
+
   /* ── persistence ── */
 
   function buildInput(): ClearAdvanceSaveInput {
     return {
       id: requestId ?? undefined,
       brandCode: brandCode || null,
-      staffId: null, // requester resolved server-side from HR
+      // null = myself; a colleague's id makes this a เคลียร์แทน claim. Either way
+      // the server resolves the full requester from HR and gates the choice.
+      staffId: requesterStaffId,
       clear: {
         id: initial?.clear?.id,
         advanceRequestId: advanceRequestId ?? null,
@@ -1392,6 +1434,28 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     <div className="flex flex-col gap-4" ref={rootRef}>
       {/* Requester note + brand */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
+        {/* เคลียร์แทน — the same control AP-2 carries, on the same modal. Hidden
+            when there is nobody to switch to, so it never offers an empty list. */}
+        {!readOnly && colleagues.length > 0 && (
+          <div className="flex items-center justify-end">
+            <button type="button" onClick={() => setRequesterPickerOpen(true)}
+              className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+              style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--nav-active-text)" }}>
+              <UserCog size={13} /> เปลี่ยนผู้ขอเคลียร์
+            </button>
+          </div>
+        )}
+        <RequesterPickerModal
+          open={requesterPickerOpen}
+          onClose={() => setRequesterPickerOpen(false)}
+          colleagues={colleagues}
+          self={emp ? {
+            staffId: emp.staffId ?? 0, fullName: emp.fullName, position: emp.position,
+            departmentName: emp.departmentName, email: emp.email, photoUrl: emp.photoUrl,
+          } : null}
+          value={requesterStaffId}
+          onSelect={setRequesterStaffId}
+        />
         {/* ผู้ขอ (ซ้าย) + ผู้อนุมัติขั้นแรก · ผู้จัดการ (ขวา) — layout เดียวกับ AP-2 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
           <div className="flex flex-col gap-1.5 min-w-0">
@@ -1401,21 +1465,21 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             {employeeLoading ? <PersonSkeleton /> : (
             <div className="flex items-center gap-3 min-w-0">
               <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-                <Avatar name={emp?.fullName || "?"} size={44} photo={emp?.photoUrl ?? undefined} color="var(--nav-active-text)" />
+                <Avatar name={reqName || "?"} size={44} photo={reqPhoto ?? undefined} color="var(--nav-active-text)" />
               </div>
               <div className="min-w-0 flex flex-col gap-0.5">
                 <div className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{emp?.fullName || "-"}</span>
-                  {emp?.staffId != null && <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{emp.staffId}</span>}
+                  <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{reqName || "-"}</span>
+                  {reqStaffId != null && <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{reqStaffId}</span>}
                 </div>
-                {(emp?.departmentName || emp?.position) && (
+                {(reqDept || reqPos) && (
                   <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>
-                    {[emp?.departmentName, emp?.position].filter(Boolean).join(" · ")}
+                    {[reqDept, reqPos].filter(Boolean).join(" · ")}
                   </span>
                 )}
-                {emp?.email && (
+                {reqEmail && (
                   <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
-                    <Mail size={11} className="shrink-0" /> <span className="truncate">{emp.email}</span>
+                    <Mail size={11} className="shrink-0" /> <span className="truncate">{reqEmail}</span>
                   </span>
                 )}
               </div>
@@ -1427,20 +1491,20 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
               ผู้อนุมัติขั้นแรก · ผู้จัดการ
             </span>
-            {employeeLoading ? <PersonSkeleton /> : manager ? (
+            {employeeLoading ? <PersonSkeleton /> : reqManager ? (
               <div className="flex items-center gap-3 min-w-0">
                 <div className="shrink-0 rounded-2xl overflow-hidden" style={{ boxShadow: "0 0 0 2px var(--nav-active-bg)" }}>
-                  <Avatar name={manager.fullName || "?"} size={44} photo={manager.photoUrl ?? undefined} color="var(--nav-active-text)" />
+                  <Avatar name={reqManager.fullName || "?"} size={44} photo={reqManager.photoUrl ?? undefined} color="var(--nav-active-text)" />
                 </div>
                 <div className="min-w-0 flex flex-col gap-0.5">
                   <div className="flex items-baseline gap-2 min-w-0">
-                    <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{manager.fullName || "-"}</span>
-                    {manager.staffId != null && <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{manager.staffId}</span>}
+                    <span className="text-[14px] font-bold truncate" style={{ color: "var(--text-primary)" }}>{reqManager.fullName || "-"}</span>
+                    {reqManager.staffId != null && <span className="text-[11px] shrink-0" style={{ color: "var(--text-muted)" }}>#{reqManager.staffId}</span>}
                   </div>
-                  {manager.position && <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{manager.position}</span>}
-                  {manager.email && (
+                  {reqManager.position && <span className="text-[12px] truncate" style={{ color: "var(--text-muted)" }}>{reqManager.position}</span>}
+                  {reqManager.email && (
                     <span className="inline-flex items-center gap-1 text-[12px] truncate" style={{ color: "var(--text-secondary)" }}>
-                      <Mail size={11} className="shrink-0" /> <span className="truncate">{manager.email}</span>
+                      <Mail size={11} className="shrink-0" /> <span className="truncate">{reqManager.email}</span>
                     </span>
                   )}
                 </div>

@@ -74,7 +74,7 @@ const ALLOWED_ROSTER_MAIL: readonly RegExp[] = [
    * AP-2's on-behalf fan-out, added 2026-09-25.
    *
    * **This is not a roster.** The rule above bans mailing a whole queue at
-   * every hop; this loop runs over `advanceNotifyList([req.requesterEmail],
+   * every hop; this loop runs over `onBehalfNotifyList([req.requesterEmail],
    * pair)`, which is the requester plus — only when the request was filed on
    * their behalf — the one person who filed it. At most two addresses, both
    * belonging to this request, on the events the rule already names
@@ -86,7 +86,7 @@ const ALLOWED_ROSTER_MAIL: readonly RegExp[] = [
    * cancellation, which really does union the Head Accounting roster, needs
    * the separate entry above and does not ride on this one.
    */
-  /advanceNotifyList\(\[req\.requesterEmail\]/,
+  /onBehalfNotifyList\(\[req\.requesterEmail\]/,
 ];
 
 test("no approval engine mails a roster in a loop", () => {

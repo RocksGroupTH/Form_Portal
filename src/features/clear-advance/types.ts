@@ -153,6 +153,8 @@ export interface ClearAdvanceRequest {
   currentManager: CurrentManagerRef | null;
   companyName: string | null;
   totalAmount: number | null; // mirrors actualTotal
+  /** Who created the draft — the filer, when this was cleared on somebody's behalf. */
+  createdBy: number | null;
   submittedBy: number | null;
   submittedAt: string | null;
   createdAt: string;

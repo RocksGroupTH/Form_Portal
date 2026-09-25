@@ -17,6 +17,8 @@ import { resolveClrPaymentDate } from "@/lib/clr/clear-advance-payment-date";
 import { refundEvidenceMessage, refundEvidenceMissing } from "@/lib/clr/refund-evidence";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { pndBlockReason } from "@/lib/clr/wht-pnd-core";
+import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
+import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import {
   CLR_NEXT_STEP,
   CLR_STEP_CODES,
@@ -34,6 +36,33 @@ async function notify(
 ) {
   if (!toEmail?.trim()) return;
   await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType });
+}
+
+/**
+ * The same notification, to the requester **and** to whoever filed the claim
+ * for them.
+ *
+ * AP-3 lets one person clear an advance on a colleague's behalf, and the filer
+ * is the one who has to act when the claim comes back — so a message addressed
+ * to `requesterEmail` alone reaches the wrong person. Only used for the sends
+ * that name the requester; the manager's copy stays a single `notify`, because
+ * the filer is already on this list and `onBehalfNotifyList` would drop the
+ * duplicate anyway.
+ *
+ * `req` carries `createdBy`, which is who filed it. Self-filed claims add
+ * nobody — see `@/lib/acc/on-behalf`.
+ */
+async function notifyRequesterAndFiler(
+  requestId: number,
+  subject: string,
+  bodyHtml: string,
+  req: { requesterEmail?: string | null; createdBy?: number | null },
+  triggerType: string,
+) {
+  const pair = await resolveOnBehalfPair(req);
+  for (const toEmail of onBehalfNotifyList([req.requesterEmail], pair)) {
+    await notify(requestId, subject, bodyHtml, toEmail, triggerType);
+  }
 }
 
 /**
@@ -186,7 +215,7 @@ export async function approveCurrentStep(
       approvedLead(MAIL_FORM_NAMES["AP-3"], no) +
       `<p>ต้องโอนคืนบริษัท: ${esc((req.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
       link(requestId);
-    await notify(requestId, subject, body, req.requesterEmail, "Approved");
+    await notifyRequesterAndFiler(requestId, subject, body, req, "Approved");
   }
 }
 
@@ -233,7 +262,7 @@ export async function reject(
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
-    await notify(
+    await notifyRequesterAndFiler(
       requestId,
       `เคลียร์เงินทดรองจ่าย ${no} ไม่อนุมัติ`,
       /* The comment was interpolated RAW here until 2026-09-24 — free text
@@ -241,7 +270,7 @@ export async function reject(
          returns finished, escaped HTML, which is why it takes the reason
          rather than handing a caller a string to remember to escape. */
       rejectedLead(MAIL_FORM_NAMES["AP-3"], no, comment) + link(requestId),
-      req.requesterEmail,
+      req,
       "Rejected",
     );
   }
@@ -290,11 +319,11 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
-    await notify(
+    await notifyRequesterAndFiler(
       requestId,
       `เคลียร์เงินทดรองจ่าย ${no} ส่งกลับแก้ไข`,
       returnedLead(MAIL_FORM_NAMES["AP-3"], no, comment) + link(requestId),
-      req.requesterEmail,
+      req,
       "Returned",
     );
   }
@@ -355,12 +384,12 @@ export async function cancelApprovedClearing(
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
-    await notify(
+    await notifyRequesterAndFiler(
       requestId,
       `เคลียร์เงินทดรองจ่าย ${no} ถูกยกเลิกโดยฝ่ายบัญชี`,
       `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ที่อนุมัติแล้ว ถูกยกเลิกก่อนส่งเข้า Business Central</p>` +
         `<p>เหตุผล: ${note}</p>` + link(requestId),
-      req.requesterEmail,
+      req,
       "Cancelled",
     );
   }
@@ -406,6 +435,6 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
       `<p>คำขอเคลียร์คืนเงินทดรองจ่าย <b>${no}</b> ถูกยกเลิกโดยผู้ขอ (ก่อนถึงขั้นบัญชี) — ไม่ต้องดำเนินการอนุมัติ</p>` +
       `<p>ผู้ขอ: ${req.requesterFullName ?? "-"}</p>` + link(requestId);
     await notify(requestId, subject, body, req.managerEmail, "Cancelled");
-    await notify(requestId, subject, body, req.requesterEmail, "Cancelled");
+    await notifyRequesterAndFiler(requestId, subject, body, req, "Cancelled");
   }
 }
