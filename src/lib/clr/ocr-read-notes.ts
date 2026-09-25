@@ -57,6 +57,8 @@ export interface RdLookup {
   state: RdAnswerState;
   /** The registered name, title included, as `registrantFullName` writes it. */
   registeredName?: string | null;
+  /** The registered address, one line, as the RD holds it. */
+  registeredAddress?: string | null;
 }
 
 function fmtDay(ymd: string): string {

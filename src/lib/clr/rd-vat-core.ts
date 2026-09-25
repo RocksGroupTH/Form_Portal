@@ -109,6 +109,31 @@ export function parseRdVatResponse(xml: string): RdVatRegistrant | null {
 }
 
 /** The registrant's full name as it would be written on an invoice. */
+/**
+ * Whether the register holds an address this row does not.
+ *
+ * The WHT certificate needs the payee's address, and the Revenue Department is
+ * the authority on it — the same reason its NAME already replaces what the
+ * reader saw (user, 2026-09-12). Every registrant we have cached carries one
+ * (17 of 17, measured 2026-09-25), so when the register answers at all this is
+ * a question worth asking.
+ *
+ * **Blank against present, never one address against another.** Comparing the
+ * two textually would be a comparison that almost never holds: the reader takes
+ * the address off the invoice as printed and the RD writes it in its own
+ * registry form, so a fuzzy mismatch would be reported on nearly every row and
+ * mean nothing. A row with an address already — read, applied or typed — is
+ * left alone, which is also what stops this overwriting somebody's correction.
+ */
+export function registerHasAddressRowLacks(
+  rowAddress: string | null | undefined,
+  registrantAddress: string | null | undefined,
+): boolean {
+  const has = (rowAddress ?? "").trim() !== "";
+  const offered = (registrantAddress ?? "").trim() !== "";
+  return offered && !has;
+}
+
 export function registrantFullName(r: RdVatRegistrant): string | null {
   const joined = [r.titleName, r.name].filter(Boolean).join(" ").trim();
   return joined || null;
