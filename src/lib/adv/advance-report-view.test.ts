@@ -13,6 +13,7 @@ import {
   isAwaitingErp,
   isOverdueClearing,
   overallStatusTone,
+  revisionReasonText,
   totalAmountThb,
   type Row,
 } from "./advance-report-view";
@@ -52,12 +53,15 @@ function row(overrides: Partial<Row>): Row {
     pendingOn: null,
     overallStatus: STATUS_INPROCESS,
     erpInterfaceStatus: null,
+    lastRevisionAction: null,
+    lastRevisionReason: null,
+    returnCount: 0,
     ...overrides,
   };
 }
 
-test("DEFAULT_VISIBLE_KEYS has exactly the 11 columns the design specifies", () => {
-  assert.equal(DEFAULT_VISIBLE_KEYS.length, 11);
+test("DEFAULT_VISIBLE_KEYS has exactly the 12 columns the design specifies", () => {
+  assert.equal(DEFAULT_VISIBLE_KEYS.length, 12);
   assert.deepEqual(
     [...DEFAULT_VISIBLE_KEYS].sort(),
     [
@@ -68,6 +72,7 @@ test("DEFAULT_VISIBLE_KEYS has exactly the 11 columns the design specifies", () 
       "overallStatus",
       "paymentDate",
       "pendingOn",
+      "revisionReason",
       "payeeName",
       "requestNo",
       "requesterName",
@@ -171,4 +176,61 @@ test("computeTileCounts matches a known small dataset", () => {
 test("totalAmountThb sums baseAmount over exactly the rows passed in", () => {
   const rows: Row[] = [row({ baseAmount: 1000 }), row({ baseAmount: 2500.5 }), row({ baseAmount: null })];
   assert.equal(totalAmountThb(rows), 3500.5);
+});
+
+/* ── สาเหตุที่แก้ไข/ยกเลิก ─────────────────────────────────────────────── */
+
+test("a request nothing ever happened to shows nothing", () => {
+  // Not "-", not "ไม่มี". Most rows in this report are ordinary approved
+  // advances, and a column that prints something on every one of them buys
+  // width from the columns that are always read.
+  assert.equal(revisionReasonText(row({})), "");
+});
+
+test("each of the three actions is named, so the reason is not read as the wrong kind", () => {
+  // A row can be Approved today and still carry the reason it was sent back
+  // last week, so the cell cannot lean on the status column to say which
+  // happened.
+  const cases: [string, string][] = [
+    ["returned", "ส่งกลับแก้ไข: แนบใบเสร็จไม่ครบ"],
+    ["rejected", "ไม่อนุมัติ: แนบใบเสร็จไม่ครบ"],
+    ["cancelled", "ยกเลิก: แนบใบเสร็จไม่ครบ"],
+  ];
+  for (const [action, expected] of cases) {
+    const r = row({ lastRevisionAction: action, lastRevisionReason: "แนบใบเสร็จไม่ครบ" });
+    assert.equal(revisionReasonText(r), expected, action);
+  }
+});
+
+test("a missing reason is labelled, never left blank", () => {
+  // The four cancellations already on UAT recorded no reason and never can.
+  // A blank cell beside a cancelled request reads as a broken report.
+  const r = row({ lastRevisionAction: "cancelled", lastRevisionReason: null });
+  assert.equal(revisionReasonText(r), "ยกเลิก — ไม่ได้ระบุเหตุผล");
+  // Whitespace is not a reason either.
+  assert.equal(
+    revisionReasonText(row({ lastRevisionAction: "cancelled", lastRevisionReason: "   " })),
+    "ยกเลิก — ไม่ได้ระบุเหตุผล",
+  );
+});
+
+test("the round count appears from the second return, not the first", () => {
+  const once = row({ lastRevisionAction: "returned", lastRevisionReason: "แก้ยอด", returnCount: 1 });
+  assert.equal(revisionReasonText(once), "ส่งกลับแก้ไข: แก้ยอด");
+
+  const twice = row({ lastRevisionAction: "returned", lastRevisionReason: "แก้ยอด", returnCount: 2 });
+  assert.equal(revisionReasonText(twice), "ส่งกลับแก้ไข: แก้ยอด (ส่งกลับ 2 ครั้ง)");
+});
+
+test("the count survives a later action of a different kind", () => {
+  // ADV26-00060 on UAT: returned twice, then cancelled. The reason shown is
+  // the cancellation's, and "sent back twice" is still the thing that explains
+  // where the three weeks went.
+  const r = row({ lastRevisionAction: "cancelled", lastRevisionReason: "ไม่ต้องใช้เงินแล้ว", returnCount: 2 });
+  assert.equal(revisionReasonText(r), "ยกเลิก: ไม่ต้องใช้เงินแล้ว (ส่งกลับ 2 ครั้ง)");
+});
+
+test("an action nobody anticipated is shown raw rather than swallowed", () => {
+  const r = row({ lastRevisionAction: "withdrawn", lastRevisionReason: "เหตุผล" });
+  assert.equal(revisionReasonText(r), "withdrawn: เหตุผล");
 });

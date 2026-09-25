@@ -188,8 +188,15 @@ export async function rejectCurrentStep(requestId: number, actor: Actor, comment
 /**
  * Requester self-cancel within 24h of submit, while still at the first step.
  * Caller must already be authorized as the requester (route checks ownership).
+ *
+ * **`comment` is required, as it is for reject and return.** Until 2026-09-25
+ * a cancellation recorded no reason anywhere — not on the approval row, not in
+ * the activity log, nowhere in the request — so the AP-2 report could say a
+ * request was withdrawn but never why. Four cancelled advances on UAT, four
+ * blanks. Those four cannot be filled in now; every cancellation from here can.
  */
-export async function cancelByRequester(requestId: number, actor: Actor): Promise<void> {
+export async function cancelByRequester(requestId: number, actor: Actor, comment: string): Promise<void> {
+  if (!comment?.trim()) throw new Error("กรุณาระบุเหตุผลที่ยกเลิก");
   const pool = await getAccPool();
   const tx = pool.transaction();
   await tx.begin();
@@ -208,11 +215,14 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
       await tx.rollback();
       throw new Error("ไม่สามารถยกเลิกได้ — เกิน 1 วันหลังส่ง หรือ Head Accounting อนุมัติไปแล้ว");
     }
-    await tx.request().input("rid", sql.Int, requestId)
-      .query(`UPDATE [dbo].[AccAdvanceApproval] SET Status='Returned', ActionedAt=SYSDATETIME()
+    // The reason goes on the open step too, so the request's own approval
+    // timeline shows it — the log is what the report reads, this is what the
+    // person opening the request sees.
+    await tx.request().input("rid", sql.Int, requestId).input("c", sql.NVarChar, comment)
+      .query(`UPDATE [dbo].[AccAdvanceApproval] SET Status='Returned', Comment=@c, ActionedAt=SYSDATETIME()
               WHERE RequestId=@rid AND Status='Pending'`);
-    await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId)
-      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action) VALUES (@rid, @by, 'cancelled')`);
+    await tx.request().input("rid", sql.Int, requestId).input("by", sql.Int, actor.userId).input("c", sql.NVarChar, comment)
+      .query(`INSERT INTO [dbo].[AccActivityLog] (RequestId, AuthorId, Action, Note) VALUES (@rid, @by, 'cancelled', @c)`);
     await tx.commit();
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
 
@@ -237,6 +247,9 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
       payeeName: req?.advance?.payeeName,
       totalAmount: req?.totalAmount,
       paymentDate: req?.paymentDate,
+      // The template has always accepted a note for this trigger; there was
+      // simply never one to pass.
+      note: comment,
     });
     for (const toEmail of recipients) {
       await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType: "Cancelled" });

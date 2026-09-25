@@ -17,6 +17,7 @@ import {
   isAwaitingErp,
   isOverdueClearing,
   overallStatusTone,
+  revisionReasonText,
   todayYmd,
   totalAmountThb,
   type Row,
@@ -144,6 +145,13 @@ const COLS: Col[] = [
   { key: "actionedByName", h: "Actioned By", get: (r) => r.actionedByName ?? "" },
   { key: "actionedDate", h: "Actioned Date", get: (r) => dt(r.actionedDate) },
   { key: "actionedRemark", h: "Actioned Remark", get: (r) => r.actionedRemark ?? "", filter: "text" },
+  // Next to Actioned Remark because the two answer the same question, and this
+  // is the one that still answers it after a resubmit: Actioned Remark reads
+  // the approval row, which a resubmit deletes. See revisionReasonText.
+  {
+    key: "revisionReason", h: "สาเหตุที่แก้ไข/ยกเลิก", screenLabel: "สาเหตุแก้ไข/ยกเลิก",
+    maxW: 220, get: (r) => revisionReasonText(r), filter: "text",
+  },
   // A date filter, not a text one: payments land on the 2nd and 4th Friday, so
   // picking rounds is how accounting narrows a report to a payment week.
   { key: "paymentDate", h: "Payment Date", screenLabel: "วันจ่าย", get: (r) => d(r.paymentDate), filter: "dates", rawDate: (r) => r.paymentDate },
