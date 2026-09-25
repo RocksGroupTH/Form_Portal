@@ -117,11 +117,30 @@ test("an empty body is acceptable — it means no notice", () => {
 });
 
 test("a body at exactly the character bound passes", () => {
-  assert.equal(messageBodyProblem("x".repeat(MAX_MESSAGE_CHARS)), null);
+  // Five blocks, each inside the per-block bound, summing to exactly 5,000
+  // WITH the four blank-line separators counted. A single 5,000-char block
+  // would trip MAX_BLOCK_CHARS first and test the wrong bound.
+  const body = [
+    "x".repeat(1000),
+    "x".repeat(998),
+    "x".repeat(998),
+    "x".repeat(998),
+    "x".repeat(998),
+  ].join("\n\n");
+  assert.equal(body.length, MAX_MESSAGE_CHARS);
+  assert.equal(messageBodyProblem(body), null);
 });
 
-test("one character over the bound is refused", () => {
-  assert.ok(messageBodyProblem("x".repeat(MAX_MESSAGE_CHARS + 1)));
+test("one character over the body bound is refused", () => {
+  const over = [
+    "x".repeat(1000),
+    "x".repeat(999),
+    "x".repeat(998),
+    "x".repeat(998),
+    "x".repeat(998),
+  ].join("\n\n");
+  assert.equal(over.length, MAX_MESSAGE_CHARS + 1);
+  assert.ok(messageBodyProblem(over));
 });
 
 test("exactly the block limit passes and one more is refused", () => {
