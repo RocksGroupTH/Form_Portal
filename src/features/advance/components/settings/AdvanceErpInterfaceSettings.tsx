@@ -10,6 +10,7 @@ import { SearchableSelect } from "@/features/accounting/components/settings/Sear
 import { Dialog } from "@/components/ui/Dialog";
 import { ErpAccountSyncPopup, type ErpSyncPopupState } from "@/features/accounting/components/settings/ErpAccountSyncPopup";
 import { useErpInterfaceBrands } from "@/lib/hooks/useErpInterfaceBrands";
+import { membersToWrite } from "@/lib/adv/interface-group-members";
 import {
   groupByTargetIncludingEmpty,
   groupValue,
@@ -239,6 +240,20 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
     draft[row.brandCode] ?? { bank: row.bankAccountNo ?? "", branch: row.branchCode ?? "" };
   const setFor = (code: string, patch: Partial<{ bank: string; branch: string }>) =>
     setDraft((p) => ({ ...p, [code]: { ...(p[code] ?? { bank: "", branch: "" }), ...patch } }));
+  /**
+   * The members this save writes — active, or already carrying a Bank Account.
+   *
+   * A brand switched off cannot be claimed against, so it needs no posting
+   * account and must not block the group; one that is already configured is
+   * still written so the shared Journal Batch reaches it. See
+   * `membersToWrite` for the whole argument.
+   */
+  const toWrite = useMemo(
+    () => membersToWrite(shown, (m) => valueFor(m).bank),
+    // `draft` rather than `valueFor`, which is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shown, draft],
+  );
 
   /**
    * Every claim brand not already in this group, labelled with where it is now
@@ -270,7 +285,11 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
       toast.error(`กรุณาเลือก Journal Batch — ค้างว่างไว้จะลบของ ${batchReplacing.map((m) => m.brandCode).join(", ")}`);
       return;
     }
-    for (const m of shown) {
+    if (toWrite.length === 0) {
+      toast.error("ทุกแบรนด์ในกลุ่มนี้ปิดใช้งานและยังไม่มี Bank Account — ไม่มีอะไรให้บันทึก");
+      return;
+    }
+    for (const m of toWrite) {
       if (!valueFor(m).bank.trim()) {
         toast.error(`${m.brandCode}: กรุณาเลือก Bank Account`);
         return;
@@ -278,7 +297,7 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
     }
     setBusy(true);
     try {
-      for (const m of shown) {
+      for (const m of toWrite) {
         const v = valueFor(m);
         const res = await fetch("/api/request/advance/settings/erp-interface", {
           method: "POST",
@@ -294,7 +313,7 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
         const j = (await res.json()) as { ok: boolean; error?: string };
         if (!j.ok) { toast.error(`${m.brandCode}: ${j.error ?? "บันทึกไม่สำเร็จ"}`); return; }
       }
-      toast.success(`บันทึกกลุ่ม ${target} แล้ว (${shown.length} แบรนด์)`);
+      toast.success(`บันทึกกลุ่ม ${target} แล้ว (${toWrite.length} แบรนด์)`);
       setOpen(false);
       setAdded([]);
       setDraft({});
@@ -318,11 +337,13 @@ function GroupCard({ target, members, all, erpByCompany, onSaved }: {
    * null out three working configurations in one click.
    */
   const batchReplacing = useMemo(
-    () => shown.filter((m) => {
+    // Over `toWrite`, not `shown`: a member this save skips cannot have its
+    // Journal Batch replaced or cleared, so warning about it would be false.
+    () => toWrite.filter((m) => {
       const cur = (m.journalBatchName ?? "").trim();
       return cur !== "" && cur !== batch.trim();
     }),
-    [shown, batch],
+    [toWrite, batch],
   );
   const batchWouldClear = !batch.trim() && batchReplacing.length > 0;
 

@@ -41,9 +41,15 @@ const AP2 = read("src/features/advance/components/settings/AdvanceErpInterfaceSe
 const AP3 = read("src/features/clear-advance/components/admin/ClrErpInterfaceSettings.tsx");
 
 test("AP-2's group save posts one body per member, keyed on the claim brand", () => {
+  // `toWrite`, not `shown`, since 2026-09-25: a brand switched off and carrying
+  // no Bank Account is skipped rather than blocking the group. Both screens now
+  // name their list `toWrite` and derive it differently — AP-2 by "active or
+  // already configured", AP-3 by "changed" — but what this guard pins is the same
+  // either way: whatever the list is, the save fans out over it one body per
+  // claim brand instead of writing once against the target.
   assert.ok(
-    /for \(const m of shown\)[\s\S]{0,600}?brandCode: m\.brandCode/.test(AP2),
-    "AP-2's group save no longer loops its members posting brandCode — a group-level write would be keyed on the target",
+    /for \(const m of toWrite\)[\s\S]{0,600}?brandCode: m\.brandCode/.test(AP2),
+    "AP-2's group save no longer loops the members it must write posting brandCode — a group-level write would be keyed on the target",
   );
   assert.ok(
     /interfaceBrandCode: target/.test(AP2),
