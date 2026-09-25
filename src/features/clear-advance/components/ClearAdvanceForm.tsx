@@ -19,7 +19,6 @@ import {
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
-import { PoweredByClaude } from "@/components/ui/PoweredByClaude";
 import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
 import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
 import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-read-notes";
@@ -1678,12 +1677,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             onView={openFileViewer}
           />
           {!readOnly && advanceRequestId != null && (
-            <div className="flex items-start justify-between gap-2 mt-1">
-              <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
+            <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
               แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ปุ่ม <b>อ่านด้วย AI</b> จะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้) · ปุ่ม <b>ไม่ใช้ AI</b> แนบไฟล์อย่างเดียว ไม่อ่านและไม่สร้างแถวให้ ต้องกด “เพิ่มแถว” กรอกเอง
-              </p>
-              <PoweredByClaude />
-            </div>
+            </p>
           )}
           <FieldError msg={fieldErrors.files} />
         </Field>
@@ -2271,12 +2267,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               onRemove={(id) => removeFile(id, "refund_proof")}
               onView={openFileViewer}
             />
-            <div className="flex items-start justify-between gap-2 mt-1">
-              <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
+            <p className="text-[11px] m-0 mt-1" style={{ color: "var(--text-faint)" }}>
               แนบสลิปแล้วระบบจะอ่าน “จำนวนเงิน” และ “วันที่” มาเติมให้อัตโนมัติ (แก้ไขได้) · ยอดที่ต้องโอนคืน ฿{money(refundToCompany)}
-              </p>
-              <PoweredByClaude />
-            </div>
+            </p>
             <FieldError msg={fieldErrors.refundProof} />
           </Field>
           </div>
