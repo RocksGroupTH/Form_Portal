@@ -8,11 +8,38 @@ interface PaymentDatePickerProps {
   value: string;
   onChange: (date: string) => void;
   allowedDates: string[]; // YYYY-MM-DD
+  /**
+   * The line under the calendar: the rule `allowedDates` was actually built
+   * from, in the caller's own words.
+   *
+   * Required, and deliberately without a default. A shared component cannot
+   * state one form's calendar as a fact, and a default is how a new screen
+   * inherits another form's rule by saying nothing — which is exactly what
+   * happened when AP-2 went weekly on 2026-09-24: two of its four pickers kept
+   * the fortnightly default and listed every Friday under a caption saying only
+   * the 2nd and the 4th were payable. Naming it at every call site turns that
+   * into a compile error instead of a screen nobody rereads.
+   *
+   * The captions live with their forms: `AP2_WEEKLY_PAYDAY_HINT` in
+   * `@/features/advance/constants`, `AP3_FORTNIGHTLY_PAYDAY_HINT` in
+   * `@/features/clear-advance/constants`.
+   *
+   * Note that `@/features/accounting/components/PaymentDatePicker` is a
+   * DIFFERENT component with a hint of its own (`AP1_ROUNDS_HINT`), used by AP-1
+   * and AP-4. There are two pickers in this repo; changing one changes neither
+   * the other's screens nor its wording.
+   */
+  hint: string;
 }
 
 const DAY_HEADERS = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
 
-export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDatePickerProps) {
+export function PaymentDatePicker({
+  value,
+  onChange,
+  allowedDates,
+  hint,
+}: PaymentDatePickerProps) {
   const [open, setOpen] = useState(false);
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -165,7 +192,7 @@ export function PaymentDatePicker({ value, onChange, allowedDates }: PaymentDate
           </div>
 
           <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--border-card)" }}>
-            <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>เฉพาะวันจ่ายที่กำหนด (ศุกร์ที่ 2/4 ของเดือน)</p>
+            <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>{hint}</p>
           </div>
         </div>
       )}

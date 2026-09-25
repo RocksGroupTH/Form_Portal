@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    const valid = await getPaymentDates(new Date(), 6, 6);
+    const valid = await getPaymentDates("AP-1", new Date(), 6, 6);
     if (valid.indexOf(paymentDate) === -1) {
       return NextResponse.json(
         { ok: false, error: "วันที่จ่ายไม่อยู่ในรอบที่กำหนด (ศุกร์ที่ 2 หรือ 4)" },

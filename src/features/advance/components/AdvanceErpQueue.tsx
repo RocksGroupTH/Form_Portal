@@ -16,7 +16,7 @@ import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bu
 import { ColumnToggleMenu } from "@/features/travel-booking/components/ColumnToggleMenu";
 import { SENT_QUEUE_COLUMNS, SENT_QUEUE_PREFS } from "@/features/advance/lib/sent-queue-columns";
 import { money, rate } from "./CurrencyColumns";
-import { AP2_DEFAULT_CURRENCY, isForeignCurrency } from "@/features/advance/constants";
+import { AP2_DEFAULT_CURRENCY, AP2_WEEKLY_PAYDAY_HINT, isForeignCurrency } from "@/features/advance/constants";
 
 interface ErpRow {
   id: number;
@@ -510,6 +510,7 @@ export function AdvanceErpQueue() {
                             value={row.paymentDate ?? ""}
                             onChange={(d) => changePaymentDate(row.id, d)}
                             allowedDates={paymentDateOpts}
+                            hint={AP2_WEEKLY_PAYDAY_HINT}
                           />
                         ) : (
                           <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>

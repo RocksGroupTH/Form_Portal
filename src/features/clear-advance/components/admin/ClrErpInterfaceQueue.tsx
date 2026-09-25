@@ -7,6 +7,7 @@ import { Loader2, FileX, Eye, SendHorizonal, X, Search, Download, Building2 } fr
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { AP3_FORTNIGHTLY_PAYDAY_HINT } from "@/features/clear-advance/constants";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
 import type { ClrErpQueueRow } from "@/lib/clr/clear-advance-erp-queue-service";
@@ -478,10 +479,10 @@ export function ClrErpInterfaceQueue() {
   const [sentMonth, setSentMonth] = useState<string>("");
   const [exporting, setExporting] = useState(false);
 
-  // Payment-date options for the per-row "รอส่ง" picker (loaded once, shared calendar).
+  // Payment-date options for the per-row "รอส่ง" picker (loaded once, AP-3's own calendar).
   const [paymentDateOpts, setPaymentDateOpts] = useState<string[]>([]);
   React.useEffect(() => {
-    fetch("/api/request/advance/payment-dates")
+    fetch("/api/request/clear-advance/payment-dates")
       .then((r) => r.json())
       .then((j: { ok?: boolean; data?: { dates?: string[] } }) => { if (j?.data?.dates) setPaymentDateOpts(j.data.dates); })
       .catch(() => {});
@@ -895,6 +896,7 @@ export function ClrErpInterfaceQueue() {
                                 value={row.paymentDate ?? ""}
                                 onChange={(d) => changePaymentDate(row.id, d)}
                                 allowedDates={paymentDateOpts}
+                                hint={AP3_FORTNIGHTLY_PAYDAY_HINT}
                               />
                             ) : (
                               <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>

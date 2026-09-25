@@ -27,3 +27,17 @@ export const AP2_PRPO_THRESHOLD = 3000;
 
 /** Expected-clear date must be within this many days of the need-by date. */
 export const AP2_MAX_CLEAR_DAYS = 30;
+
+/**
+ * The caption under AP-2's payment-date calendar, in Thai.
+ *
+ * Named rather than typed inline because four screens show this picker — the
+ * request detail page, the approve queue, the detail panel and the ERP queue —
+ * and when the weekly rule landed, the first edit reached only two of them. For
+ * a day the other two listed every Friday under a caption saying only the 2nd
+ * and the 4th were payable.
+ *
+ * It says the shift because a Thursday appearing in the list would otherwise
+ * look like a bug to the accountant reading it.
+ */
+export const AP2_WEEKLY_PAYDAY_HINT = "วันจ่ายทุกวันศุกร์ (เลื่อนกลับถ้าตรงวันหยุด)";

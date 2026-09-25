@@ -14,6 +14,7 @@ import { statusLabelDisplay } from "@/features/accounting/constants";
 import { STEP_LABEL, type StepType } from "@/lib/adv/approval-steps";
 import { Wallet } from "lucide-react";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { AP2_WEEKLY_PAYDAY_HINT } from "@/features/advance/constants";
 import { AdvanceQueueVendorCell } from "@/features/advance/components/AdvanceQueueVendorCell";
 import type { AdvanceRequest } from "@/features/advance/types";
 
@@ -211,7 +212,7 @@ function AdvanceDetailContent() {
             <div className="flex flex-wrap items-center gap-3">
               <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                 วันจ่าย:
-                <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
+                <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} hint={AP2_WEEKLY_PAYDAY_HINT} />
               </div>
               <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-secondary)" }}>
                 Vendor:

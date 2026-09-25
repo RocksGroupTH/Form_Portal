@@ -7,7 +7,7 @@ export async function GET() {
   const session = await requireAuth();
   if (session instanceof Response) return session;
   try {
-    const [dates, def] = await Promise.all([getPaymentDates(), getDefaultPaymentDate()]);
+    const [dates, def] = await Promise.all([getPaymentDates("AP-2"), getDefaultPaymentDate("AP-2")]);
     return NextResponse.json({ ok: true, data: { dates, default: def } });
   } catch (e) {
     return NextResponse.json(

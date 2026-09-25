@@ -21,7 +21,7 @@ import {
   type AttachmentSource,
 } from "@/components/ui/AttachmentViewer";
 import { RequestStatusBadge } from "@/features/accounting/components/RequestStatusBadge";
-import { CLR_STEP_LABEL_TH, type ClrAnyStepCode } from "@/features/clear-advance/constants";
+import { AP3_FORTNIGHTLY_PAYDAY_HINT, CLR_STEP_LABEL_TH, type ClrAnyStepCode } from "@/features/clear-advance/constants";
 import { clrTimelineSteps } from "@/lib/clr/clear-advance-timeline";
 import type { AccFileMeta } from "@/features/accounting/types";
 import type { ClearAdvanceItem, ClearAdvanceRequest, ClrApproval } from "@/features/clear-advance/types";
@@ -309,22 +309,27 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
     isAccountStep ? editItems.map((it) => it.taxId) : [],
   );
 
-  /* The payment rounds, from the calendar AP-1 and AP-2 already share — there
-     is no AP-3 endpoint because there is no AP-3 rule; it is the same 2nd and
-     4th Friday, shifted off holidays. Only fetched while the account step is
-     open, and only the company-pays case can choose from them. */
+  /* The payment rounds, from AP-3's own endpoint and AP-3's own rule: the 2nd
+     and 4th Friday, shifted back off holidays. That is the same calendar AP-1
+     keeps and no longer the one AP-2 keeps — AP-2 went weekly on 2026-09-24 —
+     so this can no longer borrow AP-2's payday route, which it did until the
+     day that stopped being true (and `ap3-payday-endpoint-guard.test.ts` now
+     reads this file to make sure it does not go back). Only fetched while the
+     account step is open, and only the company-pays case can choose from
+     them. */
   const [paymentRounds, setPaymentRounds] = useState<string[]>([]);
   const [roundsAttempt, setRoundsAttempt] = useState(0);
   useEffect(() => {
     if (!isAccountStep || !companyPaysExtra) return;
     let cancelled = false;
-    fetch("/api/request/advance/payment-dates")
+    fetch("/api/request/clear-advance/payment-dates")
       .then((r) => r.json())
       .then((j: { ok?: boolean; data?: { dates?: string[]; default?: string | null } }) => {
         if (cancelled || !j?.data?.dates) return;
         setPaymentRounds(j.data.dates);
-        /* Seeded with the round the claim belongs to, the way AP-2 does, so the
-           common case is confirm-and-approve. Never over an existing pick. */
+        /* Seeded with the round the claim belongs to — the same UX pattern as
+           AP-2, but the dates now come from AP-3's own calendar. Never over an
+           existing pick. */
         setPaymentDate((prev) => prev || j.data?.default || "");
       })
       .catch(() => {
@@ -637,6 +642,7 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
                       value={paymentDate}
                       onChange={setPaymentDate}
                       allowedDates={paymentRounds}
+                      hint={AP3_FORTNIGHTLY_PAYDAY_HINT}
                     />
                     <span className="text-[10px]" style={{ color: paymentDateOffCycle ? "var(--color-danger)" : "var(--text-faint)" }}>
                       {paymentDateOffCycle

@@ -8,7 +8,7 @@ import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
 import { AdvanceCompanyBar, ADVANCE_COMPANY_ALL } from "./AdvanceCompanyBar";
 import { AdvanceDetailPanel } from "./AdvanceDetailPanel";
 import { money, rate } from "./CurrencyColumns";
-import { AP2_DEFAULT_CURRENCY, isForeignCurrency } from "@/features/advance/constants";
+import { AP2_DEFAULT_CURRENCY, AP2_WEEKLY_PAYDAY_HINT, isForeignCurrency } from "@/features/advance/constants";
 import { buildBulkMessage, type BulkItemResult } from "@/features/advance/lib/bulk-result-message";
 import { AdvanceQueueVendorCell } from "./AdvanceQueueVendorCell";
 import { QueueColumnFilter } from "./QueueColumnFilter";
@@ -342,7 +342,7 @@ export function AdvanceApproveQueue() {
               <>
                 <div className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                   วันจ่าย:
-                  <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} />
+                  <PaymentDatePicker value={paymentDate} onChange={setPaymentDate} allowedDates={paymentDates} hint={AP2_WEEKLY_PAYDAY_HINT} />
                 </div>
                 <label className="text-[12px] flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
                   <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />

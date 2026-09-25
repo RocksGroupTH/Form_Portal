@@ -220,13 +220,28 @@ export function buildClearAdvanceJournalPayload(input: ClrJournalInput): PpapJou
     if (!key) return undefined;
     return input.branchBu?.get(key)?.buCode ?? undefined;
   };
-  // Spec §3.2 format: [ADV no] เบิก เคลียร์เงินทดลอง [employee] [document detail].
-  // Gen. Journal Line Description is 100 chars, so the trailing detail is what gets
-  // cut — the identifying half has to survive.
-  const advNo = (input.advanceRequestNo ?? "").trim() || requestNo;
-  const who = (input.requesterName ?? "").trim();
+  /* The ADC number and then the line's own detail — user's CR of 2026-09-23,
+     item 6. See docs/superpowers/specs/2026-09-24-ap2-weekly-payday-and-adc-
+     description-design.md.
+
+     It led with the ADV number until 2026-09-24, followed by "เบิก
+     เคลียร์เงินทดลอง" (a typo for ทดรอง, posted to BC in that form for months)
+     and the requester's name. BC's Gen. Journal Line Description caps at 100
+     characters, so those four fixed words and a name were spending the budget
+     that the line's own detail — the only part that differs between lines —
+     needs. Slicing still happens here; what changed is what survives the cut.
+
+     The ADV number now appears nowhere on the journal. That is the user's
+     decision, made knowing it (2026-09-24): the ADC is what somebody holding a
+     posted journal can search AP-3 for, and AP-3 shows which advance each
+     clearing settles. If it is ever wanted back it belongs in employeeCode,
+     which BC maps to External Document No., the way AP-2 already does it — not
+     back in this string.
+
+     Kept byte-identical with the other console's copy of this file. The same
+     claim must post the same Description whichever console sent it. */
   const describe = (detail?: string | null) =>
-    [advNo, "เบิก", "เคลียร์เงินทดลอง", who, (detail ?? "").trim()]
+    [requestNo, (detail ?? "").trim()]
       .filter((s) => s !== "")
       .join(" ")
       .slice(0, 100);

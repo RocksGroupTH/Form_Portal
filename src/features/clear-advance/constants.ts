@@ -72,3 +72,14 @@ export function isRocksPcBrand(brandCode: string | null | undefined): boolean {
 
 /** AP-3.1 rule: non-home brand → every line's G/L is forced to this account. */
 export const FORCE_GL_NON_ROCKS_PC = "110723001";
+
+/**
+ * The caption under AP-3's payment-date calendar, in Thai.
+ *
+ * AP-3 still pays the 2nd and 4th Friday: the CR of 2026-09-23 moved AP-2 to
+ * every Friday and named only AP-2. This wording is the one the two AP-3 pickers
+ * were already showing — it was the shared component's default until `hint`
+ * became required, and it is reproduced here character for character so those
+ * screens did not move when the default went away.
+ */
+export const AP3_FORTNIGHTLY_PAYDAY_HINT = "เฉพาะวันจ่ายที่กำหนด (ศุกร์ที่ 2/4 ของเดือน)";

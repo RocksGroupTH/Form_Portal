@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "ข้อมูลไม่ครบ" }, { status: 400 });
   }
 
-  const valid = await getPaymentDates();
+  const valid = await getPaymentDates("AP-2");
   if (!valid.includes(paymentDate)) {
     return NextResponse.json({ ok: false, error: "วันจ่ายไม่ถูกต้อง" }, { status: 400 });
   }

@@ -81,7 +81,7 @@ export async function approveCurrentStep(
       refundToCompany: refund,
       refundTransferDate: before.clear?.refundTransferDate,
       submitted: opts.paymentDate,
-      allowedRounds: refund < 0 ? await getPaymentDates() : [],
+      allowedRounds: refund < 0 ? await getPaymentDates("AP-3") : [],
     });
     if (!decided.ok) throw new Error(decided.error);
     /* The seller's BC vendor is no longer a condition of approving (user,
