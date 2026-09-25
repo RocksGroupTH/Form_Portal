@@ -19,6 +19,9 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { assertMayClearFor } from "@/lib/clr/clear-on-behalf-service";
+import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
+import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import { MAIL_FORM_NAMES, esc, submittedLead } from "@/lib/acc/mail-copy";
 import {
   AP3_FORM_CODE,
@@ -96,6 +99,7 @@ function mapRequestRow(r: Record<string, unknown>): ClearAdvanceRequest {
     currentManager: null,
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
+    createdBy: (r.CreatedBy as number) ?? null,
     submittedBy: (r.SubmittedBy as number) ?? null,
     submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
     createdAt: r.CreatedAt ? (r.CreatedAt as Date).toISOString() : "",
@@ -309,8 +313,20 @@ export async function listPendingAdvances(
   loginEmail: string,
   excludeRequestId?: number | null,
   brandCode?: string | null,
+  /**
+   * Whose advances to list. Omitted, the actor's own.
+   *
+   * A clearing must name an advance belonging to the person it is FOR —
+   * `submitRequest` refuses otherwise ("เงินทดรองจ่ายที่เลือกไม่ใช่ของผู้ขอรายนี้") —
+   * so once the form can clear on a colleague's behalf this list has to follow
+   * the chosen person or the form offers only advances that cannot be submitted.
+   *
+   * The caller gates it. This reads money, and `resolveRequesterForActor` alone
+   * would answer for any active employee in the company.
+   */
+  requesterStaffId?: number | null,
 ): Promise<PendingAdvanceOption[]> {
-  const requester = await resolveRequesterForActor(loginEmail, null);
+  const requester = await resolveRequesterForActor(loginEmail, requesterStaffId ?? null);
   const staffId = requester.staffId;
   if (staffId == null) return [];
 
@@ -799,7 +815,12 @@ export async function saveDraft(
   loginEmail: string,
 ): Promise<number> {
   const pool = await getAccPool();
-  const requester = await resolveRequesterForActor(loginEmail, null);
+  // เคลียร์แทน: the draft is saved in the chosen person's name, so this is the
+  // write that decides whose claim it becomes — and the one place StaffId is
+  // set. Gated before it is trusted; `resolveRequesterForActor` accepts any
+  // active employee on its own.
+  await assertMayClearFor(loginEmail, input.staffId ?? null);
+  const requester = await resolveRequesterForActor(loginEmail, input.staffId ?? null);
 
   await assertLinesWritable(input.clear, input.brandCode ?? null);
 
@@ -1073,10 +1094,20 @@ export async function submitRequest(
       `<p>ผู้ขอ: ${esc(updated.requesterFullName ?? "-")} · ค่าใช้จ่ายจริง: ${esc((updated.clear?.actualTotal ?? 0).toLocaleString())} บาท` +
       ` · ต้องโอนคืนบริษัท: ${esc((updated.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
       documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
-    await queueEmail({
-      requestId: id, toEmail: managerEmail,
-      subject, bodyHtml, triggerType: "Submitted",
-    });
+    // The manager, plus the on-behalf pair: whoever filed the claim, and — on
+    // this trigger only — the colleague it was filed FOR, who otherwise first
+    // hears of a claim in their name when its outcome arrives.
+    const submitTo = onBehalfNotifyList(
+      [managerEmail],
+      await resolveOnBehalfPair(updated),
+      { alsoRequester: true },
+    );
+    for (const toEmail of submitTo) {
+      await queueEmail({
+        requestId: id, toEmail,
+        subject, bodyHtml, triggerType: "Submitted",
+      });
+    }
   }
   return updated!;
 }

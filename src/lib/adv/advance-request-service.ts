@@ -10,8 +10,8 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
-import { advanceNotifyList } from "@/lib/adv/advance-notify-recipients";
-import { resolveOnBehalfPair } from "@/lib/adv/advance-on-behalf";
+import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
+import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
 import {
   AP2_FORM_CODE,
@@ -635,7 +635,7 @@ export async function submitRequest(
     // Filed for somebody else? Tell the filer, and tell the person it was
     // filed FOR — this is the only trigger that names them, and without it a
     // request goes out under their name and the first they hear is the outcome.
-    const notifyEmails = advanceNotifyList(
+    const notifyEmails = onBehalfNotifyList(
       approverEmails,
       await resolveOnBehalfPair(updated),
       { alsoRequester: true },

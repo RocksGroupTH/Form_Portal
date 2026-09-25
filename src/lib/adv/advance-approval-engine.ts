@@ -1,8 +1,8 @@
 import { getAccPool, sql } from "@/lib/adv/pool";
 import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { queueEmail } from "@/lib/acc/email-queue";
-import { advanceNotifyList } from "@/lib/adv/advance-notify-recipients";
-import { resolveOnBehalfPair } from "@/lib/adv/advance-on-behalf";
+import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
+import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
@@ -138,7 +138,7 @@ export async function approveCurrentStep(
     });
     // The filer too, when this was raised on somebody's behalf — they are the
     // one managing it. See advance-notify-recipients.
-    for (const toEmail of advanceNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
+    for (const toEmail of onBehalfNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
       await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType: "Approved" });
     }
   }
@@ -179,7 +179,7 @@ export async function rejectCurrentStep(requestId: number, actor: Actor, comment
     });
     // The filer too, when this was raised on somebody's behalf — they are the
     // one managing it. See advance-notify-recipients.
-    for (const toEmail of advanceNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
+    for (const toEmail of onBehalfNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
       await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType: "Rejected" });
     }
   }
@@ -225,7 +225,7 @@ export async function cancelByRequester(requestId: number, actor: Actor): Promis
     // The filer joins the union when this was raised on somebody's behalf.
     // advanceNotifyList de-duplicates, which matters here: the filer is
     // frequently on the head roster already.
-    const recipients = advanceNotifyList(
+    const recipients = onBehalfNotifyList(
       [...headEmails, req?.requesterEmail],
       await resolveOnBehalfPair(req ?? {}),
     );
@@ -279,7 +279,7 @@ export async function returnCurrentStep(requestId: number, actor: Actor, comment
     });
     // The filer too, when this was raised on somebody's behalf — they are the
     // one managing it. See advance-notify-recipients.
-    for (const toEmail of advanceNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
+    for (const toEmail of onBehalfNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
       await queueEmail({ requestId, toEmail, subject, bodyHtml, triggerType: "Returned" });
     }
   }

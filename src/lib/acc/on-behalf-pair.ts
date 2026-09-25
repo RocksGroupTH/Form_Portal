@@ -1,8 +1,8 @@
 import { findById } from "@/lib/team-member/service";
-import type { OnBehalfPair } from "@/lib/adv/advance-notify-recipients";
+import type { OnBehalfPair } from "@/lib/acc/on-behalf";
 
 /**
- * The on-behalf pair for one AP-2 request: who it is for, and who filed it.
+ * The on-behalf pair for one request: who it is for, and who filed it.
  *
  * `AccRequest.CreatedBy` is the anchor rather than `SubmittedBy`, because it is
  * the person who owns the draft and who has to edit it when it comes back.
