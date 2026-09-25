@@ -4,6 +4,7 @@ import { loadDepartmentErpMapsByTarget } from "@/lib/acc/department-map-service"
 import { listBrandAccounts } from "@/lib/acc/brand-account-service";
 import { listBrandBranches } from "@/lib/acc/brand-branch-service";
 import { listBrandJournalBatches } from "@/lib/acc/brand-journal-batch-service";
+import { pickOwnForForm } from "@/lib/acc/per-form-config";
 import { isBranchSelectable } from "@/lib/adv/advance-erp-master-service";
 import type { ErpBcEnvironment } from "@/lib/acc/erp-environment";
 import type { BrandErpAccountConfig } from "@/lib/acc/erp-journal-builder";
@@ -82,14 +83,22 @@ export async function loadAdvanceErpContext(
     listBrandJournalBatches(code, AP2_FORM_CODE),
   ]);
 
-  // Prefer FormCode='AP-2' rows; fall back to the picked NULL-default row.
-  const gl     = glRows.find(r => r.formCode === AP2_FORM_CODE)     ?? glRows[0]     ?? null;
-  const bank   = bankRows.find(r => r.formCode === AP2_FORM_CODE)   ?? bankRows[0]   ?? null;
-  const batch  = batchRows.find(r => r.formCode === AP2_FORM_CODE)  ?? batchRows[0]  ?? null;
-  // Branch is the exception: AP-2 self-owns it. Only an explicit AP-2 row counts —
-  // an inherited NULL-default (AP-1's shared branch, e.g. HQ) is treated as "no
-  // branch" so a blank AP-2 branch falls back to the requester's mapped ERP dept.
-  const branch = branchRows.find(r => r.formCode === AP2_FORM_CODE) ?? null;
+  // AP-2 self-owns every value that decides where money goes: Bank, Journal
+  // Batch and Branch. Only an explicit AP-2 row counts, because the NULL-default
+  // row is not a house default — it is AP-1's own configuration, written by AP-1's
+  // settings editor (there are no FormCode='AP-1' rows anywhere). Inheriting it
+  // let a brand configured only for AP-1 pass this form's send-ready gate and pay
+  // out against AP-1's bank account. Unset, the payload throws a named error.
+  //
+  // G/L still inherits, and that is deliberate: AP-2's Dr posts to the matched
+  // Vendor and the account comes from its posting group, so this value reaches
+  // no journal line — see the send-ready gate in advance-interface-settings-service.
+  const gl     = glRows.find(r => r.formCode === AP2_FORM_CODE) ?? glRows[0] ?? null;
+  const bank   = pickOwnForForm(bankRows,   AP2_FORM_CODE);
+  const batch  = pickOwnForForm(batchRows,  AP2_FORM_CODE);
+  // A blank branch is not an error: it falls back to the requester's mapped
+  // ERP department downstream.
+  const branch = pickOwnForForm(branchRows, AP2_FORM_CODE);
 
   const config: BrandErpAccountConfig = {
     glAccountNo:       gl?.accountNo?.trim()       ?? null,

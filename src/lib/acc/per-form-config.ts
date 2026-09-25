@@ -47,6 +47,34 @@ export function pickForForm<T extends { formCode: string | null }>(
 }
 
 /**
+ * The row that answers for `formCode` when the form **self-owns** the setting:
+ * its own row, or nothing. The default is never inherited.
+ *
+ * The counterpart to `pickForForm`, and the two differ on exactly one input —
+ * a form with no row of its own. Which to use is not a style choice:
+ *
+ * **`FormCode NULL` is not a neutral shared value, it is AP-1's own
+ * configuration.** There are no `FormCode = 'AP-1'` rows in these tables at
+ * all; AP-1's settings editor reads and writes the NULL rows (it passes no
+ * `formCode`, and its write is bounded by `perFormWriteMatch(null)`). So a
+ * later form that inherits the default is not falling back to a house default,
+ * it is reading whatever AP-1 last saved.
+ *
+ * For a label or a description that is harmless. For a value that decides
+ * **where money posts** — a bank account, a journal batch, a branch — it is not:
+ * the form looks configured, passes its send-ready gate, and posts to another
+ * form's account. Refusing is the safer failure, and every caller of this
+ * function already throws a named error when it gets null.
+ */
+export function pickOwnForForm<T extends { formCode: string | null }>(
+  rows: T[],
+  formCode: string,
+): T | null {
+  for (const row of rows) if (row.formCode === formCode) return row;
+  return null;
+}
+
+/**
  * `pickForForm` applied per natural key — the list form of the same rule.
  *
  * A list read returns several rows per brand (one per account, batch or branch
