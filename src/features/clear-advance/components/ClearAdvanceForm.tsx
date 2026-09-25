@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { PND_LABEL, suggestPndType } from "@/lib/clr/wht-pnd-core";
+import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
   Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
+  Maximize2, Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
@@ -24,6 +25,7 @@ import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-rea
 import { loadTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
 import { registrantFullName, sameRegisteredName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
 import { normalizeTaxIdInput, taxIdChecksumOk, taxIdNotice } from "@/lib/clr/seller-tax-id";
+import { wideCardStyle } from "@/lib/clr/wide-card-width";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
 import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
@@ -169,7 +171,8 @@ interface WhtRow {
   taxId: string;
   payeeName: string;
   payeeAddress: string;
-  /** "" = nobody has chosen yet, which is what the row shows and what it saves. */
+  /** "" = no type could be read from the tax id. Nothing on this form can resolve
+   *  it — only accounting's step sets one. */
   pndType: "PND3" | "PND53" | "";
   amount: string;
   whtAmount: string;
@@ -257,6 +260,25 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [ready, setReady] = useState(false);
+  const [linesWide, setLinesWide] = useState(false);
+  /**
+   * The viewport's width without its scrollbar, measured only while widened.
+   *
+   * Null until then, so the ordinary layout costs no listener and no reflow;
+   * `clientWidth` rather than `innerWidth` because the difference between them
+   * is exactly the scrollbar this must not include.
+   */
+  const [wideViewportWidth, setWideViewportWidth] = useState<number | null>(null);
+  useEffect(() => {
+    if (!linesWide) {
+      setWideViewportWidth(null);
+      return;
+    }
+    const measure = () => setWideViewportWidth(document.documentElement.clientWidth);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [linesWide]);
   // Inline validation (P1.1): once the user tries to submit, field errors show
   // next to each field and clear themselves as the field is fixed (errors are
   // derived from live state, not stored). rootRef locates the first bad field.
@@ -488,10 +510,17 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   }
 
   /**
-   * Typing a tax id fills the ภ.ง.ด. type — but only on a row where nobody has
-   * chosen one. Re-seeding on every keystroke would mean correcting a typo in
-   * the id silently discards a deliberate choice, and the row is a decision of
-   * record: it picks the vendor accounting has to clear.
+   * Typing a tax id fills the ภ.ง.ด. type — but only on a row that has none yet.
+   *
+   * The `w.pndType ||` guard still earns its place now that the requester has no
+   * control of their own: `readOnly` is false for a **Returned** request, so a
+   * requester sent back to fix something can still edit this row, and without the
+   * guard their tax-id correction would overwrite the type accounting had already
+   * decided.
+   *
+   * The cost, which nothing else records: on a fresh row a mistyped tax id seeds a
+   * type, and correcting the id does NOT re-seed it. The first suggestion is what
+   * saves, invisibly, and only accounting's step can change it.
    */
   function updateWhtTaxId(idx: number, taxId: string) {
     setWhtRows((p) => p.map((w, i) => (
@@ -534,7 +563,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
     const short = src.filter((l) => !l.taxId.trim() || !l.payeeName.trim()).length;
     toast.success(
       short === 0
-        ? "ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — เติมเลขผู้เสียภาษี / ชื่อผู้รับ / ภ.ง.ด. ให้ด้วย"
+        ? "ดึงรายการหัก ณ ที่จ่ายจากค่าใช้จ่ายแล้ว — เติมเลขผู้เสียภาษี / ชื่อผู้รับ ให้ด้วย"
         : `ดึงรายการหัก ณ ที่จ่ายแล้ว — อีก ${short} รายการยังไม่มีเลขผู้เสียภาษี/ชื่อผู้รับ กรุณากรอกให้ครบ`,
     );
   }
@@ -600,8 +629,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             taxId: w.taxId.trim() || null,
             payeeName: w.payeeName.trim() || null,
             payeeAddress: w.payeeAddress.trim() || null,
-            // What the row shows is what it saves — the suggestion is seeded into
-            // the visible value, never inferred behind the user's back at save.
+            // Saved unseen since 2026-09-24: the requester has no ภ.ง.ด. control
+            // any more, so this is whatever suggestPndType read from the tax id.
+            // It still has to be sent — the ERP payload refuses a WHT row with no
+            // decided type — and accounting is who can actually change it, at
+            // ClearAdvanceDetail's account step.
             pndType: w.pndType || null,
             amount: num(w.amount) || null,
             whtAmount: num(w.whtAmount) || null,
@@ -854,7 +886,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
   async function uploadFiles(
     list: FileList | null,
     refType: "clear_doc" | "refund_proof",
+    /* `read: false` uploads and stores the file exactly as always and skips the
+       AI read at the end of this function — the ปกติ buttons the CR asked for.
+       One function with one argument rather than a second upload path, so the
+       two cannot drift apart. */
+    opts: { read?: boolean } = {},
   ) {
+    const read = opts.read !== false;
     if (!list || list.length === 0) return;
     // Receipts require the advance to be chosen first (the OCR fills lines that
     // clear THAT advance). Refund-proof isn't gated (it only appears post-refund).
@@ -910,7 +948,7 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       // Both boxes go through the same reader: the model says what each page is
       // (receipt / slip / other), and that — not the box it was dropped in —
       // decides where the values land (decision: 2026-09-01).
-      if (ocrDocs.length) void verifyReceipts(ocrDocs);
+      if (read && ocrDocs.length) void verifyReceipts(ocrDocs);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "อัปโหลดไม่สำเร็จ");
     } finally {
@@ -1554,13 +1592,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             locked={advanceRequestId == null}
             lockedHint="กรุณาเลือก “เงินทดรองจ่ายที่จะเคลียร์” ก่อน จึงจะแนบใบเสร็จได้"
             onPick={(list) => uploadFiles(list, "clear_doc")}
+            onPickRaw={(list) => uploadFiles(list, "clear_doc", { read: false })}
             onRemove={(id) => removeFile(id, "clear_doc")}
             onView={openFileViewer}
           />
           {!readOnly && advanceRequestId != null && (
             <div className="flex items-start justify-between gap-2 mt-1">
               <p className="text-[11px] m-0" style={{ color: "var(--text-faint)" }}>
-              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ระบบจะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้)
+              แนบใบเสร็จ/ใบกำกับภาษี (รูปภาพหรือ PDF · ไทย/อังกฤษ) — <b>1 ใบกำกับ = 1 รายการ</b> (ไฟล์เดียวมีหลายใบได้ · PDF อ่านได้สูงสุด 15 หน้า) ปุ่ม <b>อ่านด้วย AI</b> จะอ่าน “วันที่ · เลขที่เอกสาร · รายละเอียด · ยอดก่อน VAT · VAT · หัก ณ ที่จ่าย (พร้อมเลขผู้เสียภาษี/ชื่อผู้รับ ถ้ามี)” มาเติมให้ (แก้ไขได้) · ปุ่ม <b>ไม่ใช้ AI</b> แนบไฟล์อย่างเดียว ไม่อ่านและไม่สร้างแถวให้ ต้องกด “เพิ่มแถว” กรอกเอง
               </p>
               <PoweredByClaude />
             </div>
@@ -1570,7 +1609,11 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
       </div>
 
       {/* Expense-line grid (AP-3.1 section 1) */}
-      <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box} data-err="lines">
+      <div
+        className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3 min-w-0 transition-[width,margin] duration-200"
+        style={{ ...box, ...wideCardStyle(linesWide, wideViewportWidth) }}
+        data-err="lines"
+      >
         <div className="flex items-center justify-between gap-2">
           <label className="text-[12px] font-bold" style={labelStyle}>รายการค่าใช้จ่ายจริง *</label>
           <div className="flex items-center gap-2">
@@ -1606,6 +1649,31 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             {!readOnly && (
               <Button variant="ghost" size="sm" type="button" icon={<Plus size={14} />} onClick={addLine}>เพิ่มแถว</Button>
             )}
+            {/* No `lines.length` guard, unlike AP-4's: this form always holds at
+                least one row — the initial state seeds a blank one and removeLine
+                puts it back — so the widened card never shows the blank page
+                AP-4's guard exists to prevent. */}
+            <button
+              type="button"
+              onClick={() => setLinesWide((v) => !v)}
+              aria-pressed={linesWide}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer"
+              style={{
+                background: "var(--bg-card-alt)",
+                color: "var(--nav-active-text)",
+                border: "1px solid var(--border-card)",
+              }}
+            >
+              {linesWide ? (
+                <>
+                  <Minimize2 size={13} /> ย่อกลับ
+                </>
+              ) : (
+                <>
+                  <Maximize2 size={13} /> ขยายเต็มความกว้าง
+                </>
+              )}
+            </button>
           </div>
         </div>
         {!readOnly && (
@@ -1912,6 +1980,10 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           <div className="overflow-x-auto -mx-1 px-1 hidden md:block">
             <table className="w-full border-collapse" style={{ minWidth: 980 }}>
               <thead>
+                {/* Adding or removing a column here means two colSpans below
+                    follow it: the empty-state row (~1937) and the totals row
+                    (~2011). They are different numbers and both are wrong if
+                    only one is changed. */}
                 <tr className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                   <Th w={34}>#</Th>
                   <Th w={110}>วันที่</Th>
@@ -1919,7 +1991,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <Th w={130}>เลขผู้เสียภาษี *</Th>
                   <Th w={150}>ชื่อผู้รับ *</Th>
                   <Th w={170}>ที่อยู่</Th>
-                  <Th w={110}>ภ.ง.ด.</Th>
                   <Th w={100} right>ค่าใช้จ่าย</Th>
                   <Th w={90} right>WHT</Th>
                   {!readOnly && <Th w={34}> </Th>}
@@ -1928,7 +1999,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               <tbody>
                 {whtRows.length === 0 ? (
                   <tr>
-                    <Td colSpan={readOnly ? 9 : 10}>
+                    {/* The header is eight columns read-only, nine with the
+                        remove button, and this row spans all of them. The
+                        totals row below reaches the same width differently —
+                        colSpan 7 plus the WHT cell, plus the remove-button cell
+                        when it is there — so the two numbers are not
+                        interchangeable. All three dropped by one when
+                        the ภ.ง.ด. column left on 2026-09-24; this row was the
+                        one that got missed. */}
+                    <Td colSpan={readOnly ? 8 : 9}>
                       <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>
                         ยังไม่มีรายการ — กด “ดึงจากรายการ” หรือ “เพิ่มแถว”
                       </span>
@@ -1971,18 +2050,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         ref={(el) => autoGrow(el)}
                         onChange={(e) => { autoGrow(e.target); updateWht(idx, { payeeAddress: e.target.value }); }} />
                     </Td>
-                    <Td>
-                      {/* Picks the BC vendor accounting clears against. Suggested
-                          from the tax id, never fixed by it: a 0-prefixed id can
-                          belong to a foreign individual. */}
-                      <select className={cellClass} style={{ ...cellStyle, width: "100%" }}
-                        value={w.pndType} disabled={readOnly}
-                        onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
-                        <option value="">— ยังไม่ระบุ —</option>
-                        <option value="PND3">{PND_LABEL.PND3}</option>
-                        <option value="PND53">{PND_LABEL.PND53}</option>
-                      </select>
-                    </Td>
                     <Td right>
                       <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
                         value={w.amount} disabled={readOnly} placeholder="0.00"
@@ -2007,11 +2074,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
               </tbody>
               <tfoot>
                 <tr className="text-[12px] font-bold" style={{ color: "var(--text-heading)" }}>
-                  {/* #, วันที่, เลขที่เอกสาร, เลขผู้เสียภาษี, ชื่อผู้รับ, ที่อยู่,
-                      ภ.ง.ด. and ค่าใช้จ่าย — eight, so รวม WHT lands under the
-                      WHT column. It spanned seven, which left the header a cell
-                      wider than this row. */}
-                  <Td colSpan={8}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
+                  {/* #, วันที่, เลขที่เอกสาร, เลขผู้เสียภาษี, ชื่อผู้รับ, ที่อยู่
+                      and ค่าใช้จ่าย — seven, so รวม WHT lands under the WHT
+                      column. It was eight while the requester still chose the
+                      ภ.ง.ด. type; that column left this form on 2026-09-24 and
+                      the count follows it. Get this wrong and the header sits a
+                      cell wider than the totals row, which is how it was found
+                      the last time. */}
+                  <Td colSpan={7}><span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>รวม WHT</span></Td>
                   <Td right><FootVal value={money(certWht)} accent={!whtMismatch} tone={whtMismatch ? "danger" : undefined} /></Td>
                   {!readOnly && <Td />}
                 </tr>
@@ -2064,15 +2134,6 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                   <input className={fieldClass} style={fieldStyle}
                     value={w.payeeAddress} disabled={readOnly} placeholder="—"
                     onChange={(e) => updateWht(idx, { payeeAddress: e.target.value })} />
-                </MField>
-                <MField label="ภ.ง.ด.">
-                  <select className={fieldClass} style={fieldStyle}
-                    value={w.pndType} disabled={readOnly}
-                    onChange={(e) => updateWht(idx, { pndType: e.target.value as WhtRow["pndType"] })}>
-                    <option value="">— ยังไม่ระบุ —</option>
-                    <option value="PND3">{PND_LABEL.PND3}</option>
-                    <option value="PND53">{PND_LABEL.PND53}</option>
-                  </select>
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ค่าใช้จ่าย">
@@ -2288,12 +2349,18 @@ function FootVal({ value, accent, tone }: { value: string; accent?: boolean; ton
 }
 
 function FileArea({
-  files, readOnly, uploading, onPick, onRemove, onView, locked, lockedHint,
+  files, readOnly, uploading, onPick, onPickRaw, onRemove, onView, locked, lockedHint,
 }: {
   files: AccFileMeta[];
   readOnly: boolean;
   uploading: boolean;
   onPick: (list: FileList | null) => void;
+  /** When given, the section offers buttons that upload WITHOUT the AI read —
+   *  and the two ordinary buttons are relabelled "อ่านด้วย AI", because a
+   *  qualifier only means anything when something unqualified sits beside it.
+   *  The refund-slip section deliberately passes nothing, which is how it keeps
+   *  the two buttons and the two labels it has today. */
+  onPickRaw?: (list: FileList | null) => void;
   onRemove: (id: number) => void;
   onView: (f: AccFileMeta) => void;
   /** Disable attaching until a prerequisite is met (e.g. pick the advance first). */
@@ -2301,25 +2368,49 @@ function FileArea({
   lockedHint?: string;
 }) {
   const disabled = uploading || locked;
+  const hasRaw = onPickRaw != null;
   const btnStyle = {
     background: "var(--bg-card)", border: "1px solid var(--border-card)",
     color: locked ? "var(--text-faint)" : "var(--nav-active-text)",
     opacity: locked ? 0.5 : 1, cursor: locked ? "not-allowed" : "pointer",
   } as const;
+  /* The raw pair reads as secondary: same shape, quieter. The two kinds sit in
+     one wrapping row, so they are only grouped by accident of where it breaks —
+     at 320px, at 480-539px and at every desktop width they are not. Style is
+     what survives a re-wrap; spacing is not. */
+  const rawBtnStyle = {
+    ...btnStyle,
+    color: locked ? "var(--text-faint)" : "var(--text-muted)",
+    borderStyle: "dashed" as const,
+  };
   return (
     <div className="flex flex-col gap-2">
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-            <Paperclip size={14} /> แนบไฟล์
+            <Paperclip size={14} /> {hasRaw ? "แนบไฟล์อ่านด้วย AI" : "แนบไฟล์"}
             <input type="file" hidden multiple accept="image/*,application/pdf" disabled={disabled}
               onChange={(e) => { onPick(e.target.files); e.target.value = ""; }} />
           </label>
           <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={btnStyle}>
-            <Camera size={14} /> ถ่ายรูป
+            <Camera size={14} /> {hasRaw ? "ถ่ายรูปอ่านด้วย AI" : "ถ่ายรูป"}
             <input type="file" hidden accept="image/*" capture="environment" disabled={disabled}
               onChange={(e) => { onPick(e.target.files); e.target.value = ""; }} />
           </label>
+          {hasRaw && (
+            <>
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={rawBtnStyle}>
+                <Paperclip size={14} /> แนบไฟล์ (ไม่ใช้ AI)
+                <input type="file" hidden multiple accept="image/*,application/pdf" disabled={disabled}
+                  onChange={(e) => { onPickRaw(e.target.files); e.target.value = ""; }} />
+              </label>
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold" style={rawBtnStyle}>
+                <Camera size={14} /> ถ่ายรูป (ไม่ใช้ AI)
+                <input type="file" hidden accept="image/*" capture="environment" disabled={disabled}
+                  onChange={(e) => { onPickRaw(e.target.files); e.target.value = ""; }} />
+              </label>
+            </>
+          )}
           {uploading && <span className="text-[12px]" style={{ color: "var(--text-muted)" }}>กำลังอัปโหลด...</span>}
         </div>
       )}
