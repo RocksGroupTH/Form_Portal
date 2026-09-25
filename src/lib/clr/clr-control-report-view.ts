@@ -25,6 +25,10 @@ export const DEFAULT_VISIBLE_KEYS: readonly string[] = [
   "adjustment",
   "pvDocNo",
   "pendingOn",
+  // Added 2026-09-25 at the user's request — the report named the step and
+  // never the person. Visible by default: it was asked for because it was
+  // missing, and a column behind the toggle menu stays missing.
+  "pendingApproverName",
   "overallStatus",
 ];
 

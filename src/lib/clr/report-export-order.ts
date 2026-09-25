@@ -25,7 +25,7 @@ export const CONTROL_EXPORT_ORDER = [
   "submittedAt", "requestNo", "staffId", "advanceRequestNo", "requesterFullName",
   "requesterDepartmentName", "advanceAmount", "expenseOf", "actualTotal",
   "refundToCompany", "extraToEmployee", "pvDocNo", "paymentDate",
-  "managerApproved", "accountActioned", "pendingOn", "overallStatus",
+  "managerApproved", "accountActioned", "pendingOn", "pendingApproverName", "overallStatus",
 ] as const;
 
 export const DETAIL_EXPORT_ORDER = [
@@ -58,6 +58,7 @@ export const CONTROL_OWNS: Record<string, readonly ControlExportKey[]> = {
   managerApproved: ["managerApproved"],
   accountActioned: ["accountActioned"],
   pendingOn: ["pendingOn"],
+  pendingApproverName: ["pendingApproverName"],
   overallStatus: ["overallStatus"],
 };
 
