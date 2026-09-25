@@ -28,6 +28,7 @@ export function AmountInput({
   className,
   style,
   placeholder = "0.00",
+  ariaInvalid,
 }: {
   /** The stored value — plain digits, no separators. */
   value: string;
@@ -37,6 +38,13 @@ export function AmountInput({
   className?: string;
   style?: React.CSSProperties;
   placeholder?: string;
+  /**
+   * Marks the field as failing validation, the same way the plain `<input>`
+   * this replaces did. Only the refund amount uses it — it is the one money
+   * field on this form with a rule of its own to break — but it has to survive
+   * the swap, or a field the form has flagged stops announcing it.
+   */
+  ariaInvalid?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
 
@@ -48,6 +56,7 @@ export function AmountInput({
       style={style}
       disabled={disabled}
       placeholder={placeholder}
+      aria-invalid={ariaInvalid}
       value={focused ? value : formatAmountForDisplay(value)}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}

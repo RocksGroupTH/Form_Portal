@@ -2283,11 +2283,16 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div data-err="refundAmount">
             <Field label="จำนวนเงินที่โอนคืน (บาท) *">
-              <input type="number" inputMode="decimal" min={0} step="0.01"
-                className={fieldClass} style={fieldStyle} value={refundTransferAmount}
-                disabled={readOnly} placeholder={money(refundToCompany)}
-                aria-invalid={!!fieldErrors.refundAmount}
-                onChange={(e) => setRefundTransferAmount(e.target.value)} />
+              {/* The last money field on this form still reading as a bare
+                  1859: `min={0}` and `step="0.01"` are not lost with the
+                  `type="number"` — `parseAmountInput` drops a minus and every
+                  separator, so the stored value is the same plain digit string
+                  `num()` has always been handed. */}
+              <AmountInput className={fieldClass} style={fieldStyle}
+                value={refundTransferAmount} disabled={readOnly}
+                placeholder={money(refundToCompany)}
+                ariaInvalid={!!fieldErrors.refundAmount}
+                onChange={setRefundTransferAmount} />
               <FieldError msg={fieldErrors.refundAmount} />
             </Field>
             </div>
