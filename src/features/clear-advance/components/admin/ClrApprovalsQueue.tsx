@@ -157,11 +157,17 @@ export function ClrApprovalsQueue({ from }: { from: string | null }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid var(--border-card)" }}>
-                  <td
-                    className="px-3 py-2.5 font-bold whitespace-nowrap"
-                    style={{ color: "var(--text-heading)" }}
-                  >
-                    {r.requestNo ?? "—"}
+                  {/* The number is the second way in, next to "เปิด →". Same
+                      look as the AP-3-Control report's, so an ADC number reads
+                      as a link wherever it appears. */}
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <Link
+                      href={detailHref(r.id)}
+                      className="font-semibold underline-offset-2 hover:underline no-underline"
+                      style={{ color: "var(--nav-active-text)" }}
+                    >
+                      {r.requestNo ?? "—"}
+                    </Link>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     <Badge

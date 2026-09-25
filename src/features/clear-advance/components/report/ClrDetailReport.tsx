@@ -10,10 +10,13 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Loader2, FileX, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FilterDateRangePicker } from "@/features/accounting/components/FilterDateRangePicker";
 import type { ClrDetailRow } from "@/lib/clr/clear-advance-report-service";
+import { totalsLabelIndex } from "@/lib/clr/report-export-order";
+import { clearAdvanceDetailHref } from "@/features/clear-advance/lib/navigation";
 import { makeColumnPrefs } from "@/features/advance/lib/queue-column-prefs";
 import { ColumnToggleMenu, type ColumnToggleOption } from "@/features/travel-booking/components/ColumnToggleMenu";
 import {
@@ -86,8 +89,19 @@ const txt = (v: string | number | null | undefined) =>
  * use, and the choice sticks per browser.
  */
 const SCREEN_COLS: DetailCol[] = [
+  /* The number is the way into the claim's detail and approval timeline. This
+     report is line-level, so several rows share one number — each links to the
+     clearing its own line belongs to (`r.requestId`), never to the one above. */
   { key: "requestNo", label: "เลขที่เคลียร์", align: "left",
-    render: (r) => <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{txt(r.requestNo)}</span> },
+    render: (r) => (
+      <Link
+        href={clearAdvanceDetailHref(r.requestId)}
+        className="font-semibold underline-offset-2 hover:underline no-underline"
+        style={{ color: "var(--nav-active-text)" }}
+      >
+        {txt(r.requestNo)}
+      </Link>
+    ) },
   { key: "requestDate", label: "วันที่", align: "left", render: (r) => fmtDateOnly(r.requestDate) },
   { key: "lineNo", label: "ลำดับ", align: "right", render: (r) => r.lineNo },
   { key: "staffId", label: "รหัสพนักงาน", align: "left", render: (r) => txt(r.staffId) },
@@ -166,6 +180,19 @@ export function ClrDetailReport() {
     [orderedCols, visible],
   );
 
+  /* Which footer cell carries "รวมทั้งหมด".
+     The leftmost visible column that has no total of its own — the same rule
+     the Excel export uses, from the same function, so the screen and the file
+     cannot answer it differently. It was cell 0 while nobody could reorder the
+     columns; the reader has been able to drag them for a while, so cell 0 may
+     be a summed column and the label would have taken the place of that
+     column's total. ACC Portal's copy of this footer had the identical bug and
+     was fixed first. */
+  const totalsLabelAt = useMemo(() => {
+    const summed = new Set(visibleColumns.filter((c) => c.total).map((c) => c.key));
+    return totalsLabelIndex(visibleColumns.map((c) => c.key), (k) => summed.has(k));
+  }, [visibleColumns]);
+
   const patch = useCallback((p: Partial<DetailFilters>) => {
     setFilters((prev) => ({ ...prev, ...p }));
   }, []);
@@ -214,9 +241,22 @@ export function ClrDetailReport() {
   }, [fetchRows]);
 
   const handleExport = useCallback(() => {
-    const qs = queryString();
+    // The file's columns follow the reader's on-screen order (report-export-
+    // order.ts maps these screen keys to the file's own column set). We send
+    // the full `order` — not `visibleColumns` — because a column the reader
+    // hid is still written to the file; only its position, not its presence,
+    // is the reader's to decide here.
+    const qs = buildQuery({
+      brand: filters.brand,
+      requestNo: filters.requestNo,
+      advanceNo: filters.advanceNo,
+      staffId: filters.staffId,
+      from: filters.from,
+      to: filters.to,
+      cols: order.join(","),
+    });
     window.open(`/api/request/clear-advance/report/detail/export?${qs}`, "_blank");
-  }, [queryString]);
+  }, [filters, order]);
 
   const brandOptions = useMemo<SelectOption[]>(
     () => brands.map((b) => ({ value: b.brandCode, label: b.brandName || b.brandCode })),
@@ -384,7 +424,7 @@ export function ClrDetailReport() {
                       >
                         {col.total
                           ? col.total(totals)
-                          : i === 0
+                          : i === totalsLabelAt
                             ? `รวมทั้งหมด (${rows.length} รายการ)`
                             : ""}
                       </td>
