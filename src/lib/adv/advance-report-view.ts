@@ -65,6 +65,9 @@ export const DEFAULT_VISIBLE_KEYS: readonly string[] = [
   "advanceStatus",
   "pendingOn",
   "overallStatus",
+  // Added 2026-09-25 at the user's request. Visible by default, not merely
+  // offered: a reason nobody switches on is a reason nobody reads.
+  "revisionReason",
 ];
 
 /** `payeeType` ("โอนให้") never appears as a table column any more — it left
@@ -110,6 +113,50 @@ export function overallStatusTone(overallStatus: string): StatusTone {
   if (overallStatus === STATUS_APPROVED) return "ok";
   if (overallStatus === STATUS_INPROCESS) return "pending";
   return "bad"; // Rejected / Cancelled / Returned
+}
+
+/**
+ * Why a request was sent back, refused or withdrawn — the column the AP-2
+ * report gained on 2026-09-25.
+ *
+ * **The reason is read from `AccActivityLog`, not from the approval row.**
+ * Resubmitting an advance DELETEs every `AccAdvanceApproval` row for it
+ * (advance-request-service, two sites), so the comment an approver typed when
+ * they sent it back is gone the moment the requester fixes it and sends it
+ * again — which is exactly the request this column answers. Measured on UAT
+ * when this was written: 3 returns, all 3 still in the log, **0** still in the
+ * approval table. The report's existing `actionedRemark` column reads the
+ * approval row, so it shows nothing for every one of them.
+ *
+ * The count is of **returns only**. A rejection and a cancellation each end
+ * the request, so they happen once; a return is the one that can repeat, and
+ * "ส่งกลับ 3 ครั้ง" is the thing a reader is looking for when they ask why a
+ * request took three weeks. It is shown from the second round on — "(1 ครั้ง)"
+ * on every returned row is noise.
+ *
+ * An empty reason is **labelled**, not left blank. Cancellations recorded no
+ * reason at all before this change (4 of 4 on UAT), and a blank cell beside a
+ * cancelled request reads as a bug in the report rather than as an old row.
+ */
+export const REVISION_ACTION_LABEL: Record<string, string> = {
+  returned: "ส่งกลับแก้ไข",
+  rejected: "ไม่อนุมัติ",
+  cancelled: "ยกเลิก",
+};
+
+export function revisionReasonText(
+  r: Pick<Row, "lastRevisionAction" | "lastRevisionReason" | "returnCount">,
+): string {
+  const action = r.lastRevisionAction;
+  if (!action) return "";
+
+  const label = REVISION_ACTION_LABEL[action] ?? action;
+  const reason = (r.lastRevisionReason ?? "").trim();
+  // An em-dash, not a second bracket: with the round count appended below,
+  // "ยกเลิก (ไม่ได้ระบุเหตุผล) (ส่งกลับ 2 ครั้ง)" is two parentheticals colliding.
+  const head = reason === "" ? `${label} — ไม่ได้ระบุเหตุผล` : `${label}: ${reason}`;
+
+  return r.returnCount >= 2 ? `${head} (ส่งกลับ ${r.returnCount} ครั้ง)` : head;
 }
 
 /** Still moving through the approval chain — nobody has finished with it. */

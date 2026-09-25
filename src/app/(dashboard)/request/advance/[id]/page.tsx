@@ -37,6 +37,10 @@ function AdvanceDetailContent() {
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  /* Separate from `rejectReason`, which belongs to the approver panel below:
+     the same person is never both, and sharing one box would carry a
+     half-typed rejection into a cancel dialog. */
+  const [cancelReason, setCancelReason] = useState("");
 
   // Account-step approval inputs.
   const [paymentDates, setPaymentDates] = useState<string[]>([]);
@@ -269,10 +273,26 @@ function AdvanceDetailContent() {
           <p className="text-[13px] m-0" style={{ color: "var(--text-secondary)" }}>
             ยกเลิกคำขอ <b>{request.requestNo ?? ""}</b> ใช่ไหม? ระบบจะแจ้งเตือน <b>Head Accounting</b> และสำเนาถึงคุณทางอีเมล
           </p>
+          {/* Required, like the reason on reject and return. Before this a
+              cancellation recorded no reason anywhere, so the report could say
+              a request was withdrawn but never why. */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px]" style={{ color: "var(--text-secondary)" }}>
+              เหตุผลที่ยกเลิก *
+            </label>
+            <textarea rows={2} value={cancelReason} onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="ระบุเหตุผลที่ยกเลิกคำขอนี้..."
+              className="text-[13px] px-3 py-2 rounded-lg outline-none"
+              style={{ background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border-card)" }} />
+          </div>
           <div className="flex items-center justify-end gap-2">
             <Button variant="secondary" onClick={() => setCancelOpen(false)} disabled={busy}>ไม่ยกเลิก</Button>
-            <Button variant="danger" loading={busy}
-              onClick={async () => { await act("cancel"); setCancelOpen(false); }}>ยืนยันยกเลิก</Button>
+            <Button variant="danger" loading={busy} disabled={!cancelReason.trim()}
+              onClick={async () => {
+                await act("cancel", { comment: cancelReason.trim() });
+                setCancelOpen(false);
+                setCancelReason("");
+              }}>ยืนยันยกเลิก</Button>
           </div>
         </div>
       </Dialog>

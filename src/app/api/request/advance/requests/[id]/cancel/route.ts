@@ -7,7 +7,7 @@ import { isAdminRole } from "@/lib/roles";
 
 /* ── POST /api/request/advance/requests/[id]/cancel ── */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await requireAuth();
@@ -31,8 +31,13 @@ export async function POST(
 
   const actor = await buildAccActor(Number(session.user.id), session.user.email ?? null);
 
+  // A body is required now; `cancelByRequester` rejects an empty reason and the
+  // 400 below carries its message to the dialog.
+  const body = (await req.json().catch(() => ({}))) as { comment?: unknown };
+  const comment = typeof body.comment === "string" ? body.comment : "";
+
   try {
-    await cancelByRequester(id, actor);
+    await cancelByRequester(id, actor, comment);
     const updated = await getRequest(id);
     return NextResponse.json({ ok: true, data: updated });
   } catch (e) {

@@ -37,6 +37,20 @@ export interface AdvanceReportRow {
   overallStatus: string;
   /** BC interface state — null or 'Failed' means it still has to be sent. */
   erpInterfaceStatus: string | null;
+  /**
+   * The last thing anybody did that stopped this request: 'returned',
+   * 'rejected' or 'cancelled'. Null when none of the three ever happened.
+   *
+   * Read from AccActivityLog rather than from the approval row, because a
+   * resubmit DELETEs every AccAdvanceApproval row for the request — see
+   * `revisionReasonText` in advance-report-view.ts for the measurement.
+   */
+  lastRevisionAction: string | null;
+  /** The reason typed for that action. Null for cancellations recorded before
+   *  the cancel dialog asked for one (2026-09-25). */
+  lastRevisionReason: string | null;
+  /** How many times this request has been sent back for fixing. */
+  returnCount: number;
 }
 
 /**
@@ -110,6 +124,39 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
   for (const a of aRes.recordset as Record<string, unknown>[]) {
     const rid = a.RequestId as number;
     (byReq.get(rid) ?? byReq.set(rid, []).get(rid)!).push(a);
+  }
+
+  /*
+   * Why each request was sent back, refused or withdrawn.
+   *
+   * AccActivityLog, not AccAdvanceApproval: resubmitting deletes the approval
+   * rows, so the comment an approver typed when they returned a request is
+   * gone as soon as it is fixed and sent again. The log keeps it.
+   *
+   * Ordered oldest-first so the reduce below can simply overwrite — the last
+   * row it sees for a request is the most recent one. Id breaks a tie, which
+   * is not hypothetical: a request returned twice in the same second sorts
+   * arbitrarily on CreatedAt alone.
+   *
+   * No form parameter, and none is needed: the statement is keyed by RequestId
+   * and those ids come from the head read above, which is bound to AP-2. A log
+   * row cannot be reached here unless its request already passed that filter.
+   */
+  const revision = new Map<number, { action: string; reason: string | null; returns: number }>();
+  const lRes = await pool.request().query(`
+    SELECT l.RequestId, l.Action, l.Note
+    FROM [dbo].[AccActivityLog] l
+    WHERE l.RequestId IN (${ids.join(",")})
+      AND l.Action IN ('returned','rejected','cancelled')
+    ORDER BY l.RequestId, l.CreatedAt, l.Id`);
+  for (const l of lRes.recordset as Record<string, unknown>[]) {
+    const rid = l.RequestId as number;
+    const prev = revision.get(rid);
+    revision.set(rid, {
+      action: l.Action as string,
+      reason: (l.Note as string) ?? null,
+      returns: (prev?.returns ?? 0) + (l.Action === "returned" ? 1 : 0),
+    });
   }
 
   // AP-3 clearing (ADC no. + status) linked back per advance. Wrapped so a
@@ -187,6 +234,9 @@ export async function listAdvanceReport(): Promise<AdvanceReportRow[]> {
       // fields above: such a request reads as อนุมัติแล้ว with nothing pending,
       // which is indistinguishable from one already sent.
       erpInterfaceStatus: (r.ErpInterfaceStatus as string) ?? null,
+      lastRevisionAction: revision.get(id)?.action ?? null,
+      lastRevisionReason: revision.get(id)?.reason ?? null,
+      returnCount: revision.get(id)?.returns ?? 0,
     };
   });
 }
