@@ -48,10 +48,21 @@ const FILES = {
   controlReport: "features/clear-advance/components/report/ClrControlReport.tsx",
 } as const;
 
-/** Comments naming a rule must not satisfy the check for it — this file's own header included. */
+/**
+ * Comments naming a rule must not satisfy the check for it — this file's own header
+ * included.
+ *
+ * Line endings are normalised first because they are not a property of the repo, they
+ * are a property of the machine: Git for Windows ships `core.autocrlf=true` in its
+ * system config, so every blob here is LF but every working file on a Windows checkout
+ * is CRLF. A scan that anchors on a literal `\n` then matches nothing and reports
+ * the code as missing rather than failing to read it — which is exactly how this guard
+ * first broke, on a branch switch rather than on an edit.
+ */
 function code(relative: string): string {
   return fs
     .readFileSync(path.join(SRC, relative), "utf8")
+    .replace(/\r\n/g, "\n")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 }
