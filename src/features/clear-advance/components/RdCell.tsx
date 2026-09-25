@@ -3,7 +3,7 @@ import { formatEnDate, formatEnDateTime } from "@/features/accounting/lib/thai-c
 
 import React, { useState } from "react";
 import type { ClearAdvanceItem } from "@/features/clear-advance/types";
-import { sameRegisteredName } from "@/lib/clr/rd-vat-core";
+import { registerHasAddressRowLacks, sameRegisteredName } from "@/lib/clr/rd-vat-core";
 import { PickerPanel, useAnchoredPopup } from "@/features/clear-advance/components/LinePickers";
 import type { RdAnswer } from "@/features/clear-advance/hooks/useRdVatByTin";
 
@@ -33,13 +33,13 @@ export function RdCell({
   onRecheck,
   onApply,
 }: {
-  item: Pick<ClearAdvanceItem, "taxId" | "payeeName" | "taxBranchCode" | "vatAmount">;
+  item: Pick<ClearAdvanceItem, "taxId" | "payeeName" | "payeeAddress" | "taxBranchCode" | "vatAmount">;
   answer: RdAnswer | undefined;
   /** `refresh` forces a new ask of the registry; without it a stored answer
    *  is returned. The card drew the same distinction — ลองใหม่ after a failed
    *  check read the store, ตรวจใหม่ overwrote it. */
   onRecheck: (refresh: boolean) => void;
-  onApply: (patch: { payeeName: string; taxBranchCode: string | null }) => void;
+  onApply: (patch: { payeeName: string; taxBranchCode: string | null; payeeAddress?: string | null }) => void;
 }) {
   const [open, setOpen] = useState(false);
   /* Portalled and self-closing, like every other picker on this row — an
@@ -59,7 +59,13 @@ export function RdCell({
      on every line and stops being read. */
   const differs =
     !!rdFullName &&
-    (!sameRegisteredName(rdFullName, invoiceName) || (reg?.branchCode ?? "") !== invoiceBranch);
+    (!sameRegisteredName(rdFullName, invoiceName) ||
+      (reg?.branchCode ?? "") !== invoiceBranch ||
+      /* A row with no address at all, against a register that has one. Without
+         this the ใช้ข้อมูลจากสรรพากร button appears only on a name or branch
+         discrepancy, so a hand-typed row whose name happens to match has no way
+         to pull the address the หนังสือรับรอง tab needs. */
+      registerHasAddressRowLacks(item.payeeAddress, reg?.address));
 
   if (!hasTin) {
     return (
@@ -136,7 +142,13 @@ export function RdCell({
                   <button
                     type="button"
                     onClick={() => {
-                      onApply({ payeeName: rdFullName, taxBranchCode: reg.branchCode });
+                      onApply({
+                        payeeName: rdFullName,
+                        taxBranchCode: reg.branchCode,
+                        payeeAddress: registerHasAddressRowLacks(item.payeeAddress, reg.address)
+                          ? reg.address
+                          : null,
+                      });
                       setOpen(false);
                     }}
                     className="text-[11px] px-2 py-0.5 rounded-lg cursor-pointer"

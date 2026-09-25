@@ -24,7 +24,7 @@ import { BranchPicker, cellClass, cellStyle } from "./LinePickers";
 import { OcrReadNotesDialog } from "./OcrReadNotesDialog";
 import { ocrReadNotes, type OcrReadNote, type RdLookup } from "@/lib/clr/ocr-read-notes";
 import { loadTaxVendors } from "@/features/clear-advance/hooks/useTaxVendors";
-import { registrantFullName, sameRegisteredName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
+import { registerHasAddressRowLacks, registrantFullName, sameRegisteredName, tinsNeedingRdCheck, type RdVatRegistrant } from "@/lib/clr/rd-vat-core";
 import { normalizeTaxIdInput, taxIdChecksumOk, taxIdNotice } from "@/lib/clr/seller-tax-id";
 import { wideCardStyle } from "@/lib/clr/wide-card-width";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
@@ -1190,7 +1190,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
             if (!j.ok) return;
             const reg = j.data?.registrant ?? null;
             rd[tin] = reg
-              ? { state: "found", registeredName: registrantFullName(reg) }
+              ? {
+                  state: "found",
+                  registeredName: registrantFullName(reg),
+                  /* Kept for the หนังสือรับรองหัก ณ ที่จ่าย tab, which needs the payee's
+                     address and had nowhere to get one. It was being fetched and
+                     thrown away on this line. */
+                  registeredAddress: reg.address,
+                }
               : { state: "unregistered" };
           } catch { /* the registry not answering is not a finding */ }
         }),
@@ -1236,6 +1243,15 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
         r.payeeNameRead = r.payeeName;
         r.payeeName = known.name;
         r.payeeNameSource = known.source;
+        /* And the address, on the same authority — but only into a row that
+           has none. The name is replaced because a wrong one is the signal of
+           a misread tax id; an address is not that signal, and the reader's
+           and the registry's spellings of a real address differ constantly, so
+           overwriting would be churn. Our own vendor list carries no address,
+           which is why this is inside the `rd` arm rather than beside it. */
+        if (answer?.state === "found" && registerHasAddressRowLacks(r.payeeAddress, answer.registeredAddress)) {
+          r.payeeAddress = (answer.registeredAddress ?? "").trim();
+        }
       }
 
       /* Straight into the table (CR, 2026-09-11). The rows are editable there
@@ -1839,7 +1855,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         item={{ taxId: l.taxId || null, payeeName: l.payeeName || null, taxBranchCode: l.taxBranchCode || null, vatAmount: num(l.vatAmount) }}
                         answer={rdByTin[l.taxId.replace(/\D/g, "")]}
                         onRecheck={(refresh) => void askRd(l.taxId.replace(/\D/g, ""), refresh)}
-                        onApply={(patch) => updateLine(idx, { payeeName: patch.payeeName, taxBranchCode: patch.taxBranchCode ?? "" })}
+                        onApply={(patch) => updateLine(idx, {
+                          payeeName: patch.payeeName,
+                          taxBranchCode: patch.taxBranchCode ?? "",
+                          /* Only when the register offered one and the row had none —
+                             the button must not wipe an address somebody typed. */
+                          ...(patch.payeeAddress ? { payeeAddress: patch.payeeAddress } : {}),
+                        })}
                       />
                     </Td>
                     <Td right>
@@ -1958,7 +1980,13 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       item={{ taxId: l.taxId || null, payeeName: l.payeeName || null, taxBranchCode: l.taxBranchCode || null, vatAmount: num(l.vatAmount) }}
                       answer={rdByTin[l.taxId.replace(/\D/g, "")]}
                       onRecheck={(refresh) => void askRd(l.taxId.replace(/\D/g, ""), refresh)}
-                      onApply={(patch) => updateLine(idx, { payeeName: patch.payeeName, taxBranchCode: patch.taxBranchCode ?? "" })}
+                      onApply={(patch) => updateLine(idx, {
+                          payeeName: patch.payeeName,
+                          taxBranchCode: patch.taxBranchCode ?? "",
+                          /* Only when the register offered one and the row had none —
+                             the button must not wipe an address somebody typed. */
+                          ...(patch.payeeAddress ? { payeeAddress: patch.payeeAddress } : {}),
+                        })}
                     />
                   </div>
                   {taxIdNotice(l.taxId) && (
