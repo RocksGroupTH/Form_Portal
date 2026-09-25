@@ -22,7 +22,8 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { assertMayClearFor } from "@/lib/clr/clear-on-behalf-service";
 import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
 import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
-import { MAIL_FORM_NAMES, esc, submittedLead } from "@/lib/acc/mail-copy";
+import { MAIL_FORM_NAMES, esc, submittedAckLead,
+  submittedLead } from "@/lib/acc/mail-copy";
 import {
   AP3_FORM_CODE,
   AP3_SEQUENCE_PREFIX,
@@ -1094,18 +1095,30 @@ export async function submitRequest(
       `<p>ผู้ขอ: ${esc(updated.requesterFullName ?? "-")} · ค่าใช้จ่ายจริง: ${esc((updated.clear?.actualTotal ?? 0).toLocaleString())} บาท` +
       ` · ต้องโอนคืนบริษัท: ${esc((updated.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
       documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
-    // The manager, plus the on-behalf pair: whoever filed the claim, and — on
-    // this trigger only — the colleague it was filed FOR, who otherwise first
-    // hears of a claim in their name when its outcome arrives.
+    // The manager, plus whoever filed the claim when it was raised on somebody
+    // else's behalf. The requester is NOT on this one: it asks the reader to
+    // approve, and the acknowledgement below is their copy.
     const submitTo = onBehalfNotifyList(
       [managerEmail],
       await resolveOnBehalfPair(updated),
-      { alsoRequester: true },
     );
     for (const toEmail of submitTo) {
       await queueEmail({
         requestId: id, toEmail,
         subject, bodyHtml, triggerType: "Submitted",
+      });
+    }
+
+    /* The requester's own receipt — see AP-2's copy of this. */
+    if (updated.requesterEmail) {
+      await queueEmail({
+        requestId: id,
+        toEmail: updated.requesterEmail,
+        subject: `เคลียร์เงินทดรองจ่าย ${requestNo} — ส่งคำขอเรียบร้อยแล้ว`,
+        bodyHtml:
+          submittedAckLead(MAIL_FORM_NAMES["AP-3"], requestNo, CLR_STEP_LABEL_TH.MANAGER) +
+          documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id)),
+        triggerType: "SubmittedAck",
       });
     }
   }

@@ -632,13 +632,13 @@ export async function submitRequest(
     const approverEmails = firstRole
       ? await listApproverEmailsByRole(firstRole)
       : managerEmail ? [managerEmail] : [];
-    // Filed for somebody else? Tell the filer, and tell the person it was
-    // filed FOR — this is the only trigger that names them, and without it a
-    // request goes out under their name and the first they hear is the outcome.
+    // The approvers' copy asks them to act; it must not go to the person who
+    // filed the request. `alsoRequester` is gone with it — the acknowledgement
+    // below now reaches the requester on every submit, on-behalf or not, and
+    // says the right thing.
     const notifyEmails = onBehalfNotifyList(
       approverEmails,
       await resolveOnBehalfPair(updated),
-      { alsoRequester: true },
     );
     const { subject, html: bodyHtml } = buildAdvanceEmail("Submitted", {
       id,
@@ -652,6 +652,29 @@ export async function submitRequest(
     });
     for (const toEmail of notifyEmails) {
       await queueEmail({ requestId: id, toEmail, subject, bodyHtml, triggerType: "Submitted" });
+    }
+
+    /* The requester's own receipt. Until 2026-09-25 no form sent one — every
+       Submitted mail went to an approver, and the person who filed the request
+       first heard about it when its outcome arrived. Reported by a tester. */
+    if (updated.requesterEmail) {
+      const ack = buildAdvanceEmail("SubmittedAck", {
+        id,
+        requestNo,
+        requesterFullName: updated.requesterFullName,
+        brandCode: updated.brandCode,
+        payeeName: updated.advance?.payeeName,
+        totalAmount: updated.totalAmount,
+        paymentDate: updated.paymentDate,
+        stepLabel: STEP_LABEL[firstStep],
+      });
+      await queueEmail({
+        requestId: id,
+        toEmail: updated.requesterEmail,
+        subject: ack.subject,
+        bodyHtml: ack.html,
+        triggerType: "SubmittedAck",
+      });
     }
   }
   return updated!;
