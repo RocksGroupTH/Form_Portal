@@ -32,13 +32,13 @@ import { PND_LABEL } from "@/lib/clr/wht-pnd-core";
  * The sheet's box lives here and **not** in an inline `style`, on purpose: an
  * inline declaration outranks any stylesheet rule, so a `padding: 0` in the
  * print block below would lose to it and the paper would come out with the
- * 12mm margin twice — plus a blank second page from a 297mm min-height inside a
- * 273mm printable area. Same specificity, later rule, print wins.
+ * 12mm margin twice — plus a blank second page from a 210mm min-height inside a
+ * 186mm printable area. Same specificity, later rule, print wins.
  */
 const PRINT_CSS = `
 #ap31-sheet {
-  width: 210mm;
-  min-height: 297mm;
+  width: 297mm;
+  min-height: 210mm;
   padding: 12mm;
   margin-inline: auto;
   background: #fff;
@@ -69,7 +69,7 @@ const PRINT_CSS = `
   #ap31-sheet tfoot { display: table-row-group; }
   #ap31-sheet tr { break-inside: avoid; }
   #ap31-sheet .ap31-sign { break-inside: avoid; }
-  @page { size: A4 portrait; margin: 12mm; }
+  @page { size: A4 landscape; margin: 12mm; }
 }
 `;
 
@@ -226,45 +226,49 @@ function PrintContent() {
 
         <table className="w-full mb-4" style={{ borderCollapse: "collapse", tableLayout: "fixed" }}>
           {/*
-            Fixed columns, because 186mm is not enough for ten columns to size
-            themselves: left to `auto`, one long รายการ pushes the five money
-            columns until the amounts wrap mid-number. The description is the
-            column that gives — it is the only one that can wrap and still be
-            read.
+            Fixed columns, because the ten cannot size themselves: left to
+            `auto`, one long รายการ pushes the five money columns until the
+            amounts wrap mid-number. The description is the column that gives —
+            it is the only one that can wrap and still be read.
           */}
           {/*
-            Every column is sized by the widest thing it must hold, measured at
-            186mm — the A4 width the @page margins leave — not by an even share.
-            รายการ is the only one meant to wrap; a number or a code broken
-            across two lines on a sheet somebody signs reads as two values.
+            Landscape since 2026-09-25, asked for because several columns were
+            wrapping at once: "ข้อมูลเยอะแล้วตกบรรทัดหลายคอลัม". The printable
+            width goes from 186mm to **273mm** — A4 on its side, less the same
+            12mm margins — and the percentages below are that 87mm shared out.
 
-              #              22.5px — two digits and the heading
-              วันที่          74.5 — "10/08/2026" needs 68.3 with padding
-              เลขที่เอกสาร    107  — fifteen characters, "INV202608120001"
-              รายการ         127  — wraps, four or five words a line
-              สาขา            49  — a five-character BC branch code
-              ก่อน VAT/รวม/สุทธิ  67 each — "999,999.00"
-              VAT / WHT       61 each — "99,999.00"
+            Not shared evenly. Every column except รายการ was already sized to
+            the widest thing it must hold, so extra width there buys nothing;
+            what it buys is headroom past a ceiling, and the ceilings were tight
+            enough that a sixteenth character or a millions-place digit wrapped.
+            So each of them keeps its measured width plus about 15%, and รายการ
+            takes everything left over.
 
-            VAT and WHT are narrower on purpose: they are a fraction of the
-            figure beside them, and 7% of a ฿999,999 line is ฿70,000, which
-            fits. The width they give up is what buys เลขที่เอกสาร its fifteenth
-            character — it was 11% and cut "INV202608120001" in half.
+                            portrait   landscape
+              #                5.9mm      6.8mm
+              วันที่           19.7       22.7
+              เลขที่เอกสาร      28.3       32.5   — past "INV202608120001"
+              รายการ           33.7       97.8   — nearly three times
+              สาขา             13.0       15.0
+              ก่อน VAT/รวม/สุทธิ  17.7       20.3   — past "9,999,999.00"
+              VAT / WHT        16.2       18.6
 
-            Beyond those ceilings a value wraps again, and that is accepted: the
-            next digit or character costs รายการ, which every sheet uses.
+            VAT and WHT stay the narrow pair: they are a fraction of the figure
+            beside them, and 7% of a ฿999,999 line is ฿70,000. รายการ is still
+            the only column meant to wrap — a number or a code broken across two
+            lines on a sheet somebody signs reads as two values.
           */}
           <colgroup>
-            <col style={{ width: "3.2%" }} />
-            <col style={{ width: "10.6%" }} />
-            <col style={{ width: "15.2%" }} />
-            <col style={{ width: "18.1%" }} />
-            <col style={{ width: "7%" }} />
-            <col style={{ width: "9.5%" }} />
-            <col style={{ width: "8.7%" }} />
-            <col style={{ width: "9.5%" }} />
-            <col style={{ width: "8.7%" }} />
-            <col style={{ width: "9.5%" }} />
+            <col style={{ width: "2.51%" }} />
+            <col style={{ width: "8.31%" }} />
+            <col style={{ width: "11.91%" }} />
+            <col style={{ width: "35.83%" }} />
+            <col style={{ width: "5.48%" }} />
+            <col style={{ width: "7.44%" }} />
+            <col style={{ width: "6.82%" }} />
+            <col style={{ width: "7.44%" }} />
+            <col style={{ width: "6.82%" }} />
+            <col style={{ width: "7.44%" }} />
           </colgroup>
           <thead>
             <tr className="text-[11px] font-bold">
@@ -456,17 +460,21 @@ function Td({ children, right, nowrap, colSpan }: {
  * second is optional because the fields are an odd number, and an empty pair
  * keeps the column widths of the rows above it.
  *
- * The widths are measured, not guessed. At 186mm — the A4 width the @page
- * margins leave — the four columns were 23/27/18/32, which gave the first
- * value 165.8px of text while "บริษัท ร็อคส์ พีซี จำกัด (สำนักงานใหญ่)" needs
- * 166.8: the company name wrapped, by one pixel, on every sheet. The last
- * column meanwhile had 101px it never used, the longest thing in it being a
- * department name at 124.
+ * The widths are measured, not guessed. At 186mm — the portrait width the
+ * @page margins used to leave — the four columns were 23/27/18/32, which gave
+ * the first value 165.8px of text while "บริษัท ร็อคส์ พีซี จำกัด
+ * (สำนักงานใหญ่)" needs 166.8: the company name wrapped, by one pixel, on every
+ * sheet. The last column meanwhile had 101px it never used, the longest thing
+ * in it being a department name at 124.
  *
- * So the slack moves to where the long values are. The first value now has
- * 215px — about eleven Thai characters past the longest company name in use —
- * and every label still fits on one line, the longest being
- * "เลขที่เงินทดรองจ่าย (ADV)" at 121.3px against 132.6 available.
+ * So the slack moved to where the long values are. The first value had 215px —
+ * about eleven Thai characters past the longest company name in use — and every
+ * label still fitted on one line, the longest being "เลขที่เงินทดรองจ่าย (ADV)"
+ * at 121.3px against 132.6 available.
+ *
+ * These are percentages, so landscape (2026-09-25) simply gives all four about
+ * 47% more: the ratio was the fix and it still holds, with more room than it
+ * needs. Nothing here is at a ceiling any more.
  */
 function HeaderRow({ label, value, label2, value2, wide }: {
   label: string; value: string; label2?: string; value2?: string;
