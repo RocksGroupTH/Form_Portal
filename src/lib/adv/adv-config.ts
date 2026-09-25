@@ -6,13 +6,28 @@ import { getAccPool, sql } from "@/lib/adv/pool";
  * on the per-form environment routing — nothing here touches other forms.
  */
 
-/** Running number for AP-2 (e.g. ADV26-00001), from the AP-2 pool's AccSequence. */
+/** Anything that can hand out a `Request` — a pool, or a caller's transaction. */
+interface SqlRequestSource {
+  request(): { input: (...args: never[]) => unknown };
+}
+
+/**
+ * Running number for AP-2 (e.g. ADV26-00001), from the AP-2 pool's AccSequence.
+ *
+ * `tx` runs the MERGE inside the caller's transaction instead of on the pool,
+ * the way `@/lib/acc/sequence` already does for the other forms. `submitRequest`
+ * passes it so a number is issued only once the submit is committing: allocated
+ * on the pool, a submit that then threw — an unapproved tier, a missing
+ * approver, a rolled-back write — still consumed one, leaving a gap in a
+ * sequence people read as a ledger.
+ */
 export async function allocateAdvanceRequestNo(
   prefix: string,
   when: Date = new Date(),
+  tx?: SqlRequestSource,
 ): Promise<string> {
   const year = when.getFullYear(); // local; server is Thai time
-  const pool = await getAccPool();
+  const pool = (tx ?? (await getAccPool())) as Awaited<ReturnType<typeof getAccPool>>;
   const result = await pool
     .request()
     .input("prefix", sql.NVarChar, prefix)

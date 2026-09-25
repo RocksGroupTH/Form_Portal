@@ -527,7 +527,6 @@ export async function submitRequest(
   );
   if (errors.length) throw new Error(errors.join("\n"));
 
-  const requestNo = await allocateAdvanceRequestNo(AP2_SEQUENCE_PREFIX);
   const totalAmount = computeBaseAmount(advance) ?? 0;
 
   // The amount matrix decides the approval chain for this request.
@@ -551,7 +550,27 @@ export async function submitRequest(
   const pool = await getAccPool();
   const tx = pool.transaction();
   await tx.begin();
+  let requestNo = "";
   try {
+    // A returned request keeps the number it was already given.
+    //
+    // This is the same row: the status check above accepts `Returned` as well
+    // as `Draft`, so a request sent back for revision is edited and resubmitted
+    // in place. Allocating unconditionally renumbered it every time — request
+    // 901192 went out as ADV26-00051, came back, and was resubmitted as 00056;
+    // 00051 now belongs to nothing. AP-1 shipped and fixed this same bug.
+    //
+    // Read under UPDLOCK so the number cannot be read while another submit of
+    // this row is writing one. And a first submit now allocates HERE rather
+    // than before the validations above: on the pool, every throw between them
+    // and this line — an unmatched amount tier, a step with no active approver,
+    // a missing manager — had already consumed an ADV number and left a gap.
+    const claim = await tx.request().input("id", sql.Int, id).query(
+      `SELECT RequestNo FROM [dbo].[AccRequest] WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id`,
+    );
+    const existingNo = ((claim.recordset?.[0]?.RequestNo as string | null) ?? "").trim();
+    requestNo = existingNo || (await allocateAdvanceRequestNo(AP2_SEQUENCE_PREFIX, new Date(), tx));
+
     await tx.request()
       .input("id", sql.Int, id)
       .input("no", sql.NVarChar, requestNo)
