@@ -28,6 +28,7 @@ import { registerHasAddressRowLacks, registrantFullName, sameRegisteredName, tin
 import { normalizeTaxIdInput, taxIdChecksumOk, taxIdNotice } from "@/lib/clr/seller-tax-id";
 import { wideCardStyle } from "@/lib/clr/wide-card-width";
 import { RdCell } from "@/features/clear-advance/components/RdCell";
+import { AmountInput } from "@/features/clear-advance/components/AmountInput";
 import { useRdVatByTin } from "@/features/clear-advance/hooks/useRdVatByTin";
 import type { ReceiptKind } from "@/lib/clr/ai-receipt-core";
 
@@ -1865,14 +1866,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       />
                     </Td>
                     <Td right>
-                      <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
-                        value={l.amountBeforeVat} disabled={readOnly} placeholder="0.00"
-                        onChange={(e) => updateLine(idx, { amountBeforeVat: e.target.value })} />
+                      <AmountInput className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
+                        value={l.amountBeforeVat} disabled={readOnly}
+                        onChange={(v) => updateLine(idx, { amountBeforeVat: v })} />
                     </Td>
                     <Td right>
-                      <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
-                        value={l.vatAmount} disabled={readOnly} placeholder="0.00"
-                        onChange={(e) => updateLine(idx, { vatAmount: e.target.value })} />
+                      <AmountInput className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
+                        value={l.vatAmount} disabled={readOnly}
+                        onChange={(v) => updateLine(idx, { vatAmount: v })} />
                     </Td>
                     <Td right><ReadCell value={money(c.total)} /></Td>
                     <Td right>
@@ -2009,14 +2010,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ก่อน VAT">
-                    <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
-                      value={l.amountBeforeVat} disabled={readOnly} placeholder="0.00"
-                      onChange={(e) => updateLine(idx, { amountBeforeVat: e.target.value })} />
+                    <AmountInput className={`${fieldClass} text-right`} style={fieldStyle}
+                      value={l.amountBeforeVat} disabled={readOnly}
+                      onChange={(v) => updateLine(idx, { amountBeforeVat: v })} />
                   </MField>
                   <MField label="VAT">
-                    <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
-                      value={l.vatAmount} disabled={readOnly} placeholder="0.00"
-                      onChange={(e) => updateLine(idx, { vatAmount: e.target.value })} />
+                    <AmountInput className={`${fieldClass} text-right`} style={fieldStyle}
+                      value={l.vatAmount} disabled={readOnly}
+                      onChange={(v) => updateLine(idx, { vatAmount: v })} />
                   </MField>
                   <MField label="WHT">
                     <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
