@@ -68,6 +68,16 @@ export type GlSuggestion = {
 export type GlSuggestRun = {
   /** How many lines this ran over — the screen checks it before applying by index. */
   itemCount: number;
+  /** How many lines this run planned to ask about — the screen compares it with
+   *  the count on its button.
+   *
+   *  The one number on this payload the screen cannot work out for itself. Every
+   *  other count describes the answer (`suggestions`, `noAnswer`) or a bucket the
+   *  screen can replan from its own grid (`noDescription`, `noBranch`); this one
+   *  describes the claim AS SAVED, which is the copy only the server saw. It is
+   *  deliberately not `suggestions.length`: a run where the model declines every
+   *  line asked about them all and filled none. */
+  targetCount: number;
   suggestions: GlSuggestion[];
   /** Counts, not indices: the screen computes the same plan from its own grid. */
   noDescription: number;
@@ -138,6 +148,11 @@ export async function runGlSuggestions(
   const plan = planGlSuggestions(lines);
   const out: GlSuggestRun = {
     itemCount: lines.length,
+    // Off `plan.targets` — the very array the loop below iterates — and not a
+    // second `planGlSuggestions(lines)` call. The screen compares this against
+    // the count on its button to notice a disagreement; a recomputation could
+    // only ever agree with itself, and would report a plan this run did not use.
+    targetCount: plan.targets.length,
     suggestions: [],
     noDescription: plan.noDescription.length,
     noBranch: plan.noBranch.length,

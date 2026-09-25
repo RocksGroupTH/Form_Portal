@@ -168,7 +168,67 @@ test("nothing to ask means nothing to load and nothing to report", async () => {
   const items = [line({ glAccountNo: "610322005" }), line({ amountBeforeVat: 0 })];
   assert.deepEqual(branchesToLoad(items), []);
   const out = await runGlSuggestions(items, new Map(), always([]));
-  assert.deepEqual(out, { itemCount: 2, suggestions: [], noDescription: 0, noBranch: 0, noAnswer: 0 });
+  assert.deepEqual(out, {
+    itemCount: 2,
+    targetCount: 0,
+    suggestions: [],
+    noDescription: 0,
+    noBranch: 0,
+    noAnswer: 0,
+  });
+});
+
+/* ───────────── what the run thought it was asking about ───────────── */
+
+/**
+ * `targetCount` exists for one reader: the screen, which planned its own
+ * targets from the grid in the browser and needs to know whether the server —
+ * planning from the claim as saved — saw the same ones. It is the only number
+ * on the payload the screen cannot work out for itself, so it has to describe
+ * the run that actually happened.
+ *
+ * The third case is the whole reason it is a separate field. Every other case
+ * here would pass just as well against `suggestions.length`.
+ */
+
+test("targetCount is the lines the run asked about, not the lines of the claim", async () => {
+  const items = [
+    line({ description: "ค่าแท็กซี่" }),
+    line({ description: "ค่าที่จอดรถ" }),
+    line({ glAccountNo: "610322005", description: "ตั้งบัญชีแล้ว" }),
+    line({ description: "  " }),
+    line({ branchCode: "", description: "ไม่มีสาขา" }),
+  ];
+  const calls: string[] = [];
+  const out = await runGlSuggestions(items, candidates(), always(calls));
+
+  assert.equal(out.targetCount, 2, "targetCount did not match the lines actually asked about");
+  assert.equal(out.targetCount, calls.length);
+  assert.equal(out.itemCount, 5, "targetCount and itemCount are not the same number");
+});
+
+test("targetCount is 0 when there is nothing eligible to ask about", async () => {
+  const items = [
+    line({ glAccountNo: "610322005" }),
+    line({ amountBeforeVat: 0 }),
+    line({ description: "" }),
+    line({ branchCode: "" }),
+  ];
+  const out = await runGlSuggestions(items, candidates(), always([]));
+  assert.equal(out.targetCount, 0);
+});
+
+test("targetCount counts the targets even when the model answers none of them", async () => {
+  // The distinguishing case: three lines asked about, nothing usable back, so
+  // `suggestions.length` is 0 and `targetCount` is still 3. A screen comparing
+  // its button against the answers instead of against the plan would read this
+  // perfectly ordinary run as a disagreement on every line.
+  const items = [line(), line(), line()];
+  const out = await runGlSuggestions(items, candidates(), async () => "นึกไม่ออกครับ");
+
+  assert.equal(out.targetCount, 3, "targetCount followed the suggestions instead of the plan");
+  assert.equal(out.suggestions.length, 0);
+  assert.equal(out.noAnswer, 3);
 });
 
 /* ───────────── what was already decided, before asking ───────────── */
