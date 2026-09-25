@@ -8,6 +8,7 @@ import {
   perFormPredicate,
   perFormOrderBy,
   perFormWriteMatch,
+  pickOwnForForm,
 } from "./per-form-config";
 
 const DEFAULT_ROW = { formCode: null, v: "default" };
@@ -126,4 +127,32 @@ test("a named form is matched by equality, and is never the unbounded form", () 
   // statement sweep the default and every override for the brand together.
   assert.equal(perFormWriteMatch("AP-4").indexOf(" OR "), -1);
   assert.equal(perFormWriteMatch(null).indexOf(" OR "), -1);
+});
+
+// --- pickOwnForForm: the rule for a form that self-owns a setting ---------
+
+test("a self-owning form reads its own row", () => {
+  assert.equal(pickOwnForForm([DEFAULT_ROW, AP1_ROW], "AP-1")?.v, "ap1");
+  assert.equal(pickOwnForForm([AP1_ROW, DEFAULT_ROW], "AP-1")?.v, "ap1");
+});
+
+test("a self-owning form with no row of its own reads null, NOT the default", () => {
+  // This is the whole point, and the opposite of pickForForm. The default row
+  // is AP-1's own configuration -- AP-1 has no FormCode='AP-1' rows anywhere,
+  // its editor writes the NULL row -- so inheriting it is not "falling back to
+  // a shared value", it is silently posting money to another form's setting.
+  assert.equal(pickOwnForForm([DEFAULT_ROW], "AP-2"), null);
+  assert.equal(pickOwnForForm([DEFAULT_ROW, AP1_ROW], "AP-2"), null);
+});
+
+test("another form's row is never returned either", () => {
+  assert.equal(pickOwnForForm([AP1_ROW, AP4_ROW], "AP-2"), null);
+  assert.equal(pickOwnForForm([], "AP-2"), null);
+});
+
+test("the two rules differ on exactly one input: a form with no row", () => {
+  const rows = [DEFAULT_ROW, AP1_ROW];
+  assert.equal(pickForForm(rows, "AP-1")?.v, pickOwnForForm(rows, "AP-1")?.v);
+  assert.equal(pickForForm(rows, "AP-2")?.v, "default");
+  assert.equal(pickOwnForForm(rows, "AP-2"), null);
 });

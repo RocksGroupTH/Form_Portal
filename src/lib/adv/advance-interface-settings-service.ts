@@ -94,18 +94,19 @@ export async function listAdvanceInterfaceConfigView(
   const rows = await Promise.all(
     codes.map(async (code) => {
       const master = brandByCode.get(code);
-      const base = ctx.brandAccounts[code];
       const ifaceRow = ifaceByCode.get(code);
 
       const targetFromAp2 = ifaceRow?.formCode === AP2_FORM_CODE;
       const target = (ifaceRow?.interfaceBrandCode ?? code).toUpperCase();
       const profile = await resolveErpTargetProfile(target, AP2_FORM_CODE);
 
-      // An AP-2 row wins; with none, fall back to what the shared context
-      // resolved so a brand that never overrode anything still reads as before.
-      const bankAccountNo   = ap2BankByCode.get(code) ?? base?.bankAccountNo ?? null;
-      const branchCode      = ap2BranchByCode.get(code) ?? null;
-      const journalBatchName = ap2BatchByCode.get(code) ?? base?.journalBatchName ?? null;
+      // Only an AP-2 row counts. The shared context resolves the NULL-default
+      // row, which is AP-1's own configuration rather than a house default, so
+      // reading it here showed a brand as configured on another form's bank
+      // account and let `ready` below go green on it.
+      const bankAccountNo    = ap2BankByCode.get(code) ?? null;
+      const branchCode       = ap2BranchByCode.get(code) ?? null;
+      const journalBatchName = ap2BatchByCode.get(code) ?? null;
 
       // Dr posts to the matched Vendor (G/L derived from posting group), so the
       // send-ready gate no longer needs a configured G/L account. Branch is also
