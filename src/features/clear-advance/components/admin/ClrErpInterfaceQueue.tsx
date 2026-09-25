@@ -8,6 +8,7 @@ import { Loader2, FileX, Eye, SendHorizonal, X, Search, Download, Building2 } fr
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { PaymentDatePicker } from "@/components/ui/PaymentDatePicker";
+import { fmtDate } from "@/lib/acc/my-request-view";
 import { AP3_FORTNIGHTLY_PAYDAY_HINT } from "@/features/clear-advance/constants";
 import { FilterMonthPicker } from "@/features/accounting/components/FilterMonthPicker";
 import { sentMonthKey } from "@/features/accounting/components/ApprovalQueueFilters";
@@ -928,7 +929,7 @@ export function ClrErpInterfaceQueue() {
                                 hint={AP3_FORTNIGHTLY_PAYDAY_HINT}
                               />
                             ) : (
-                              <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{row.paymentDate ?? "—"}</span>
+                              <span className="text-[12px]" style={{ color: "var(--text-secondary)" }}>{fmtDate(row.paymentDate)}</span>
                             )}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap"><ErpStatusBadge row={row} onShow={setBcRow} /></td>
@@ -1045,7 +1046,7 @@ export function ClrErpInterfaceQueue() {
                           </td>
                           <RefundTransferCell row={row} />
                           <td className="px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
-                            {row.paymentDate ?? "—"}
+                            {fmtDate(row.paymentDate)}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap font-mono font-semibold text-[11px]"
                             style={{ color: row.erpDocumentNo ? "var(--text-secondary)" : "var(--text-faint)" }}>
