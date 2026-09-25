@@ -1,0 +1,165 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  branchesToLoad,
+  runGlSuggestions,
+  type GlCandidate,
+  type PlanLine,
+} from "./gl-suggest-run";
+
+/**
+ * What the account step's suggest button does with the model's answers.
+ *
+ * The route this belongs to cannot be imported here: it pulls `@/lib/db/mssql`
+ * → `@/env`, which validates the environment at module scope and throws under
+ * `tsx` with no env file (same note as
+ * `src/app/api/request/clear-advance/report/export/route.test.ts`). That is why
+ * the deciding half of the route lives in `gl-suggest-run.ts` and is tested
+ * here, with the model call handed in as a plain function — **no test in this
+ * file calls a model.**
+ *
+ * The sequencing case is the one worth keeping: `Promise.all` over the targets
+ * is the edit a later reader is most likely to make, and only the order the
+ * fake records can tell the difference.
+ */
+
+const line = (over: Partial<PlanLine> = {}): PlanLine => ({
+  glAccountNo: "",
+  amountBeforeVat: 100,
+  description: "ค่าแท็กซี่",
+  branchCode: "HQ01",
+  ...over,
+});
+
+const gl = (no: string): GlCandidate => ({ glAccountNo: no, nameTh: `บัญชี ${no}`, nameEn: null });
+
+const HQ: GlCandidate[] = [gl("610322005"), gl("610322006")];
+const PC01: GlCandidate[] = [gl("620100001")];
+
+const candidates = (entries: Record<string, GlCandidate[]> = { HQ01: HQ }) =>
+  new Map<string, readonly GlCandidate[]>(Object.entries(entries));
+
+/** A model that always answers with the first account it is offered. */
+const always: (calls: string[]) => Parameters<typeof runGlSuggestions>[2] =
+  (calls) => async (description, list) => {
+    calls.push(description);
+    return list[0].glAccountNo;
+  };
+
+test("only the targets are asked about", async () => {
+  const calls: string[] = [];
+  const items = [
+    line({ description: "ค่าแท็กซี่" }),
+    line({ glAccountNo: "610322005", description: "ตั้งบัญชีแล้ว" }),
+    line({ description: "  " }),
+    line({ branchCode: "", description: "ไม่มีสาขา" }),
+    line({ amountBeforeVat: 0, description: "ยอดศูนย์" }),
+  ];
+  const out = await runGlSuggestions(items, candidates(), always(calls));
+
+  assert.deepEqual(calls, ["ค่าแท็กซี่"], "a line outside targets was sent to the model");
+  assert.deepEqual(out.suggestions, [{ index: 0, glAccountNo: "610322005", nameTh: "บัญชี 610322005" }]);
+  assert.equal(out.noDescription, 1);
+  assert.equal(out.noBranch, 1);
+  assert.equal(out.noAnswer, 0);
+});
+
+test("itemCount is every line, not just the ones asked about", async () => {
+  const items = [line(), line({ glAccountNo: "610322005" }), line({ amountBeforeVat: 0 })];
+  const out = await runGlSuggestions(items, candidates(), always([]));
+  assert.equal(out.itemCount, 3);
+  assert.equal(out.itemCount, items.length);
+});
+
+test("the calls are sequential — the next one starts after the last has finished", async () => {
+  const events: string[] = [];
+  // Descending delays on purpose: run in parallel, the second call would both
+  // start before the first ended AND finish first. Either shows up in `events`.
+  const delays: Record<string, number> = { one: 20, two: 10, three: 0 };
+  const suggest = async (description: string, list: GlCandidate[]) => {
+    events.push(`start ${description}`);
+    await new Promise((r) => setTimeout(r, delays[description] ?? 0));
+    events.push(`end ${description}`);
+    return list[0].glAccountNo;
+  };
+
+  const items = [line({ description: "one" }), line({ description: "two" }), line({ description: "three" })];
+  await runGlSuggestions(items, candidates(), suggest);
+
+  assert.deepEqual(events, [
+    "start one", "end one",
+    "start two", "end two",
+    "start three", "end three",
+  ], "a call began before the one before it had finished — Promise.all, not a loop");
+});
+
+test("every target is accounted for: answered or counted as no answer", async () => {
+  const answers = ["610322005", "", "นึกไม่ออกครับ", "610322006"];
+  let i = 0;
+  const suggest = async () => answers[i++] ?? "";
+  const items = [line(), line(), line(), line()];
+  const out = await runGlSuggestions(items, candidates(), suggest);
+
+  assert.equal(out.suggestions.length + out.noAnswer, 4, "a target fell out of both buckets");
+  assert.equal(out.suggestions.length, 2);
+  assert.equal(out.noAnswer, 2);
+});
+
+test("an answer that is not on the branch's list is no answer at all", async () => {
+  const out = await runGlSuggestions([line()], candidates(), async () => "620100001");
+  assert.deepEqual(out.suggestions, [], "an account this branch may not charge was offered");
+  assert.equal(out.noAnswer, 1);
+});
+
+test("a model error on one line does not lose the others", async () => {
+  const items = [line({ description: "หนึ่ง" }), line({ description: "สอง" }), line({ description: "สาม" })];
+  const suggest = async (description: string, list: GlCandidate[]) => {
+    if (description === "สอง") throw new Error("429 rate limited");
+    return list[0].glAccountNo;
+  };
+  const out = await runGlSuggestions(items, candidates(), suggest);
+
+  assert.deepEqual(out.suggestions.map((s) => s.index), [0, 2]);
+  assert.equal(out.noAnswer, 1);
+  assert.equal(out.suggestions.length + out.noAnswer, 3);
+});
+
+test("each line is matched against its own branch's accounts", async () => {
+  const items = [line({ branchCode: "HQ01" }), line({ branchCode: "PC01" })];
+  const seen: number[] = [];
+  const suggest = async (_d: string, list: GlCandidate[]) => {
+    seen.push(list.length);
+    return list[0].glAccountNo;
+  };
+  const out = await runGlSuggestions(items, candidates({ HQ01: HQ, PC01: PC01 }), suggest);
+
+  assert.deepEqual(seen, [2, 1], "a line was offered another branch's accounts");
+  assert.deepEqual(out.suggestions.map((s) => s.glAccountNo), ["610322005", "620100001"]);
+});
+
+test("a branch with no accounts is raised, never reported as the model declining", async () => {
+  await assert.rejects(
+    () => runGlSuggestions([line({ branchCode: "PC01" })], candidates({ PC01: [] }), always([])),
+    /PC01/,
+    "an empty candidate list was allowed to look like a normal empty answer",
+  );
+});
+
+test("branchesToLoad asks for each branch once, and only for targets", () => {
+  const items = [
+    line({ branchCode: "HQ01" }),
+    line({ branchCode: "HQ01" }),
+    line({ branchCode: "PC01" }),
+    line({ branchCode: "W001", glAccountNo: "610322005" }),
+    line({ branchCode: "W002", description: "" }),
+    line({ branchCode: "" }),
+  ];
+  assert.deepEqual(branchesToLoad(items), ["HQ01", "PC01"]);
+});
+
+test("nothing to ask means nothing to load and nothing to report", async () => {
+  const items = [line({ glAccountNo: "610322005" }), line({ amountBeforeVat: 0 })];
+  assert.deepEqual(branchesToLoad(items), []);
+  const out = await runGlSuggestions(items, new Map(), always([]));
+  assert.deepEqual(out, { itemCount: 2, suggestions: [], noDescription: 0, noBranch: 0, noAnswer: 0 });
+});
