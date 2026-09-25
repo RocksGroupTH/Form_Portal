@@ -1,5 +1,3 @@
-import { env } from "@/env";
-import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { hrEmployeeTable } from "@/lib/hr/constants";
 import { resolveCurrentManagerForRequest } from "@/lib/acc/current-manager";
@@ -20,10 +18,9 @@ import {
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { assertMayClearFor } from "@/lib/clr/clear-on-behalf-service";
+import { buildClearAdvanceEmail, type ClrEmailData } from "@/lib/clr/clear-advance-email-templates";
 import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
 import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
-import { MAIL_FORM_NAMES, esc, submittedAckLead,
-  submittedLead } from "@/lib/acc/mail-copy";
 import {
   AP3_FORM_CODE,
   AP3_SEQUENCE_PREFIX,
@@ -1089,12 +1086,20 @@ export async function submitRequest(
 
   const updated = await getRequest(id);
   if (updated) {
-    const subject = `เคลียร์เงินทดรองจ่าย ${requestNo} รออนุมัติ (${CLR_STEP_LABEL_TH.MANAGER})`;
-    const bodyHtml =
-      submittedLead(MAIL_FORM_NAMES["AP-3"], requestNo) +
-      `<p>ผู้ขอ: ${esc(updated.requesterFullName ?? "-")} · ค่าใช้จ่ายจริง: ${esc((updated.clear?.actualTotal ?? 0).toLocaleString())} บาท` +
-      ` · ต้องโอนคืนบริษัท: ${esc((updated.clear?.refundToCompany ?? 0).toLocaleString())} บาท</p>` +
-      documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id));
+    /* Same figures as before, now as the detail table every AP-2 mail carries
+       rather than a loose paragraph of them. */
+    const mailData: ClrEmailData = {
+      id,
+      requestNo,
+      requesterFullName: updated.requesterFullName,
+      brandCode: updated.brandCode,
+      advanceRequestNo: updated.clear?.advanceRequestNo ?? null,
+      actualTotal: updated.clear?.actualTotal ?? null,
+      refundToCompany: updated.clear?.refundToCompany ?? null,
+      paymentDate: updated.clear?.paymentDate ?? null,
+      stepLabel: CLR_STEP_LABEL_TH.MANAGER,
+    };
+    const { subject, html: bodyHtml } = buildClearAdvanceEmail("Submitted", mailData);
     // The manager, plus whoever filed the claim when it was raised on somebody
     // else's behalf. The requester is NOT on this one: it asks the reader to
     // approve, and the acknowledgement below is their copy.
@@ -1111,13 +1116,12 @@ export async function submitRequest(
 
     /* The requester's own receipt — see AP-2's copy of this. */
     if (updated.requesterEmail) {
+      const ack = buildClearAdvanceEmail("SubmittedAck", mailData);
       await queueEmail({
         requestId: id,
         toEmail: updated.requesterEmail,
-        subject: `เคลียร์เงินทดรองจ่าย ${requestNo} — ส่งคำขอเรียบร้อยแล้ว`,
-        bodyHtml:
-          submittedAckLead(MAIL_FORM_NAMES["AP-3"], requestNo, CLR_STEP_LABEL_TH.MANAGER) +
-          documentButton(documentUrl(env.NEXT_PUBLIC_APP_URL, "/request/clear-advance", id)),
+        subject: ack.subject,
+        bodyHtml: ack.html,
         triggerType: "SubmittedAck",
       });
     }
