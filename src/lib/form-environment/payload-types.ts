@@ -32,6 +32,18 @@ export interface FormAccess {
    * client can tell "nobody is named" from a payload that failed to load.
    */
   owners: FormOwnerRef[];
+  /**
+   * The form's notice copy, already split into blocks and with
+   * `{เจ้าของฟอร์ม}` expanded against this form's own `owners`.
+   *
+   * Expanded server-side, so the five renderers receive a plain `string[]` and
+   * share no logic beyond it — a client-side expansion would put the token
+   * rule in the bundle five times.
+   *
+   * `[]` means "no notice", which is a fact; a client can tell it from a
+   * payload that never arrived, exactly as `owners` can.
+   */
+  message: string[];
 }
 
 /** One named owner. Mirrors `FormOwner` in `./form-owner`, minus the id. */
