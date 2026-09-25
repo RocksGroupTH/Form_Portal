@@ -595,6 +595,10 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
   async function suggestGl(): Promise<void> {
     if (glSuggesting) return;
     setGlSuggesting(true);
+    /* Read before anything is awaited: this is the number printed on the button
+       the officer just pressed, and `flushSave` below can change what the next
+       render would count. Whatever else happens, they were promised this many. */
+    const offeredTargets = glPlan.targets.length;
     try {
       await flushSave();
       const res = await fetch(`/api/request/clear-advance/requests/${request.id}/suggest-gl`, {
@@ -636,14 +640,57 @@ export function ClearAdvanceDetail({ request, canSeeGlAccount = false, onChanged
          officer looking at a row that is still empty has to know whether the
          model was asked and declined or was never asked at all: one is fixed by
          picking an account, the other by typing what the money went on. Filling
-         nothing is not a failure — it is a sentence about what happened. */
+         nothing is not a failure — it is a sentence about what happened.
+         The same reasoning splits the "filled" bucket in two rather than
+         summing it: a history-filled line was not checked by anything on this
+         run. It is a past decision replayed — the account an officer chose
+         before for this same description at this same kind of location — and
+         the officer reading the toast is the one signing for it today, same as
+         if they had just typed it. That is worth telling apart from an answer
+         the model just worked out, even though both end with an account in
+         the cell. Counted here from `data.suggestions` itself (the one place
+         this run derives the split), never from a pair of totals the route
+         might send instead — those could drift from what was actually
+         applied above. */
+      const filledFromHistory = data.suggestions.filter((s) => s.source === "history").length;
+      const filledByModel = data.suggestions.filter((s) => s.source === "model").length;
       const parts: string[] = [];
-      if (data.suggestions.length > 0) parts.push(`เติมบัญชีให้ ${data.suggestions.length} รายการ`);
+      if (filledFromHistory > 0) parts.push(`เติมบัญชีให้ ${filledFromHistory} รายการจากที่เคยเลือกไว้`);
+      if (filledByModel > 0) parts.push(`เติมบัญชีให้ ${filledByModel} รายการโดย AI`);
       if (data.noDescription > 0)
         parts.push(`${data.noDescription} รายการไม่มีรายละเอียด ให้พิมพ์รายละเอียดหรือเลือกบัญชีเอง`);
       if (data.noBranch > 0)
         parts.push(`${data.noBranch} รายการยังไม่ได้เลือกสาขาที่ใช้จ่าย ให้เลือกสาขาก่อน`);
       if (data.noAnswer > 0) parts.push(`${data.noAnswer} รายการ AI เดาไม่ออก ให้เลือกบัญชีเอง`);
+      /* The two counts of the same thing, finally put next to each other.
+         `offeredTargets` was planned in the browser from `editItems` — the grid
+         as it is being typed into. `data.targetCount` was planned on the server
+         from the claim as it is stored. Two runs of the same rule over two
+         copies of the data, and `flushSave` above is only supposed to make the
+         copies match; nothing until here ever checked that it did.
+
+         The `itemCount` guard a few lines up cannot see this. It compares HOW
+         MANY LINES there are, and that can agree perfectly while the two sides
+         disagree about WHICH of those lines were targets — two lines on screen,
+         two lines saved, one of them a target here and both of them targets
+         there. That is the shape seen in the browser once (button 2, run 1) and
+         never reproduced, and it is why a row was left empty with the toast
+         saying nothing about it.
+
+         Applying anyway is deliberate. `itemCount` matched, so the indices mean
+         what they say and the lines the run did name are right; throwing away
+         good answers over a disagreement about a DIFFERENT line would be the
+         worse trade. The fix here is to the silence, not to the race — the
+         officer is told there is a line the run never considered, and that the
+         cure is to press again now that the save has landed. */
+      if (offeredTargets !== data.targetCount) {
+        const notConsidered = offeredTargets - data.targetCount;
+        parts.push(
+          notConsidered > 0
+            ? `อีก ${notConsidered} รายการที่ปุ่มนับไว้ยังไม่ได้ถูกเดาในรอบนี้ — บันทึกรายการล่าสุดแล้ว กดเดาอีกครั้งได้เลย`
+            : `รอบนี้เดาให้ ${-notConsidered} รายการมากกว่าที่ปุ่มนับไว้ — ถ้ายังมีช่องบัญชีว่าง ให้กดเดาอีกครั้ง`,
+        );
+      }
       toast.success(parts.length > 0 ? parts.join(" · ") : "ไม่มีรายการที่ต้องเติม");
     } catch {
       toast.error("เครือข่ายขัดข้อง — ลองใหม่อีกครั้ง");

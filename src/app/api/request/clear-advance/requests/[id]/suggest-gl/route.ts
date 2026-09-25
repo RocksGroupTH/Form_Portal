@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { getRequest, listGlAccounts } from "@/lib/clr/clear-advance-request-service";
-import { resolveClrCompany } from "@/lib/clr/clear-advance-admin-service";
+import { getRequest, listGlAccounts, listGlHistoryRows } from "@/lib/clr/clear-advance-request-service";
+import { clrCompanyForBrand, resolveClrCompany } from "@/lib/clr/clear-advance-admin-service";
 import { isClrApprover } from "@/lib/clr/clear-advance-approver-service";
 import { isAdminRole } from "@/lib/roles";
+import { loadErpJournalBuildContext } from "@/lib/acc/erp-journal-context";
 import { suggestGlAccountWithAI } from "@/lib/clr/ai-receipt";
 import { branchesToLoad, runGlSuggestions, type GlCandidate } from "@/lib/clr/gl-suggest-run";
-import { isRocksPcBrand, FORCE_GL_NON_ROCKS_PC } from "@/features/clear-advance/constants";
+import { planGlSuggestions } from "@/lib/clr/gl-suggest-targets";
+import { decideRemembered, glHistoryKey, type GlHistoryRow } from "@/lib/clr/gl-history";
+import { AP3_FORM_CODE, isRocksPcBrand, FORCE_GL_NON_ROCKS_PC } from "@/features/clear-advance/constants";
 
 /**
  * POST /api/request/clear-advance/requests/[id]/suggest-gl — no body.
@@ -25,6 +28,15 @@ import { isRocksPcBrand, FORCE_GL_NON_ROCKS_PC } from "@/features/clear-advance/
  * decides which lines those are, and its buckets are reported back as counts so
  * a line that cannot be asked about (no description, no branch) is said out
  * loud rather than quietly left blocked.
+ *
+ * **It asks the model only about what it cannot remember.** A line whose
+ * รายละเอียด has been accounted for before — same company, same HQ-or-branch
+ * classification — is filled from that decision instead: free, instant, and
+ * consistent with the officer who made it in a way a model is not. The history
+ * only answers when it agrees with itself (`decideRemembered`), and what it
+ * offers is re-validated against the same candidate list the model's answer is,
+ * so an account that has since been deactivated is not replayed onto a new
+ * claim. Everything else still goes to the model, in the same order as before.
  *
  * ## This route does not write, and that is where it parts from AP-4's
  *
@@ -114,7 +126,44 @@ export async function POST(
       byBranch.set(branchCode, accounts);
     }
 
-    const data = await runGlSuggestions(items, byBranch, suggestGlAccountWithAI);
+    // What an officer already decided, before spending anything on asking.
+    //
+    // **One query for the claim, not one per line.** Every eligible line's
+    // รายละเอียด goes down in a single read and the rows come back for all of
+    // them together; splitting it per line would be a scan apiece for a button
+    // press, and the lines of one claim repeat themselves constantly.
+    //
+    // The rows arrive carrying the brand of the claim they came from, because
+    // that is what the database holds; `decideRemembered` keys on the COMPANY,
+    // because that is what an account belongs to. `interfaceByClaim` is that
+    // mapping and it lives in the journal context, not in SQL — so it is
+    // applied here, once, over rows that may come from several brands.
+    const plan = planGlSuggestions(items);
+    const historyRows = await listGlHistoryRows(
+      plan.targets.map((i) => items[i]?.description ?? ""),
+    );
+    const { interfaceByClaim } = await loadErpJournalBuildContext(AP3_FORM_CODE);
+    const rows: GlHistoryRow[] = historyRows.map((r) => ({
+      description: r.description,
+      branchCode: r.branchCode,
+      company: clrCompanyForBrand(r.brandCode, interfaceByClaim),
+      glAccountNo: r.glAccountNo,
+    }));
+    const remembered = new Map<number, string>();
+    for (const i of plan.targets) {
+      const it = items[i];
+      // The key is per LINE, not per description: two lines can share a
+      // รายละเอียด and sit at different kinds of branch, and the whole point of
+      // the key is that those are two different questions.
+      const acct = decideRemembered(rows, glHistoryKey(it?.description, company, it?.branchCode));
+      if (acct) remembered.set(i, acct);
+    }
+
+    // `remembered` is a proposal, not a decision. `runGlSuggestions` puts each
+    // one through the same candidate check the model's answer goes through, and
+    // a line whose remembered account no longer survives it falls through to
+    // the model like any other.
+    const data = await runGlSuggestions(items, byBranch, suggestGlAccountWithAI, remembered);
     // An empty `suggestions` is a success: nothing to fill, or nothing the
     // model would commit to. The counts say which.
     return NextResponse.json({ ok: true, data });
