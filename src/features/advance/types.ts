@@ -69,6 +69,8 @@ export interface AdvanceRequest {
   companyName: string | null;
   totalAmount: number | null;
   paymentDate: string | null;
+  /** Who created the draft — the filer, when this was raised on somebody's behalf. */
+  createdBy: number | null;
   submittedBy: number | null;
   submittedAt: string | null;
   createdAt: string;

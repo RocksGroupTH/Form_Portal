@@ -70,6 +70,23 @@ const ALLOWED_ROSTER_MAIL: readonly RegExp[] = [
    * simply do not use a loop, which is the only reason they need no line here.
    */
   /triggerType: "Cancelled"/,
+  /**
+   * AP-2's on-behalf fan-out, added 2026-09-25.
+   *
+   * **This is not a roster.** The rule above bans mailing a whole queue at
+   * every hop; this loop runs over `advanceNotifyList([req.requesterEmail],
+   * pair)`, which is the requester plus — only when the request was filed on
+   * their behalf — the one person who filed it. At most two addresses, both
+   * belonging to this request, on the events the rule already names
+   * (อนุมัติ / ไม่อนุมัติ / ส่งกลับ). It became a loop only because the
+   * recipient stopped being a single address; the send did not multiply.
+   *
+   * Matched on that exact list rather than on the trigger names, so passing a
+   * roster through the same funnel is still caught — which is why AP-2's
+   * cancellation, which really does union the Head Accounting roster, needs
+   * the separate entry above and does not ride on this one.
+   */
+  /advanceNotifyList\(\[req\.requesterEmail\]/,
 ];
 
 test("no approval engine mails a roster in a loop", () => {

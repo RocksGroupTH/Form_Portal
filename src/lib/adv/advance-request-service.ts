@@ -10,6 +10,8 @@ import {
   type RequesterSnapshot,
 } from "@/lib/acc/employee-context";
 import { queueEmail } from "@/lib/acc/email-queue";
+import { advanceNotifyList } from "@/lib/adv/advance-notify-recipients";
+import { resolveOnBehalfPair } from "@/lib/adv/advance-on-behalf";
 import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
 import {
   AP2_FORM_CODE,
@@ -55,6 +57,7 @@ function mapRequestRow(r: Record<string, unknown>): AdvanceRequest {
     companyName: (r.CompanyName as string) ?? null,
     totalAmount: num(r.TotalAmount),
     paymentDate: r.PaymentDate ? toYmd(r.PaymentDate as Date) : null,
+    createdBy: (r.CreatedBy as number) ?? null,
     submittedBy: (r.SubmittedBy as number) ?? null,
     submittedAt: r.SubmittedAt ? (r.SubmittedAt as Date).toISOString() : null,
     createdAt: r.CreatedAt ? (r.CreatedAt as Date).toISOString() : "",
@@ -626,9 +629,17 @@ export async function submitRequest(
   const updated = await getRequest(id);
   if (updated) {
     const firstRole = stepApproverRole(firstStep);
-    const notifyEmails = firstRole
+    const approverEmails = firstRole
       ? await listApproverEmailsByRole(firstRole)
       : managerEmail ? [managerEmail] : [];
+    // Filed for somebody else? Tell the filer, and tell the person it was
+    // filed FOR — this is the only trigger that names them, and without it a
+    // request goes out under their name and the first they hear is the outcome.
+    const notifyEmails = advanceNotifyList(
+      approverEmails,
+      await resolveOnBehalfPair(updated),
+      { alsoRequester: true },
+    );
     const { subject, html: bodyHtml } = buildAdvanceEmail("Submitted", {
       id,
       requestNo,
