@@ -295,6 +295,20 @@ const SCREEN_COLS: ScreenCol[] = [
     align: "left",
     render: (r) => r.pendingOn ?? <span style={{ color: "var(--text-faint)" }}>—</span>,
   },
+  {
+    /*
+      Its own column rather than a second line inside รอที่ใคร: the step and
+      the person answer different questions — "which stage is this at" and
+      "whose desk is it on" — and they are filtered, sorted and exported
+      separately. A blank here beside "บัญชี" is a real answer, not a gap:
+      that step belongs to a roster and no one person holds it.
+    */
+    key: "pendingApproverName",
+    label: "ผู้อนุมัติที่รอ",
+    align: "left",
+    maxW: 160,
+    render: (r) => r.pendingApproverName ?? <span style={{ color: "var(--text-faint)" }}>—</span>,
+  },
   { key: "overallStatus", label: "สถานะ", align: "left", render: (r) => <RequestStatusBadge status={r.overallStatus} /> },
 ];
 

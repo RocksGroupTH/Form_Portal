@@ -35,6 +35,7 @@ function fixtureRow(overrides: Partial<ClrControlRow> & Pick<ClrControlRow, "id"
     accountActionedName: null,
     accountActionedAt: null,
     pendingOn: null,
+    pendingApproverName: null,
     overallStatus: "Submitted",
     ...overrides,
   };
@@ -67,8 +68,8 @@ function adjRow(overrides: Partial<Pick<ClrControlRow, "refundToCompany" | "extr
   return { refundToCompany: 0, extraToEmployee: 0, ...overrides };
 }
 
-test("DEFAULT_VISIBLE_KEYS has exactly the 10 columns the design specifies", () => {
-  assert.equal(DEFAULT_VISIBLE_KEYS.length, 10);
+test("DEFAULT_VISIBLE_KEYS has exactly the 11 columns the design specifies", () => {
+  assert.equal(DEFAULT_VISIBLE_KEYS.length, 11);
   assert.deepEqual(
     [...DEFAULT_VISIBLE_KEYS].sort(),
     [
@@ -81,6 +82,7 @@ test("DEFAULT_VISIBLE_KEYS has exactly the 10 columns the design specifies", () 
       "adjustment",
       "pvDocNo",
       "pendingOn",
+      "pendingApproverName",
       "overallStatus",
     ].sort(),
   );

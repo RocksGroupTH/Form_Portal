@@ -44,6 +44,18 @@ export interface ClrControlRow {
   accountActionedName: string | null;
   accountActionedAt: string | null;
   pendingOn: string | null;         // current step label, or null
+  /**
+   * The name of the person the request is actually waiting on, when there is
+   * one person to name.
+   *
+   * MANAGER steps carry an `AssignedStaffId` — a clearing is routed to the
+   * requester's own manager, so there is exactly one. ACCOUNT steps carry
+   * none: that step is owned by a roster (`AccClearAdvanceApprover`, six
+   * active people when this was written) and any of them may act, so there is
+   * no single name to print and this stays null. `pendingOn` beside it still
+   * says "บัญชี", which is the true answer for that step.
+   */
+  pendingApproverName: string | null;
   overallStatus: string;            // AccRequest.Status
 }
 
@@ -87,7 +99,23 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
               read only the hand-typed PvDocNo beside it — see reportPv. */
            req.ErpDocumentNo,
            ${stepSql("MANAGER", "name")} AS MgrName, ${stepSql("MANAGER", "at")} AS MgrAt,
-           ${stepSql("ACCOUNT", "name")} AS AccName, ${stepSql("ACCOUNT", "at")} AS AccAt
+           ${stepSql("ACCOUNT", "name")} AS AccName, ${stepSql("ACCOUNT", "at")} AS AccAt,
+           /* Who it is waiting on BY NAME — the open step's assignee, resolved
+              through HR the same way the actioned names above are.
+
+              AssignedStaffId is null on an ACCOUNT row, so the join yields
+              null and the column is simply blank for that step. That is the
+              honest answer: the step belongs to a roster, and naming one of
+              its six members would read as "this person is holding it up".
+
+              StepOrder orders the subquery because a request has one open step
+              in practice but nothing in the schema guarantees it, and TOP 1
+              without ORDER BY is a coin toss the day that changes. */
+           (SELECT TOP 1 COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(pe.FirstName,N' ',pe.LastName))),N''), pe.FullName)
+              FROM [dbo].[AccClearAdvanceApproval] p
+              LEFT JOIN ${hrEmployeeTable()} pe ON pe.StaffId = p.AssignedStaffId AND pe.Status = N'Active'
+             WHERE p.RequestId = req.Id AND p.Status = 'Pending'
+             ORDER BY p.StepOrder) AS PendingName
     FROM [dbo].[AccRequest] req
     LEFT JOIN [dbo].[AccClearAdvance] c ON c.RequestId = req.Id
     WHERE ${where}
@@ -123,6 +151,10 @@ export async function listControlRows(f: ClrReportFilters): Promise<ClrControlRo
       accountActionedName: (x.AccName as string) ?? null,
       accountActionedAt: x.AccAt ? (x.AccAt as Date).toISOString() : null,
       pendingOn: step ? (stepLabel[step] ?? step) : null,
+      /* Only while something is actually open. A finished request can still
+         have an old Pending row if a step was abandoned rather than actioned,
+         and "waiting on Somchai" beside สถานะ: อนุมัติแล้ว is worse than blank. */
+      pendingApproverName: step ? ((x.PendingName as string) ?? null) : null,
       overallStatus: x.Status as string,
     };
   });

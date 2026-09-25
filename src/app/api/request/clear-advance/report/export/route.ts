@@ -89,6 +89,7 @@ export async function GET(req: NextRequest) {
       managerApproved:         { header: "ผู้จัดการอนุมัติ",       value: (r) => withDate(r.managerApprovedName, r.managerApprovedAt) },
       accountActioned:         { header: "บัญชี Action",          value: (r) => withDate(r.accountActionedName, r.accountActionedAt) },
       pendingOn:               { header: "รออนุมัติที่",           value: (r) => r.pendingOn ?? "" },
+      pendingApproverName:     { header: "ผู้อนุมัติที่รอ",         value: (r) => r.pendingApproverName ?? "" },
       overallStatus:           { header: "สถานะ",                 value: (r) => STATUS_LABEL_TH[r.overallStatus as keyof typeof STATUS_LABEL_TH] ?? r.overallStatus },
     };
 
