@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import useSWR from "swr";
-import { Users, Landmark, Wallet, SlidersHorizontal, Link2, Building2, ShieldCheck } from "lucide-react";
+import { Users, Landmark, Wallet, SlidersHorizontal, Link2, Building2, ShieldCheck, MessageSquare } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -50,6 +50,12 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   matrix: { label: "ขั้นตามเงิน", icon: <SlidersHorizontal size={15} /> },
   banks: { label: "ธนาคาร (Master)", icon: <Landmark size={15} /> },
+  // Admin-only — `@/lib/adv/settings-tabs` excludes it from
+  // `GRANTABLE_ADV_CLR_TABS` because the grant could not be stored:
+  // `AccAdvClrAccessTab` is shared with ACC Portal, whose own save rewrites
+  // that table through its own key filter, which has never heard of this key.
+  // No content is wired to this tab yet — that lands with `FormMessageSettings`.
+  advanceMessages: { label: "Message", icon: <MessageSquare size={15} /> },
   advanceErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };

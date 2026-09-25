@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Building2, FileCheck, Link2, ListTree, Pin, Settings, ShieldCheck } from "lucide-react";
+import { Building2, FileCheck, Link2, ListTree, MessageSquare, Pin, Settings, ShieldCheck } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -71,6 +71,12 @@ type TabKey = ReimburseSettingsTabKey;
 
 const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   rules: { label: "ระเบียบการจ่าย", icon: <FileCheck size={15} /> },
+  // Admin-only — `@/lib/acc/reimburse/settings-tabs` excludes it from
+  // `GrantableReimburseTabKey` because the grant could not be stored:
+  // `AccReimburseAccessTab` is shared with ACC Portal, whose own save rewrites
+  // that table through its own key filter, which has never heard of this key.
+  // No content is wired to this tab yet — that lands with `FormMessageSettings`.
+  messages: { label: "Message", icon: <MessageSquare size={15} /> },
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   // The KEY stays `buGlMap` while the label changes, so bookmarked `?tab=`

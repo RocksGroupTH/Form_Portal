@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import useSWR from "swr";
-import { Link2, ReceiptText, ListTree, MapPin, Pin, Building2, ShieldCheck } from "lucide-react";
+import { Link2, ReceiptText, ListTree, MapPin, Pin, Building2, ShieldCheck, MessageSquare } from "lucide-react";
 // Building2 no longer labels a tab of this strip — แบรนด์ที่เบิกได้ moved to
 // AP-2's page — but it still marks the line below that says where it went.
 import { backTo } from "@/lib/request-hub-nav";
@@ -56,6 +56,12 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   glAccounts: { label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
   buGlMap: { label: "Fix G/L by BU or Branch", icon: <Pin size={15} /> },
   locations: { label: "Location / BU", icon: <MapPin size={15} /> },
+  // Admin-only — `@/lib/adv/settings-tabs` excludes it from
+  // `GRANTABLE_ADV_CLR_TABS` because the grant could not be stored:
+  // `AccAdvClrAccessTab` is shared with ACC Portal, whose own save rewrites
+  // that table through its own key filter, which has never heard of this key.
+  // No content is wired to this tab yet — that lands with `FormMessageSettings`.
+  clearMessages: { label: "Message", icon: <MessageSquare size={15} /> },
   clearErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };

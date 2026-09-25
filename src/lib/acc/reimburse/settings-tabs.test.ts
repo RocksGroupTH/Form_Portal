@@ -16,10 +16,11 @@ import {
 
 /* ── what the page shows ── */
 
-test("the strip runs brands, rules, glAccounts, buGlMap, erpInterface, access", () => {
+test("the strip runs brands, rules, messages, glAccounts, buGlMap, erpInterface, access", () => {
   assert.deepEqual(REIMBURSE_SETTINGS_TAB_ORDER, [
     "brands",
     "rules",
+    "messages",
     "glAccounts",
     "buGlMap",
     "erpInterface",
@@ -97,9 +98,13 @@ test("each tab opened on 2026-09-22 states its reach on the grid", () => {
 
 /* ── what may be ticked ── */
 
-test("every tab but access is grantable, in page order", () => {
+test("every tab but access and messages is grantable, in page order", () => {
   // Page order, not declaration order: the checkbox columns follow the strip,
-  // so reordering the strip reorders the columns with it.
+  // so reordering the strip reorders the columns with it. `messages` sits
+  // between `rules` and `glAccounts` on the strip but is absent here — it is
+  // admin-only because the grant could not be stored (ACC Portal rewrites
+  // AccApproverSettingsTab through its own key filter), not because it is
+  // dangerous.
   assert.deepEqual(GRANTABLE_REIMBURSE_TABS.map((t) => t.key), [
     "brands",
     "rules",
@@ -116,7 +121,7 @@ test("every tab but access is grantable, in page order", () => {
   ]);
   assert.deepEqual(
     GRANTABLE_REIMBURSE_TABS.map((t) => t.key),
-    REIMBURSE_SETTINGS_TAB_ORDER.filter((k) => k !== "access"),
+    REIMBURSE_SETTINGS_TAB_ORDER.filter((k) => k !== "access" && k !== "messages"),
   );
 });
 
@@ -142,6 +147,25 @@ test("access is never grantable", () => {
   assert.equal(isGrantableReimburseTabKey("brands"), true);
   assert.equal(isGrantableReimburseTabKey("nonsense"), false);
   assert.equal(isGrantableReimburseTabKey(""), false);
+});
+
+test("messages is never grantable, for a different reason from access", () => {
+  // Not because a message is dangerous — it grants nothing, decides no
+  // approval, no posting target and no read. It is admin-only because the
+  // grant could not be STORED: `AccReimburseAccessTab` is a table shared in
+  // shape with `AccApproverSettingsTab`, and ACC Portal's own save rewrites
+  // that table through its own key filter, which has never heard of
+  // `messages`. A grant would silently vanish the next time somebody edited
+  // that person's tabs over there — the exact defect 8a3ab358 fixed for
+  // AP-17's menu ticks.
+  assert.equal(isGrantableReimburseTabKey("messages"), false);
+  assert.equal(decideReimburseTabAccess(false, ["messages"], "messages"), false);
+  assert.ok(
+    GRANTABLE_REIMBURSE_TABS.map((t) => t.key as string).indexOf("messages") === -1,
+    "messages must not appear in the grantable list",
+  );
+  // An admin still opens it — the tab exists, it is just never handed out.
+  assert.equal(decideReimburseTabAccess(true, [], "messages"), true);
 });
 
 test("filtering keeps known keys, trimmed, de-duplicated, in the caller's order", () => {

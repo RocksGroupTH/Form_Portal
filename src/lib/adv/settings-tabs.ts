@@ -100,6 +100,7 @@ export const ADVANCE_SETTINGS_TAB_ORDER = [
   "brands",
   "matrix",
   "banks",
+  "advanceMessages",
   // `advanceErpInterface`, not `erpInterface` — see the module docblock. One
   // key on both strips was safe only while it was ungrantable; a tickable one
   // would be owned by both forms and break the bounded save's disjointness.
@@ -126,6 +127,7 @@ export const CLEAR_SETTINGS_TAB_ORDER = [
   "glAccounts",
   "buGlMap",
   "locations",
+  "clearMessages",
   // `clearErpInterface` — AP-2's twin above says why. The page still answers
   // `?tab=erpInterface`.
   "clearErpInterface",
@@ -212,6 +214,11 @@ export const ALL_ADV_CLR_TABS: readonly {
   { key: "matrix", label: "ขั้นตามเงิน" },
   { key: "banks", label: "ธนาคาร Master" },
   {
+    key: "advanceMessages",
+    label: "Message",
+    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
+  },
+  {
     key: "advanceErpInterface",
     label: "Interface ERP",
     note: "ตั้งค่าบัญชีธนาคาร Journal Batch และ Branch Code ได้ทุกแบรนด์ ไม่จำกัดเฉพาะแบรนด์ที่ตนอนุมัติ",
@@ -227,6 +234,11 @@ export const ALL_ADV_CLR_TABS: readonly {
     note: "เป็นกฎชุดเดียวกับ AP-4 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
   },
   { key: "locations", label: "Location / BU" },
+  {
+    key: "clearMessages",
+    label: "Message",
+    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
+  },
   {
     key: "clearErpInterface",
     label: "Interface ERP",
