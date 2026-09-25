@@ -997,9 +997,25 @@ export async function submitRequest(
       throw new Error(`เงินทดรองจ่ายนี้ถูกเคลียร์ไปแล้วในคำขอ ${other ?? "อื่น"}`);
     }
 
-    // Allocate the running no. only once the claim is secured — a rejected
-    // revalidation above must not burn an ADC number (avoid sequence gaps).
-    requestNo = await allocateRequestNo(AP3_SEQUENCE_PREFIX);
+    // A returned claim keeps the number it was already given.
+    //
+    // This is the same row: the status check above accepts `Returned` as well
+    // as `Draft`, so a claim sent back for revision is edited and resubmitted
+    // in place. Allocating unconditionally renumbered it every time — request
+    // 901142 went out as ADC26-09033, came back, and was resubmitted as 09034,
+    // which is the number it then posted to BC under; 09033 belongs to nothing.
+    // AP-1 shipped and fixed this same bug, and its comment says so.
+    //
+    // Read under UPDLOCK so the number cannot be read while another submit of
+    // this row is writing one. A first submit still allocates only once the
+    // claim above is secured, and now inside this transaction: on the pool, a
+    // rollback below still consumed an ADC number and left a gap in a sequence
+    // people read as a ledger.
+    const claim = await tx.request().input("id", sql.Int, id).query(
+      `SELECT RequestNo FROM [dbo].[AccRequest] WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id`,
+    );
+    const existingNo = ((claim.recordset?.[0]?.RequestNo as string | null) ?? "").trim();
+    requestNo = existingNo || (await allocateRequestNo(AP3_SEQUENCE_PREFIX, new Date(), tx));
 
     await tx.request()
       .input("id", sql.Int, id)
