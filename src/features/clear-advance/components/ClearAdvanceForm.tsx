@@ -1877,9 +1877,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                     </Td>
                     <Td right><ReadCell value={money(c.total)} /></Td>
                     <Td right>
-                      <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
-                        value={l.whtAmount} disabled={readOnly} placeholder="0.00"
-                        onChange={(e) => updateLine(idx, { whtAmount: e.target.value })} />
+                      <AmountInput className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
+                        value={l.whtAmount} disabled={readOnly}
+                        onChange={(v) => updateLine(idx, { whtAmount: v })} />
                     </Td>
                     <Td right><ReadCell value={money(c.net)} strong /></Td>
                     <Td right><ReadCell value={money(c.balance)} tone={c.balance < 0 ? "danger" : undefined} /></Td>
@@ -2020,9 +2020,9 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                       onChange={(v) => updateLine(idx, { vatAmount: v })} />
                   </MField>
                   <MField label="WHT">
-                    <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
-                      value={l.whtAmount} disabled={readOnly} placeholder="0.00"
-                      onChange={(e) => updateLine(idx, { whtAmount: e.target.value })} />
+                    <AmountInput className={`${fieldClass} text-right`} style={fieldStyle}
+                      value={l.whtAmount} disabled={readOnly}
+                      onChange={(v) => updateLine(idx, { whtAmount: v })} />
                   </MField>
                 </div>
                 <div className="flex items-center justify-between gap-2 text-[12px] pt-2"
@@ -2144,14 +2144,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                         onChange={(e) => { autoGrow(e.target); updateWht(idx, { payeeAddress: e.target.value }); }} />
                     </Td>
                     <Td right>
-                      <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
-                        value={w.amount} disabled={readOnly} placeholder="0.00"
-                        onChange={(e) => updateWht(idx, { amount: e.target.value })} />
+                      <AmountInput className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
+                        value={w.amount} disabled={readOnly}
+                        onChange={(v) => updateWht(idx, { amount: v })} />
                     </Td>
                     <Td right>
-                      <input type="number" min="0" step="0.01" className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
-                        value={w.whtAmount} disabled={readOnly} placeholder="0.00"
-                        onChange={(e) => updateWht(idx, { whtAmount: e.target.value })} />
+                      <AmountInput className={`${cellClass} text-right`} style={{ ...cellStyle, width: "100%" }}
+                        value={w.whtAmount} disabled={readOnly}
+                        onChange={(v) => updateWht(idx, { whtAmount: v })} />
                     </Td>
                     {!readOnly && (
                       <Td>
@@ -2230,14 +2230,14 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
                 </MField>
                 <div className="grid grid-cols-2 gap-2">
                   <MField label="ค่าใช้จ่าย">
-                    <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
-                      value={w.amount} disabled={readOnly} placeholder="0.00"
-                      onChange={(e) => updateWht(idx, { amount: e.target.value })} />
+                    <AmountInput className={`${fieldClass} text-right`} style={fieldStyle}
+                      value={w.amount} disabled={readOnly}
+                      onChange={(v) => updateWht(idx, { amount: v })} />
                   </MField>
                   <MField label="WHT">
-                    <input type="number" min="0" step="0.01" inputMode="decimal" className={`${fieldClass} text-right`} style={fieldStyle}
-                      value={w.whtAmount} disabled={readOnly} placeholder="0.00"
-                      onChange={(e) => updateWht(idx, { whtAmount: e.target.value })} />
+                    <AmountInput className={`${fieldClass} text-right`} style={fieldStyle}
+                      value={w.whtAmount} disabled={readOnly}
+                      onChange={(v) => updateWht(idx, { whtAmount: v })} />
                   </MField>
                 </div>
               </div>
