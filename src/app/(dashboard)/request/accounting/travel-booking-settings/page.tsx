@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2, Wallet } from "lucide-react";
+import { Settings, Compass, Hotel, Car, Plane, ShieldCheck, Building2, Wallet, MessageSquare } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { backTo } from "@/lib/request-hub-nav";
 import {
@@ -17,6 +17,7 @@ import { TravelOptionSettings, type TravelOptionKind } from "@/features/travel-b
 import { BookingApproverSettings } from "@/features/travel-booking/components/settings/BookingApproverSettings";
 import { PerDiemCountrySettings } from "@/features/travel-booking/components/settings/PerDiemCountrySettings";
 import { BrandSettings } from "@/features/accounting/components/settings/BrandSettings";
+import { FormMessageSettings } from "@/components/settings/FormMessageSettings";
 
 /**
  * Four of the five tabs are option tables driven by `TravelOptionSettings`.
@@ -32,7 +33,7 @@ import { BrandSettings } from "@/features/accounting/components/settings/BrandSe
  * `brands` is neither a `TravelOptionKind` (it has no `[kind]` route) nor
  * `access`; it is AP-1's brand panel pointed at AP-17's rows.
  */
-type TabKey = TravelOptionKind | "brands" | "access" | "per-diem";
+type TabKey = TravelOptionKind | "brands" | "access" | "per-diem" | "messages";
 
 /**
  * Icons are the only thing this page still owns about a tab. The **labels come
@@ -48,6 +49,7 @@ const TAB_ICONS: Record<TabKey, React.ReactNode> = {
   "rent-vehicles": <Car size={15} />,
   access: <ShieldCheck size={15} />,
   "per-diem": <Wallet size={15} />,
+  messages: <MessageSquare size={15} />,
 };
 
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
@@ -56,12 +58,16 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] =
     label: t.label,
     icon: TAB_ICONS[t.key],
   }))
-    // Neither of these comes from GRANTABLE_BOOKING_TABS, and neither may:
-    // สิทธิ์เข้าถึง hands out the grants, and จังหวัด/เมือง writes rows the
-    // Rocks Fast sibling reads. `visibleTabs` filters a non-admin's tabs through
-    // `isGrantableBookingTabKey`, so being absent from that list is what hides
-    // them — no extra code.
+    // None of these three comes from GRANTABLE_BOOKING_TABS, and none may:
+    // สิทธิ์เข้าถึง hands out the grants; จังหวัด/เมือง writes rows the Rocks
+    // Fast sibling reads; and `messages`' grant could not be stored — AP-1's
+    // `settings-tabs.ts` gives the reason and AP-17 shares it verbatim, since
+    // ACC Portal rewrites `AccBookingApproverTab` through its own key filter,
+    // which has never heard of this key. `visibleTabs` filters a non-admin's
+    // tabs through `isGrantableBookingTabKey`, so being absent from that list
+    // is what hides them — no extra code.
     .concat([
+      { key: "messages", label: "Message", icon: TAB_ICONS.messages },
       { key: "per-diem", label: "เบี้ยเลี้ยงต่างประเทศ", icon: TAB_ICONS["per-diem"] },
       { key: "access", label: "สิทธิ์เข้าถึง", icon: TAB_ICONS.access },
     ]);
@@ -179,12 +185,14 @@ export default function TravelBookingSettingsPage() {
   const effectiveTab = visibleTabs.some((t) => t.key === activeTab)
     ? activeTab
     : visibleTabs[0].key;
-  // `brands` and `access` both render their own component rather than the
-  // generic option list, so neither has a TAB_PANELS entry.
+  // `brands`, `access`, `per-diem` and `messages` all render their own
+  // component rather than the generic option list, so none has a TAB_PANELS
+  // entry.
   const panel =
     effectiveTab === "access" ||
     effectiveTab === "brands" ||
-    effectiveTab === "per-diem"
+    effectiveTab === "per-diem" ||
+    effectiveTab === "messages"
       ? null
       : TAB_PANELS[effectiveTab];
   const panelLabel = visibleTabs.filter((t) => t.key === effectiveTab)[0]?.label ?? "";
@@ -248,6 +256,11 @@ export default function TravelBookingSettingsPage() {
             // ternary wins.
             <PerDiemCountrySettings />
 
+          ) : effectiveTab === "messages" ? (
+            <FormMessageSettings
+              endpoint="/api/request/travel-booking/settings/messages"
+              formCode="AP-17"
+            />
           ) : effectiveTab === "access" || panel === null ? (
             <BookingApproverSettings />
           ) : (

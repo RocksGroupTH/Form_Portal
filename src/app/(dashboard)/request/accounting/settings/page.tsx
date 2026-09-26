@@ -12,6 +12,7 @@ import {
   Link2,
   CalendarDays,
   ShieldCheck,
+  MessageSquare,
 } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { isGrantableSettingsTabKey } from "@/lib/acc/settings-tabs";
@@ -24,6 +25,7 @@ import { VehicleSettings } from "@/features/accounting/components/settings/Vehic
 import { BrandSettings } from "@/features/accounting/components/settings/BrandSettings";
 import { DepartmentMappingSettings } from "@/features/accounting/components/settings/DepartmentMappingSettings";
 import { BrandErpInterfaceSettings } from "@/features/accounting/components/settings/BrandErpInterfaceSettings";
+import { FormMessageSettings } from "@/components/settings/FormMessageSettings";
 
 type TabKey =
   | "sameDayBrand"
@@ -31,7 +33,8 @@ type TabKey =
   | "vehicles"
   | "brands"
   | "departments"
-  | "erpInterface";
+  | "erpInterface"
+  | "messages";
 
 /**
  * ACC Portal's order and labels — that app shares this physical database, so
@@ -42,6 +45,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "brands", label: "แบรนด์ที่เบิก", icon: <Building2 size={15} /> },
   { key: "sameDayBrand", label: "เบิกวันซ้ำข้ามแบรนด์", icon: <CalendarDays size={15} /> },
   { key: "vehicles", label: "พาหนะ & เรท", icon: <Car size={15} /> },
+  { key: "messages", label: "Message", icon: <MessageSquare size={15} /> },
   { key: "departments", label: "แผนก (HR ↔ ERP)", icon: <GitBranch size={15} /> },
   { key: "erpInterface", label: "Interface ERP", icon: <Link2 size={15} /> },
   { key: "approvers", label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
@@ -213,6 +217,9 @@ function AccountingSettingsContent() {
           )}
           {effectiveTab === "sameDayBrand" && <SameDayBrandSettings isAdmin={isAdmin} />}
           {effectiveTab === "vehicles" && <VehicleSettings />}
+          {effectiveTab === "messages" && (
+            <FormMessageSettings endpoint="/api/request/accounting/settings/messages" formCode="AP-1" />
+          )}
           {effectiveTab === "departments" && <DepartmentMappingSettings isAdmin={isAdmin} />}
           {effectiveTab === "erpInterface" && <BrandErpInterfaceSettings isAdmin={isAdmin} />}
           {effectiveTab === "approvers" && <ApproverSettings />}

@@ -14,6 +14,7 @@ import { ReimburseAccessSettings } from "@/features/reimburse/components/setting
 import { ReimburseErpInterfaceSettings } from "@/features/reimburse/components/settings/ReimburseErpInterfaceSettings";
 import { BuGlAccountSettings } from "@/features/accounting/components/settings/BuGlAccountSettings";
 import { ClrGlAccountSettings } from "@/features/clear-advance/components/admin/ClrGlAccountSettings";
+import { FormMessageSettings } from "@/components/settings/FormMessageSettings";
 import { useReimburseAccess } from "@/features/reimburse/hooks/useReimburseAccess";
 import {
   REIMBURSE_SETTINGS_TAB_ORDER,
@@ -75,7 +76,6 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   // `GrantableReimburseTabKey` because the grant could not be stored:
   // `AccReimburseAccessTab` is shared with ACC Portal, whose own save rewrites
   // that table through its own key filter, which has never heard of this key.
-  // No content is wired to this tab yet — that lands with `FormMessageSettings`.
   messages: { label: "Message", icon: <MessageSquare size={15} /> },
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
@@ -243,6 +243,9 @@ function ReimburseSettingsContent() {
 
         <div className="p-5">
           {shownTab === "rules" && <ReimburseRuleSettings />}
+          {shownTab === "messages" && (
+            <FormMessageSettings endpoint="/api/request/reimburse/settings/messages" formCode="AP-4" />
+          )}
           {shownTab === "brands" && <ReimburseBrandSettings />}
           {shownTab === "erpInterface" && <ReimburseErpInterfaceSettings />}
           {/* One screen, shared with AP-3, over one set of rows — and one path

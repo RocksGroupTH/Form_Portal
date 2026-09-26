@@ -14,6 +14,7 @@ import { AdvanceBankMasterSettings } from "@/features/advance/components/setting
 import { AdvanceErpInterfaceSettings } from "@/features/advance/components/settings/AdvanceErpInterfaceSettings";
 import { AdvClrBrandSettings } from "@/features/advance/components/settings/AdvClrBrandSettings";
 import { AdvClrAccessSettings } from "@/features/advance/components/settings/AdvClrAccessSettings";
+import { FormMessageSettings } from "@/components/settings/FormMessageSettings";
 import { ADVANCE_SETTINGS_TAB_ORDER } from "@/lib/adv/settings-tabs";
 
 type TabKey = (typeof ADVANCE_SETTINGS_TAB_ORDER)[number];
@@ -54,7 +55,6 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   // `GRANTABLE_ADV_CLR_TABS` because the grant could not be stored:
   // `AccAdvClrAccessTab` is shared with ACC Portal, whose own save rewrites
   // that table through its own key filter, which has never heard of this key.
-  // No content is wired to this tab yet — that lands with `FormMessageSettings`.
   advanceMessages: { label: "Message", icon: <MessageSquare size={15} /> },
   advanceErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
@@ -229,6 +229,9 @@ function AdvanceSettingsContent() {
           {openTab === "access" && <AdvClrAccessSettings form="AP-2" />}
           {openTab === "matrix" && <AdvanceApprovalMatrixSettings />}
           {openTab === "banks" && <AdvanceBankMasterSettings />}
+          {openTab === "advanceMessages" && (
+            <FormMessageSettings endpoint="/api/request/advance/settings/messages" formCode="AP-2" />
+          )}
           {openTab === "advanceErpInterface" && <AdvanceErpInterfaceSettings />}
         </div>
       </div>
