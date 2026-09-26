@@ -91,18 +91,22 @@ const ROUTES = [
   [`${CLR_ROOT}/erp-sync/route.ts`, "requireRole", null],
   [`${CLR_ROOT}/locations/sync/route.ts`, "requireRole", null],
 
-  /* ── admin-only: the grant cannot be stored ──
+  /* ── gated on a COLUMN, not a TabKey and not admin-only ──
    *
-   * A message grants nothing, but `AccAdvClrAccessTab` is shared with ACC
-   * Portal, whose own writer deletes an approver's whole tab set and
-   * re-inserts only the keys ITS list knows (spec §8). A `messages` grant made
-   * here would vanish on that app's next save with no error either side — the
-   * exact defect the 2026-09-24 work fixed for AP-17's menu ticks. AP-2 and
-   * AP-3 each get their own route rather than sharing one, for the same reason
-   * they have two Interface ERP keys rather than one.
+   * A message grants nothing, but the grant cannot be an `AccAdvClrAccessTab`
+   * row: that table is shared with ACC Portal, whose own writer deletes an
+   * approver's whole tab set and re-inserts only the keys ITS list knows (spec
+   * §8). A `messages` grant stored there would vanish on that app's next save
+   * with no error either side — the exact defect the 2026-09-24 work fixed for
+   * AP-17's menu ticks. Migration 166 gives each form its own column instead —
+   * `AccAdvClrAccess.CanAdvanceMessage` / `.CanClearMessage` — which that
+   * saver's explicit column list never names, so this is no longer admin-only
+   * either. AP-2 and AP-3 each get their own route and their own gate function
+   * rather than sharing one, for the same reason they have two Interface ERP
+   * keys rather than one — see `@/lib/adv/access-message-access`.
    */
-  [`${ADV_ROOT}/messages/route.ts`, "requireRole", null],
-  [`${CLR_ROOT}/messages/route.ts`, "requireRole", null],
+  [`${ADV_ROOT}/messages/route.ts`, "requireAdvanceMessageAccess", null],
+  [`${CLR_ROOT}/messages/route.ts`, "requireClearMessageAccess", null],
 
   /* ── admin-only, and NOT by design: the two `[id]` DELETEs ──
    *

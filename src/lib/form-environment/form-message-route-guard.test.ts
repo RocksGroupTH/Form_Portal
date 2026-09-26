@@ -11,15 +11,49 @@ import { readFileSync } from "node:fs";
  * route `"AP-1"` compiles and edits the wrong form's copy; and every tab key
  * is a string on three of the five guards, so passing AP-2's key on AP-3's
  * route compiles and gates the wrong grant.
+ *
+ * **The gate itself changed on migration 166.** Until then all five were
+ * `requireRole(["IT Admin", "System Admin"])` — admin-only, because the
+ * ordinary settings-tab grant is a `TabKey` row in a table ACC Portal's own
+ * saver rewrites wholesale, and a `messages` row stored there would vanish on
+ * that app's next unrelated settings-tab save. Migration 166 gives each form's
+ * roster row a `CanMessage` (or `CanAdvanceMessage` / `CanClearMessage`)
+ * COLUMN instead, which that saver's explicit column list never names, so it
+ * is now admin-OR-grant-holder — resolved by its own `require*MessageAccess()`
+ * function (`@/lib/acc/message-grant` holds the shared decision). Each route's
+ * `gate` below is that literal call. **This is the one assertion in the file
+ * that flipped, and it must not be read as the file having gone soft**: the
+ * "is NOT tab-gated" test right below is the one that did not move, and still
+ * must not, since the reason a `TabKey` grant is wrong here is unchanged —
+ * only WHICH admin-only-looking gate is expected changed, from a shared
+ * literal to a per-form column-backed one.
  */
-const GATE = 'requireRole(["IT Admin", "System Admin"])';
-
 const ROUTES = [
-  { path: "src/app/api/request/accounting/settings/messages/route.ts", code: "AP-1" },
-  { path: "src/app/api/request/travel-booking/settings/messages/route.ts", code: "AP-17" },
-  { path: "src/app/api/request/reimburse/settings/messages/route.ts", code: "AP-4" },
-  { path: "src/app/api/request/advance/settings/messages/route.ts", code: "AP-2" },
-  { path: "src/app/api/request/clear-advance/settings/messages/route.ts", code: "AP-3" },
+  {
+    path: "src/app/api/request/accounting/settings/messages/route.ts",
+    code: "AP-1",
+    gate: "requireAccMessageAccess()",
+  },
+  {
+    path: "src/app/api/request/travel-booking/settings/messages/route.ts",
+    code: "AP-17",
+    gate: "requireBookingMessageAccess()",
+  },
+  {
+    path: "src/app/api/request/reimburse/settings/messages/route.ts",
+    code: "AP-4",
+    gate: "requireReimburseMessageAccess()",
+  },
+  {
+    path: "src/app/api/request/advance/settings/messages/route.ts",
+    code: "AP-2",
+    gate: "requireAdvanceMessageAccess()",
+  },
+  {
+    path: "src/app/api/request/clear-advance/settings/messages/route.ts",
+    code: "AP-3",
+    gate: "requireClearMessageAccess()",
+  },
 ];
 
 /**
@@ -65,26 +99,57 @@ for (const r of ROUTES) {
     assert.ok(!/body\??\.\s*formCode/.test(src), `${r.path} reads formCode off the wire`);
   });
 
-  test(`${r.code}: both handlers open with the admin gate`, () => {
+  test(`${r.code}: both handlers open with its own column-backed gate`, () => {
     const calls = src.match(/await require[A-Za-z]+\([^)]*\)/g) ?? [];
     assert.equal(calls.length, 2, `${r.path} should gate exactly GET and POST`);
     for (const c of calls) {
-      assert.ok(c.includes(GATE), `${r.path} uses the wrong gate: ${c}`);
+      assert.ok(
+        c.includes(`await ${r.gate}`),
+        `${r.path} uses the wrong gate: ${c} (expected ${r.gate})`,
+      );
+    }
+  });
+
+  test(`${r.code}: no other route's message gate leaked in`, () => {
+    // Every gate name is a string too, exactly like every FORM_CODE above —
+    // pasting AP-2's gate onto AP-3's route compiles and admits AP-2's holders
+    // to AP-3's notice. Assert the OTHER four gate calls are absent.
+    for (const other of ROUTES) {
+      if (other.code === r.code) continue;
+      assert.ok(
+        !src.includes(`await ${other.gate}`),
+        `${r.path} calls ${other.gate}, which belongs to ${other.code}`,
+      );
     }
   });
 
   /**
-   * The grant is unstorable: all four settings-tab tables are shared with ACC
-   * Portal, whose save deletes an approver's rows and re-inserts only the keys
-   * its own list knows — so a `messages` tick made here disappears on that
-   * app's next save, with no error either side (spec §8). Swapping this gate
-   * for a tab guard compiles and passes every other test in the repo, so this
-   * is the only thing standing between that and shipping.
+   * The grant is unstorable AS A `TabKey` ROW: all four settings-tab tables are
+   * shared with ACC Portal, whose save deletes an approver's rows and
+   * re-inserts only the keys its own list knows — so a `messages` tick stored
+   * there disappears on that app's next save, with no error either side (spec
+   * §8). Migration 166 moved the grant onto a COLUMN instead
+   * (`AccApprover.CanMessage` and its three siblings), which that same saver's
+   * explicit column list never names — so each route now calls its own
+   * `require*MessageAccess()` rather than `requireRole(...)`, and this
+   * assertion is what stops a later hand "fixing" that back onto the ordinary
+   * tab guard, which would silently reopen the exact hole spec §8 describes.
    */
-  test(`${r.code}: is NOT tab-gated — the grant cannot be stored`, () => {
+  test(`${r.code}: is NOT tab-gated — the grant cannot be stored as a TabKey row`, () => {
     assert.ok(
       !/require(Settings|Booking|Reimburse|AdvClr)[A-Za-z]*Tab\s*\(/.test(src),
       `${r.path} is tab-gated; the grant would be deleted by ACC Portal — see spec §8`,
+    );
+  });
+
+  test(`${r.code}: is NOT the bare admin-only gate either`, () => {
+    // The other half of the same regression: swapping the column-backed gate
+    // back for the flat requireRole(...) this file used to expect would also
+    // compile and pass every other test here, quietly making the tab
+    // admin-only again.
+    assert.ok(
+      !/requireRole\(\s*\[\s*"IT Admin"\s*,\s*"System Admin"\s*\]\s*\)/.test(src),
+      `${r.path} is back on the bare admin-only gate — a grant holder can no longer open it`,
     );
   });
 

@@ -84,10 +84,20 @@ export const SETTINGS_ROUTE_PREFIX = "/api/request/accounting/settings";
 export interface SettingsRouteTabRule {
   /** Path below `SETTINGS_ROUTE_PREFIX`, e.g. `"vehicles/reorder"`. */
   route: string;
-  /** The grant that opens it, or `null` when it stays admin-only. */
+  /** The grant that opens it, or `null` when it is not gated by a `TabKey`. */
   tab: GrantableSettingsTabKey | null;
   /** Why — required for every admin-only entry, and for anything non-obvious. */
   note?: string;
+  /**
+   * Set only for `messages`: `tab` is `null` because `messages` is not, and
+   * must never become, a `GrantableSettingsTabKey` (see `@/lib/acc/message-grant`
+   * for why a `TabKey` grant cannot be stored here) — but the route is NOT
+   * admin-only either. It is gated on `AccApprover.CanMessage`, a column
+   * `requireAccMessageAccess` resolves directly. This field names the literal
+   * gate call `settings-tabs.test.ts` should expect in place of `requireRole(`
+   * for this one `tab: null` entry.
+   */
+  gate?: string;
 }
 
 /**
@@ -120,17 +130,23 @@ export const SETTINGS_ROUTE_TABS: readonly SettingsRouteTabRule[] = [
   { route: "vehicles/reorder", tab: "vehicles" },
   {
     route: "messages",
-    tab: null,
-    // Admin-only, and NOT because a message is dangerous — it grants nothing,
-    // decides no approval, no posting target and no read. It is because the
-    // grant could not be stored: `AccApproverSettingsTab` is shared with ACC
+    // `tab: null` because `messages` is not a `GrantableSettingsTabKey` — and
+    // must never become one, since `AccApproverSettingsTab` is shared with ACC
     // Portal, whose own save deletes every row for an approver and re-inserts
-    // only the keys ITS list knows (`approver-settings-tabs.ts:47-56`). A
-    // `messages` grant would vanish the next time somebody edited that
-    // person's tabs over there, with no error on either side — the defect
-    // 8a3ab358 fixed for AP-17's menu ticks. Making it grantable means adding
-    // the key to BOTH applications in one change, not to this list alone.
-    note: "grant unstorable — ACC Portal rewrites AccApproverSettingsTab through its own key filter",
+    // only the keys ITS list knows (`approver-settings-tabs.ts:47-56`); a
+    // `messages` row stored there would vanish the next time somebody edited
+    // that person's tabs over there, with no error on either side — the defect
+    // 8a3ab358 fixed for AP-17's menu ticks.
+    //
+    // That does NOT make this route admin-only any more (migration 166,
+    // `@/lib/acc/message-grant`): it is gated on `AccApprover.CanMessage`, a
+    // COLUMN that saver's explicit column list never names, resolved by
+    // `requireAccMessageAccess`. `gate` names that literal call so
+    // `settings-tabs.test.ts` does not mistake this `tab: null` entry for one
+    // of the ordinary `requireRole(` admin-only ones.
+    tab: null,
+    gate: "requireAccMessageAccess(",
+    note: "grant unstorable as a TabKey — gated on the AccApprover.CanMessage column instead",
   },
   { route: "departments", tab: "departments", note: "the read half; the write below is not granted" },
   {

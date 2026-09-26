@@ -143,12 +143,15 @@ test("SETTINGS_ROUTE_TABS maps nothing that is not a real route", async () => {
 });
 
 test("the admin-only routes are the ones that must never be granted", () => {
-  const adminOnly = SETTINGS_ROUTE_TABS.filter((r) => r.tab === null).map((r) => r.route);
+  // `messages` is `tab: null` too — it is not a `GrantableSettingsTabKey` and
+  // never will be — but it carries its own `gate` and is NOT admin-only any
+  // more (migration 166): it opens for `AccApprover.CanMessage` holders as
+  // well. It is filtered out here rather than left to fail the deepEqual below
+  // opaquely.
+  const adminOnly = SETTINGS_ROUTE_TABS.filter((r) => r.tab === null && !r.gate).map(
+    (r) => r.route,
+  );
   assert.deepEqual(adminOnly, [
-    // Admin-only for storage, not risk — see the route entry's own note: the
-    // grant would be silently deleted by ACC Portal's own AccApproverSettingsTab
-    // save, which knows nothing of this key.
-    "messages",
     // Ruled 2026-08-20: the `departments` grant is read-only. This write
     // reaches `DepartmentErpMap`, rows two sibling applications read to
     // prepare financial journal postings — shared rows, whichever database
@@ -163,13 +166,27 @@ test("the admin-only routes are the ones that must never be granted", () => {
   }
 });
 
+test("messages is tab:null but carries its own gate, and is not admin-only", () => {
+  const rule = SETTINGS_ROUTE_TABS.find((r) => r.route === "messages");
+  assert.ok(rule, "messages has no entry in SETTINGS_ROUTE_TABS");
+  assert.equal(rule!.tab, null, "messages must never become a GrantableSettingsTabKey");
+  assert.equal(
+    rule!.gate,
+    "requireAccMessageAccess(",
+    "messages must name its own column-backed gate, not the ordinary requireRole( admin-only shape",
+  );
+});
+
 /* ── …and the table is a control, not a parallel copy ────────────────────── */
 
 /**
- * The first gate call in a handler body: `requireSettingsTab("<tab>")`, or
- * `requireRole(` for an admin-only route.
+ * The first gate call in a handler body: `requireSettingsTab("<tab>")`,
+ * `requireRole(` for an admin-only route, or `requireAccMessageAccess()` for
+ * `messages` — the one `tab: null` entry that is not admin-only (migration
+ * 166, `@/lib/acc/message-grant`).
  */
-const GATE = /await (requireSettingsTab\(\s*"([A-Za-z]+)"\s*\)|requireRole\()/;
+const GATE =
+  /await (requireSettingsTab\(\s*"([A-Za-z]+)"\s*\)|requireAccMessageAccess\(\)|requireRole\()/;
 
 /** Each exported HTTP handler in a route file, as `[method, body-from-here]`. */
 function splitHandlers(source: string): { method: string; body: string }[] {
@@ -204,7 +221,12 @@ test("every settings handler opens with the gate its table entry names", async (
       const found = GATE.exec(h.body);
       assert.ok(found, `${rule.route} ${h.method} is not gated at all`);
 
-      if (rule.tab === null) {
+      if (rule.gate) {
+        assert.ok(
+          found[1].indexOf(rule.gate) === 0,
+          `${rule.route} ${h.method} should call ${rule.gate} but calls ${found[1]}`,
+        );
+      } else if (rule.tab === null) {
         assert.ok(
           found[1].indexOf("requireRole(") === 0,
           `${rule.route} ${h.method} is admin-only in the table but does not call requireRole`,
@@ -248,15 +270,17 @@ test("every settings handler opens with the gate its table entry names", async (
   );
 });
 
-test("no settings route mixes the two gates in one handler", async () => {
+test("no settings route mixes gates in one handler", async () => {
   for (const rule of SETTINGS_ROUTE_TABS) {
     const source = await readRouteFile(rule.route);
     for (const h of splitHandlers(source)) {
       const tabbed = h.body.indexOf("requireSettingsTab(") !== -1;
       const roled = h.body.indexOf("requireRole(") !== -1;
-      assert.ok(
-        tabbed !== roled,
-        `${rule.route} ${h.method} calls both gates, or neither`,
+      const messageGated = h.body.indexOf("requireAccMessageAccess(") !== -1;
+      assert.equal(
+        [tabbed, roled, messageGated].filter(Boolean).length,
+        1,
+        `${rule.route} ${h.method} calls more than one gate, or none`,
       );
     }
   }

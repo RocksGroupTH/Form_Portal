@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole } from "@/lib/api-auth";
+import { requireAccMessageAccess } from "@/lib/acc/require-message-access";
 import { messageBodyProblem } from "@/lib/form-environment/form-message-text";
 import { getFormMessage, setFormMessage } from "@/lib/form-environment/form-message";
 
@@ -11,13 +11,17 @@ import { getFormMessage, setFormMessage } from "@/lib/form-environment/form-mess
  * states for its tab key; a posted form code would let this route rewrite
  * another form's notice.
  *
- * **Admin-only rather than tab-granted, and the reason is storage rather than
- * risk.** A message grants nothing — no approval, no posting target, no read.
- * But `AccApproverSettingsTab` is shared with the ACC Portal sibling, whose own
- * save deletes every row for an approver and re-inserts only the keys its list
- * knows (`approver-settings-tabs.ts:47-56`), so a `messages` grant would vanish
- * on that app's next save with no error either side. Making it grantable means
- * adding the key to both applications in one change. See spec §8.
+ * **Gated on `AccApprover.CanMessage` (migration 166), a COLUMN, not a
+ * `TabKey` grant — and that is storage, not risk.** A message grants nothing —
+ * no approval, no posting target, no read. But `AccApproverSettingsTab` is
+ * shared with the ACC Portal sibling, whose own save deletes every row for an
+ * approver and re-inserts only the keys its list knows
+ * (`approver-settings-tabs.ts:47-56`), so a `messages` grant stored THERE would
+ * vanish on that app's next save with no error either side. `CanMessage` is a
+ * column that saver's explicit column list never names, so it survives. See
+ * `@/lib/acc/message-grant` and `requireAccMessageAccess`'s own docblock.
+ * `messages` therefore stays out of `GRANTABLE_SETTINGS_TABS` — that list is
+ * `TabKey` grants only — even though this route is no longer admin-only.
  *
  * The rows live in `Fast_Core`, reached through `getCorePool()`, so this route
  * needs no `ROUTE_RULES` entry and is unaffected by the settings prefix being
@@ -26,7 +30,7 @@ import { getFormMessage, setFormMessage } from "@/lib/form-environment/form-mess
 const FORM_CODE = "AP-1";
 
 export async function GET() {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAccMessageAccess();
   if (session instanceof Response) return session;
   try {
     const row = await getFormMessage(FORM_CODE);
@@ -38,7 +42,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await requireRole(["IT Admin", "System Admin"]);
+  const session = await requireAccMessageAccess();
   if (session instanceof Response) return session;
   try {
     const body = await req.json();

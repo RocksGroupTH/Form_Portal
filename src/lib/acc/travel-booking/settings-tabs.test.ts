@@ -206,7 +206,7 @@ async function readBookingRouteFile(route: string): Promise<string> {
  * misspelled one fails the typecheck rather than reaching this regex.
  */
 const BOOKING_GATE =
-  /await (requireBookingSettingsTab\(\s*([A-Za-z_$][\w$]*|"[^"]+"|'[^']+')\s*\)|requireRole\()/;
+  /await (requireBookingSettingsTab\(\s*([A-Za-z_$][\w$]*|"[^"]+"|'[^']+')\s*\)|requireBookingMessageAccess\(\)|requireRole\()/;
 
 /** Each exported HTTP handler in a route file, as `[method, body-from-here]`. */
 function splitHandlers(source: string): { method: string; body: string }[] {
@@ -228,6 +228,7 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
   assert.ok(routes.length >= 3, `expected the settings route tree, found ${routes.length}`);
 
   const roleGated: string[] = [];
+  const messageGated: string[] = [];
   let handlerCount = 0;
 
   for (const route of routes) {
@@ -240,21 +241,37 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
       const found = BOOKING_GATE.exec(h.body);
       assert.ok(found, `${route} ${h.method} is not gated at all`);
 
-      // The refusal must be *returned*. Both gates answer with either a session
-      // or the `Response` to send, so a handler that calls the gate and drops
-      // its result is ungated while looking gated.
+      // The refusal must be *returned*. Every gate answers with either a
+      // session or the `Response` to send, so a handler that calls the gate
+      // and drops its result is ungated while looking gated.
       assert.ok(
         h.body.indexOf("instanceof Response) return") !== -1,
         `${route} ${h.method} calls its gate but never returns the refusal`,
       );
 
-      // One gate per handler, never both and never neither.
+      // One gate per handler, never more than one and never none.
       const tabbed = h.body.indexOf("requireBookingSettingsTab(") !== -1;
       const roled = h.body.indexOf("requireRole(") !== -1;
-      assert.ok(tabbed !== roled, `${route} ${h.method} calls both gates, or neither`);
+      const isMessageGated = h.body.indexOf("requireBookingMessageAccess(") !== -1;
+      assert.equal(
+        [tabbed, roled, isMessageGated].filter(Boolean).length,
+        1,
+        `${route} ${h.method} calls more than one gate, or none`,
+      );
 
       if (roled) {
         if (roleGated.indexOf(route) === -1) roleGated.push(route);
+        continue;
+      }
+
+      // `messages` is gated on `AccBookingApprover.CanMessage` (migration 166,
+      // `@/lib/acc/message-grant`) rather than either ordinary shape: not
+      // `requireBookingSettingsTab`, because that grant is a `TabKey` row ACC
+      // Portal's own saver would silently delete; not `requireRole`, because it
+      // is no longer admin-only. It is not a `[kind]` route either, so none of
+      // the `isSettingsKind` narrowing below applies to it.
+      if (isMessageGated) {
+        if (messageGated.indexOf(route) === -1) messageGated.push(route);
         continue;
       }
 
@@ -292,20 +309,13 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
     }
   }
 
-  // Three routes may stay admin-only, for three different reasons.
-  // (A fourth, settings/provinces, was here until 2026-09-02 and is deleted.)
+  // Two routes may stay admin-only, for two different reasons.
+  // (A third, settings/provinces, was here until 2026-09-02 and is deleted.
+  // `messages` was the third from 2026-09-25 until migration 166 gave it its
+  // own column-backed gate — see the `messageGated` assertion below.)
   //
   //   approvers — สิทธิ์เข้าถึง hands out the grants, so it can never be opened
   //               by one.
-  //
-  //   messages  — a message grants nothing, but AccBookingApproverTab is
-  //               shared with ACC Portal, whose own writer deletes an
-  //               approver's whole tab set and re-inserts only the keys ITS
-  //               list knows. A `messages` grant made here would vanish on
-  //               that app's next save with no error either side — the exact
-  //               defect the 2026-09-24 work fixed for this same table's
-  //               bookingQueue/accountApproval keys (see CLAUDE.md, and spec
-  //               §8 of 2026-09-25-form-message-tab-design.md).
   //
   //   per-diem  — a row here changes what the company PAYS a travelling
   //               employee per day, on the path that writes
@@ -317,8 +327,19 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
   // order and says nothing.
   assert.deepEqual(
     roleGated.slice().sort(),
-    ["approvers", "messages", "per-diem"],
-    "only these three settings routes may stay on requireRole — read the note above before adding a fourth",
+    ["approvers", "per-diem"],
+    "only these two settings routes may stay on requireRole — read the note above before adding a third",
+  );
+
+  // `messages` is gated on `AccBookingApprover.CanMessage` (migration 166)
+  // instead — neither `requireBookingSettingsTab` (the grant is unstorable as
+  // a `TabKey` row) nor `requireRole` (it is not admin-only). Exactly one
+  // route should carry this gate; a second would mean a route reaching for a
+  // grant column it has no business resolving.
+  assert.deepEqual(
+    messageGated.slice().sort(),
+    ["messages"],
+    "requireBookingMessageAccess should gate exactly the messages route",
   );
 
   // Pinning the count means a new handler on an existing route has to be looked

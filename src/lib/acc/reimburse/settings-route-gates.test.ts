@@ -26,7 +26,15 @@ type Gate =
   /** `requireRole(["IT Admin", "System Admin"])` — admin only, never grantable. */
   | { kind: "role"; why: string }
   /** `requireReimburseSettingsTab("<tab>")` — admin, or a holder of that grant. */
-  | { kind: "tab"; tab: string };
+  | { kind: "tab"; tab: string }
+  /**
+   * A gate outside the ordinary two shapes — `requireReimburseMessageAccess()`
+   * for `messages`, admin or an `AccReimburseAccess.CanMessage` holder
+   * (migration 166). Not `{ kind: "tab" }`: `messages` is deliberately not a
+   * `GrantableReimburseTabKey` (see `@/lib/acc/message-grant`), so this needs
+   * its own literal call to check for rather than a tab argument to compare.
+   */
+  | { kind: "custom"; call: string; why: string };
 
 const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
   {
@@ -62,8 +70,9 @@ const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
   {
     route: "messages",
     gate: {
-      kind: "role",
-      why: "a message grants nothing, but the grant could not be stored: AccReimburseAccessTab is shared with ACC Portal, whose own writer deletes an approver's whole tab set and re-inserts only the keys ITS list knows (spec §8, measured against the sibling checkout). A messages grant made here would vanish on that app's next save with no error either side — the exact defect the 2026-09-24 work fixed for AP-17's menu ticks",
+      kind: "custom",
+      call: "requireReimburseMessageAccess(",
+      why: "a message grants nothing, but the grant cannot be a TabKey row: AccReimburseAccessTab is shared with ACC Portal, whose own writer deletes an approver's whole tab set and re-inserts only the keys ITS list knows (spec §8, measured against the sibling checkout). A messages grant stored there would vanish on that app's next save with no error either side — the exact defect the 2026-09-24 work fixed for AP-17's menu ticks. Migration 166 gives it a COLUMN instead, AccReimburseAccess.CanMessage, which that saver's explicit column list never names — so this is neither admin-only any more nor a TabKey grant, and needs its own gate",
     },
   },
 ];
@@ -97,7 +106,7 @@ function splitHandlers(source: string): { method: string; body: string }[] {
 }
 
 const GATE =
-  /await (requireReimburseSettingsTab\(\s*"([A-Za-z-]+)"\s*\)|requireRole\(|requireAuth\()/;
+  /await (requireReimburseSettingsTab\(\s*"([A-Za-z-]+)"\s*\)|requireReimburseMessageAccess\(\)|requireRole\(|requireAuth\()/;
 
 test("every AP-4 settings handler opens with the gate its table entry names", async () => {
   let handlerCount = 0;
@@ -127,6 +136,21 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
           h.body.indexOf("await requireReimburseSettingsTab("),
           -1,
           `${rule.route} ${h.method} is admin-only but reaches for the tab guard`,
+        );
+      } else if (rule.gate.kind === "custom") {
+        assert.ok(
+          found[1].indexOf(rule.gate.call) === 0,
+          `${rule.route} ${h.method} should call ${rule.gate.call} (${rule.gate.why}) but calls ${found[1]}`,
+        );
+        assert.equal(
+          h.body.indexOf("await requireReimburseSettingsTab("),
+          -1,
+          `${rule.route} ${h.method} carries a custom gate but also reaches for the tab guard`,
+        );
+        assert.equal(
+          h.body.indexOf("await requireRole("),
+          -1,
+          `${rule.route} ${h.method} carries a custom gate but also calls requireRole`,
         );
       } else if (isPublicRead) {
         assert.ok(
