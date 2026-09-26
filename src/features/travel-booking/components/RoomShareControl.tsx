@@ -1094,46 +1094,68 @@ export function RoomShareControl({
                 <Loader2 size={13} className="animate-spin" /> กำลังค้นหา...
               </p>
             )}
+            {/* Rule 2 (2026-09-26): a host already taken by another guest is
+                SHOWN, disabled, rather than dropped from the list — the user
+                asked to be told which request took it, and somebody looking
+                for a colleague they know booked a room would otherwise just
+                see them missing. `takenByMessage` is `canHost`'s own
+                sentence, rendered verbatim — nothing here re-derives or
+                re-words the reason. */}
             {!hostsLoading &&
-              shownHosts.map((h) => (
-                <button
-                  key={h.requestId}
-                  type="button"
-                  onClick={() => choose(h)}
-                  className="flex items-start gap-3 px-3 py-2.5 rounded-xl cursor-pointer text-left w-full transition-colors"
-                  style={{
-                    borderWidth: 1,
-                    borderStyle: "solid",
-                    borderColor: "var(--border-card)",
-                    background: "var(--bg-card)",
-                  }}
-                >
-                  <span
-                    className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-                    style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+              shownHosts.map((h) => {
+                const taken = h.takenByMessage != null;
+                return (
+                  <button
+                    key={h.requestId}
+                    type="button"
+                    onClick={() => {
+                      if (!taken) choose(h);
+                    }}
+                    disabled={taken}
+                    aria-disabled={taken}
+                    className="flex items-start gap-3 px-3 py-2.5 rounded-xl text-left w-full transition-colors"
+                    style={{
+                      borderWidth: 1,
+                      borderStyle: "solid",
+                      borderColor: "var(--border-card)",
+                      background: taken ? "var(--bg-card-alt)" : "var(--bg-card)",
+                      opacity: taken ? 0.65 : 1,
+                      cursor: taken ? "not-allowed" : "pointer",
+                    }}
                   >
-                    <Hotel size={15} />
-                  </span>
-                  <span className="min-w-0 flex-1 flex flex-col gap-0.5">
-                    {/* The three fields the endpoint returns, and nothing
-                        else. Anything more would mean widening an endpoint
-                        that lists another person's requests. */}
-                    <span className="text-[13px] font-bold truncate" style={{ color: "var(--text-heading)" }}>
-                      {h.requestNo ?? "—"}
+                    <span
+                      className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
+                      style={{ background: "var(--nav-active-bg)", color: "var(--nav-active-text)" }}
+                    >
+                      <Hotel size={15} />
                     </span>
-                    <span className="text-[11.5px] flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
-                      <CalendarRange size={11} className="shrink-0" />
-                      {fmtTripRange(h.departDate, h.returnDate)}
-                    </span>
-                    {h.workLocations.length > 0 && (
-                      <span className="text-[11.5px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
-                        <MapPin size={11} className="shrink-0 mt-[2px]" />
-                        <span className="min-w-0">{h.workLocations.map((w) => w.name).join(" · ")}</span>
+                    <span className="min-w-0 flex-1 flex flex-col gap-0.5">
+                      {/* The nine fields the endpoint returns, and nothing
+                          else. Anything more would mean widening an endpoint
+                          that lists another person's requests. */}
+                      <span className="text-[13px] font-bold truncate" style={{ color: "var(--text-heading)" }}>
+                        {h.requestNo ?? "—"}
                       </span>
-                    )}
-                  </span>
-                </button>
-              ))}
+                      <span className="text-[11.5px] flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}>
+                        <CalendarRange size={11} className="shrink-0" />
+                        {fmtTripRange(h.departDate, h.returnDate)}
+                      </span>
+                      {h.workLocations.length > 0 && (
+                        <span className="text-[11.5px] flex items-start gap-1.5" style={{ color: "var(--text-muted)" }}>
+                          <MapPin size={11} className="shrink-0 mt-[2px]" />
+                          <span className="min-w-0">{h.workLocations.map((w) => w.name).join(" · ")}</span>
+                        </span>
+                      )}
+                      {taken && (
+                        <span className="text-[11px] flex items-start gap-1.5" style={{ color: "var(--color-danger)" }}>
+                          <AlertTriangle size={11} className="shrink-0 mt-[2px]" />
+                          <span className="min-w-0">{h.takenByMessage}</span>
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
             {!hostsLoading && hosts !== null && shownHosts.length === 0 && !hostsError && !notice && (
               // Every condition named, because "no results" here is almost
               // always one of them rather than "this person never travels":

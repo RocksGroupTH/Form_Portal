@@ -9,6 +9,7 @@ const candidate = (over: Partial<ShareCandidate> = {}): ShareCandidate => ({
   needsRoomBooking: true,
   isGuest: false,
   hostsFor: [],
+  takenBy: null,
   ...over,
 });
 
@@ -62,6 +63,44 @@ test("a host-is-guest refusal on a Draft names it without leaking the word null"
   const r = canHost(candidate({ isGuest: true, requestNo: null }));
   assert.ok(r);
   assert.ok(!r.message.includes("null"), `message leaks null: ${r.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// canHost — rule 2 (2026-09-26): a host already taken must not be choosable
+// again, and the refusal must name the request that took it.
+// ---------------------------------------------------------------------------
+
+test("a host already taken by another guest is refused", () => {
+  const r = canHost(
+    candidate({ takenBy: { requestId: 5, requestNo: "TRL26-00456" } }),
+  );
+  assert.ok(r);
+  assert.equal(r.code, "host_taken");
+  // Both requests are named: the host being refused, and the guest that took it.
+  assert.ok(r.message.includes("TRL26-00100"), `message lacks the host: ${r.message}`);
+  assert.ok(r.message.includes("TRL26-00456"), `message lacks the taker: ${r.message}`);
+});
+
+test("a host-taken refusal names a draft taker without leaking the word null", () => {
+  const r = canHost(candidate({ takenBy: { requestId: 5, requestNo: null } }));
+  assert.ok(r);
+  assert.equal(r.code, "host_taken");
+  assert.ok(!r.message.includes("null"), `message leaks null: ${r.message}`);
+  assert.ok(r.message.includes("คำขอฉบับร่าง"), `message should fall back to the draft label: ${r.message}`);
+});
+
+test("host_taken is checked after the other host-state refusals, not instead of them", () => {
+  // A dead, roomless or already-guesting host is refused for THAT reason even
+  // if it also happens to carry a stale takenBy — the more fundamental
+  // unavailability should be what the requester reads.
+  const takenBy = { requestId: 5, requestNo: "TRL26-00456" };
+  assert.equal(canHost(candidate({ status: "Cancelled", takenBy }))?.code, "host_not_alive");
+  assert.equal(canHost(candidate({ needsRoomBooking: false, takenBy }))?.code, "host_no_room");
+  assert.equal(canHost(candidate({ isGuest: true, takenBy }))?.code, "host_is_guest");
+});
+
+test("a host with nobody attached (takenBy null) may still host", () => {
+  assert.equal(canHost(candidate({ takenBy: null })), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -133,6 +172,19 @@ test("canAttach refuses a host that is itself a guest, one hop only", () => {
   const r = canAttach(guest, host);
   assert.ok(r);
   assert.equal(r.code, "host_is_guest");
+});
+
+test("canAttach refuses a host already taken, the same way canHost does", () => {
+  const guest = candidate({ requestId: 1, requestNo: "TRL26-00001" });
+  const host = candidate({
+    requestId: 2,
+    requestNo: "TRL26-00002",
+    takenBy: { requestId: 3, requestNo: "TRL26-00003" },
+  });
+  const r = canAttach(guest, host);
+  assert.ok(r);
+  assert.equal(r.code, "host_taken");
+  assert.ok(r.message.includes("TRL26-00003"), `message lacks the taker: ${r.message}`);
 });
 
 test("the self-attach check runs before the host-eligibility delegate", () => {

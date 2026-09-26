@@ -38,6 +38,23 @@ export interface ShareCandidate {
    * exactly the state `canAttach` must refuse turning into a guest.
    */
   hostsFor: number[];
+  /**
+   * The guest currently attached to this candidate as HOST, or null — rule 2
+   * (2026-09-26): a host already chosen by somebody must not be choosable
+   * again. `UQ_AccTravelRoomShare_Host` (migration 165) is the schema
+   * backstop; this is the display half, carried so `canHost`'s refusal can
+   * name the request that took it rather than saying merely "unavailable".
+   *
+   * Reverses spec §8's original "no cap on how many attach to a host" — see
+   * migration 165's own header for that history. Populated by the loader from
+   * the same share-row read that fills `hostsFor`, and deliberately excludes
+   * a guest whose own request has since died (rule 3) — a dead guest's
+   * binding does not keep a host taken. Deliberately NOT derived from
+   * `hostsFor.length` here: that field is ids only, and this module has no
+   * database access with which to look up a label for one of them, so the
+   * loader hands the label over directly.
+   */
+  takenBy: { requestId: number; requestNo: string | null } | null;
 }
 
 /**
@@ -54,6 +71,7 @@ export type ShareRefusalCode =
   | "host_not_alive"
   | "host_no_room"
   | "host_is_guest"
+  | "host_taken"
   | "self_attach"
   | "guest_already_hosts"
   | "guest_has_host";
@@ -95,6 +113,11 @@ function requestLabel(candidate: ShareCandidate): string {
   return candidate.requestNo ?? "คำขอฉบับร่าง";
 }
 
+/** The same fallback as `requestLabel`, for the guest named in a `takenBy`. */
+function takenByLabel(takenBy: { requestId: number; requestNo: string | null }): string {
+  return takenBy.requestNo ?? "คำขอฉบับร่าง";
+}
+
 /**
  * May `candidate` be offered — and attached to — as a room-share host?
  *
@@ -121,6 +144,18 @@ export function canHost(candidate: ShareCandidate): ShareRefusal | null {
     return {
       code: "host_is_guest",
       message: `ไม่สามารถเลือก ${requestLabel(candidate)} เป็นห้องพักร่วมได้ เนื่องจากคำขอนี้เป็นผู้เข้าพักร่วมของคำขออื่นอยู่แล้ว`,
+    };
+  }
+  if (candidate.takenBy) {
+    // Rule 2 (2026-09-26): a host already chosen by somebody must not be
+    // choosable again. Named rather than a bare "unavailable" — the user
+    // asked to be told which request took it, and hiding the row entirely
+    // (rather than offering it disabled with this message) would leave
+    // somebody looking for a colleague they know booked a room seeing them
+    // simply missing.
+    return {
+      code: "host_taken",
+      message: `ไม่สามารถเลือก ${requestLabel(candidate)} เป็นห้องพักร่วมได้ เนื่องจากถูกเลือกเป็นห้องพักร่วมไปแล้วโดย ${takenByLabel(candidate.takenBy)}`,
     };
   }
   return null;

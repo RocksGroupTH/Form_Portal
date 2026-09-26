@@ -132,6 +132,22 @@ import path from "node:path";
  *     it is the behavioural half of this file's decision about the shape: the
  *     columns are carried so that the prefill can be selective, and a prefill
  *     that is not selective makes carrying them pointless.
+ *
+ * ## The 2026-09-26 widening — a TENTH field, and it is display data about
+ * SOMEBODY ELSE'S guest, not about the host
+ *
+ * Rule 2: a host already chosen by somebody must not be choosable again, and
+ * the picker must say who took it (migration 165's own header carries the
+ * full history of that reversal against spec §8). `takenByMessage` is
+ * `canHost`'s own "host_taken" sentence, carried verbatim — never re-worded
+ * on this side, the same discipline the route-level `notice` field already
+ * follows — and it is `null` for every host nobody has attached to, which is
+ * the overwhelming majority of rows. The field test below is updated for it;
+ * so is "hostability is decided by canHost, not re-expressed as SQL", because
+ * a plain `canHost(candidate) !== null` filter can no longer tell "admit"
+ * from "show disabled" apart — the listing now holds the refusal and reads
+ * its `code`, and the assertion follows that shape rather than the literal
+ * text it used to match.
  */
 
 const ROOT = process.cwd();
@@ -271,6 +287,10 @@ test("HostCandidateRow returns exactly the fields the user's decision allows, an
     "reasonId: number | null",
     "reasonCustomText: string | null",
     "workDetail: string | null",
+    // 2026-09-26, rule 2: a host already taken must be shown, disabled, with
+    // canHost's own reason — never simply dropped from the list. `null` for
+    // a host nobody has attached to.
+    "takenByMessage: string | null",
   ]);
 });
 
@@ -828,7 +848,27 @@ test("the attach re-reads its candidates under UPDLOCK, HOLDLOCK", () => {
  */
 test("hostability is decided by canHost, not re-expressed as SQL", () => {
   const src = code(SERVICE);
-  assert.match(src, /canHost\(candidate\)\s*!==\s*null/, "the listing no longer filters on canHost");
+  /* Until rule 2 (2026-09-26) this was a plain `canHost(candidate) !== null`
+     filter: refused meant dropped. Rule 2 needs the refusal's own reason as
+     well — `host_taken` is shown (disabled) rather than dropped — so the
+     listing now holds the refusal and inspects its `code`. The property this
+     test polices is unchanged: hostability is still `canHost`'s decision,
+     never re-expressed as SQL, which is what the loop below and the
+     forbidden-string checks continue to assert. */
+  assert.match(
+    src,
+    /const refusal = canHost\(candidate\);/,
+    "loadHostableRequests no longer calls canHost(candidate) and holds its result — the listing " +
+      "must decide admitted / taken / dropped from canHost's own answer, never re-derive any of " +
+      "the three in SQL",
+  );
+  assert.match(
+    src,
+    /refusal\.code === "host_taken"/,
+    "loadHostableRequests no longer branches on canHost's host_taken code, so rule 2 (a taken " +
+      "host is shown, disabled, with the reason) has no way to tell that refusal apart from " +
+      "every other one this function still drops",
+  );
   /* `guestAfterClear`, not `guest`: a REPLACEMENT deletes the old row in the
      same transaction, so the question `canAttach` must answer is about the
      guest as it will be once that delete lands. Asserted by name because the
@@ -855,4 +895,63 @@ test("hostability is decided by canHost, not re-expressed as SQL", () => {
         "cannot ask and so cannot agree with",
     );
   }
+});
+
+/* ═════════════════ rule 2 (2026-09-26) — a host has at most one guest ═════════════════ */
+
+/**
+ * **`loadShareCandidates` is the ONLY place `ShareCandidate.takenBy` is ever
+ * built**, and every one of its three callers (`loadHostableRequests`,
+ * `loadHostByRequestNo`, `applyRoomShareSelection`) reads it through
+ * `canHost`/`canAttach` rather than a hand-rolled check — the same discipline
+ * `hostsFor` and `isGuest` already have. A candidate built with `takenBy`
+ * always null "because this caller only needs isGuest" would be a lie the
+ * next caller inherits, exactly the failure this file's own comment already
+ * names for the other two fields.
+ */
+test("loadShareCandidates populates takenBy from the same share-row read as hostsFor", () => {
+  const body = bodyOf(code(SERVICE), "async function loadShareCandidates");
+  assert.ok(
+    /takenBy\.set\(\s*s\.HostRequestId\s*,/.test(body),
+    "loadShareCandidates no longer records which guest currently takes each host into a " +
+      "takenBy map — canHost's new host_taken refusal (rule 2) would have nothing to read, and " +
+      "every host would appear available no matter how many guests actually occupy it",
+  );
+  assert.ok(
+    /takenBy:\s*takenBy\.get\(row\.Id\)\s*\?\?\s*null/.test(body),
+    "the constructed ShareCandidate no longer carries takenBy from the map above — the field " +
+      "would silently read undefined/missing on every candidate this function ever builds",
+  );
+  // The guest's own RequestNo travels with it, because canHost's refusal must
+  // NAME the request that took the host, not merely say "taken".
+  assert.ok(
+    /GuestRequestNo/.test(body),
+    "loadShareCandidates no longer selects the guest's own RequestNo, so canHost's host_taken " +
+      "message could not name the request that took the host — only that SOME request did",
+  );
+});
+
+/**
+ * **The picker must not simply DROP a taken host — it must show it, disabled,
+ * with the reason.** This is the behavioural half of the field test above:
+ * carrying `takenByMessage` on the type is pointless if the row carrying it
+ * never reaches the response.
+ */
+test("loadHostableRequests keeps a taken host in the list rather than dropping it", () => {
+  const body = bodyOf(code(SERVICE), "export async function loadHostableRequests");
+  assert.ok(
+    /refusal\.code === "host_taken"/.test(body),
+    'loadHostableRequests no longer branches on "host_taken" specifically — every other ' +
+      "canHost refusal must still drop the row, so this is what tells the one exception apart",
+  );
+  assert.ok(
+    /takenMessages\.set\(/.test(body),
+    "loadHostableRequests no longer records the host_taken message per id, so the disabled row " +
+      "the picker renders would carry no reason at all",
+  );
+  assert.ok(
+    /takenByMessage/.test(body),
+    "loadHostableRequests no longer threads a takenByMessage onto the rows it returns — the " +
+      "field exists on HostCandidateRow and nothing populates it for a genuinely taken host",
+  );
 });

@@ -183,6 +183,25 @@ export interface HostCandidateRow {
   reasonCustomText: string | null;
   /** `AccTravelBooking.WorkDetail` — รายละเอียดการไปปฏิบัติงาน, for the prefill. */
   workDetail: string | null;
+  /**
+   * **Added 2026-09-26, rule 2: a host already chosen by somebody must not be
+   * choosable again, and the picker must say who took it.**
+   *
+   * `null` for a host that is still free. Set to `canHost`'s own "host_taken"
+   * sentence — carried verbatim, the same discipline the route-level `notice`
+   * field already follows — when another guest has already attached. The
+   * picker renders such a row **disabled, with this message**, rather than
+   * dropping it from the list: the user asked to be told which request took
+   * it, and a colleague known to have booked a room must not simply vanish
+   * from the search.
+   *
+   * This is display data derived from `ShareCandidate.takenBy` at the moment
+   * `loadHostableRequests` builds its list; it is never posted back, and
+   * `applyRoomShareSelection` re-decides the same question fresh, from the
+   * database, inside its own transaction — a stale message on screen must
+   * never be trusted as the current answer.
+   */
+  takenByMessage: string | null;
 }
 
 /** A guest's own binding, as the form renders it. */
@@ -289,11 +308,11 @@ function hostHasBeenFiled(candidate: ShareCandidate): boolean {
  * error rather than a silently-400'd refusal.
  *
  * Every host-state refusal is a **409**. Reaching one means either the picker's
- * list was stale (the host was cancelled, or became somebody's guest, between
- * the list and the click) or the request was hand-made; the client's remedy is
- * the same in both cases — reload the list — and 400's retry affordance is
- * wrong for both. `self_attach` is the one that is plain bad input, and it
- * falls through to `statusForAccError`'s 400.
+ * list was stale (the host was cancelled, became somebody's guest, or was
+ * taken by another guest, between the list and the click) or the request was
+ * hand-made; the client's remedy is the same in both cases — reload the list —
+ * and 400's retry affordance is wrong for both. `self_attach` is the one that
+ * is plain bad input, and it falls through to `statusForAccError`'s 400.
  */
 function refusalError(refusal: ShareRefusal): Error {
   switch (refusal.code) {
@@ -302,6 +321,7 @@ function refusalError(refusal: ShareRefusal): Error {
     case "host_not_alive":
     case "host_no_room":
     case "host_is_guest":
+    case "host_taken":
     case "guest_already_hosts":
     case "guest_has_host":
       return new AccConflictError(refusal.message);
@@ -408,30 +428,47 @@ async function loadShareCandidates(
        AND r.Id IN (${idList})
   `);
 
-  // One read answers both `isGuest` (this request is somebody's guest) and
-  // `hostsFor` (somebody is this request's guest). Both are needed: `canHost`
-  // reads the first, `canAttach` reads the second on the guest side, and a
-  // candidate built with `hostsFor: []` because the caller "only needs
-  // canHost" would be a lie the next caller inherits.
+  // One read answers `isGuest` (this request is somebody's guest), `hostsFor`
+  // (somebody is this request's guest) and, since rule 2 (2026-09-26),
+  // `takenBy` (which one guest — the display half of "a host may have at most
+  // one"). All three are needed: `canHost` reads `isGuest` and `takenBy`,
+  // `canAttach` reads `hostsFor` on the guest side, and a candidate built with
+  // any of them empty because the caller "only needs canHost" would be a lie
+  // the next caller inherits.
+  //
+  // `g.RequestNo` comes from an INNER JOIN to the GUEST's own `AccRequest`
+  // row — it is the label `canHost`'s "host_taken" message names.
   const shareReq = runner.request();
   requestIds.forEach((id, i) => shareReq.input(`sid${i}`, sql.Int, id));
   const shareList = requestIds.map((_, i) => `@sid${i}`).join(", ");
   const shares = await shareReq.query(`
-    SELECT GuestRequestId, HostRequestId
-      FROM [dbo].[AccTravelRoomShare]${lockHint}
-     WHERE GuestRequestId IN (${shareList})
-        OR HostRequestId IN (${shareList})
+    SELECT s.GuestRequestId, s.HostRequestId, g.RequestNo AS GuestRequestNo
+      FROM [dbo].[AccTravelRoomShare] s${lockHint}
+      INNER JOIN [dbo].[AccRequest] g ON g.Id = s.GuestRequestId
+     WHERE s.GuestRequestId IN (${shareList})
+        OR s.HostRequestId IN (${shareList})
   `);
 
   const guestOf = new Map<number, boolean>();
   const hostsFor = new Map<number, number[]>();
-  for (const s of shares.recordset as { GuestRequestId: number; HostRequestId: number }[]) {
+  const takenBy = new Map<number, { requestId: number; requestNo: string | null }>();
+  for (const s of shares.recordset as {
+    GuestRequestId: number;
+    HostRequestId: number;
+    GuestRequestNo: string | null;
+  }[]) {
     guestOf.set(s.GuestRequestId, true);
     // Which host, not merely that there is one — see `ShareCandidateRead`.
     hostOf.set(s.GuestRequestId, s.HostRequestId);
     const list = hostsFor.get(s.HostRequestId) ?? [];
     list.push(s.GuestRequestId);
     hostsFor.set(s.HostRequestId, list);
+    // With UQ_AccTravelRoomShare_Host (migration 165) a host has at most one
+    // live guest, but this read can run before that index exists (or mid
+    // migration) — keep the FIRST one seen rather than assuming uniqueness.
+    if (!takenBy.has(s.HostRequestId)) {
+      takenBy.set(s.HostRequestId, { requestId: s.GuestRequestId, requestNo: s.GuestRequestNo ?? null });
+    }
   }
 
   for (const row of rows.recordset as CandidateRow[]) {
@@ -442,6 +479,7 @@ async function loadShareCandidates(
       needsRoomBooking: row.NeedsRoomBooking === true,
       isGuest: guestOf.get(row.Id) === true,
       hostsFor: hostsFor.get(row.Id) ?? [],
+      takenBy: takenBy.get(row.Id) ?? null,
     });
   }
   return { candidates: out, hostOf };
@@ -503,6 +541,12 @@ async function loadHostDisplayRows(
       reasonId: row.ReasonId ?? null,
       reasonCustomText: row.ReasonCustomText ?? null,
       workDetail: row.WorkDetail ?? null,
+      // This function knows nothing about admission — it only reads the
+      // display columns for ids the caller has already decided to show.
+      // `loadHostableRequests` overlays the real value for a taken host;
+      // every other caller (the by-number lookup, the guest's own binding)
+      // has no use for it and leaves it null.
+      takenByMessage: null,
     });
   }
 
@@ -594,13 +638,19 @@ export interface HostSearchFilters {
  *
  * 1. scan that person's requests, newest trip first, capped at
  *    `HOST_SCAN_LIMIT`, applying only the *filters* — the person and the dates;
- * 2. build a `ShareCandidate` for each and keep the ones **`canHost` admits**
- *    and `hostHasBeenFiled` allows. The three conditions spec §6 names (alive,
- *    not already a guest, `needsRoomBooking = true`) are `canHost`'s and are
- *    deliberately not re-expressed as SQL: the attach path asks the same
- *    function about the same candidate shape, so the list and the action cannot
- *    drift apart;
- * 3. read the display columns for the survivors alone.
+ * 2. build a `ShareCandidate` for each and sort each into one of three piles —
+ *    **admitted** (`canHost` allows it), **taken** (`canHost` refuses it with
+ *    exactly `host_taken`, rule 2, 2026-09-26), or **dropped** (every other
+ *    refusal, and a request `hostHasBeenFiled` refuses). The conditions spec
+ *    §6 names (alive, not already a guest, `needsRoomBooking = true`) are
+ *    `canHost`'s and are deliberately not re-expressed as SQL: the attach path
+ *    asks the same function about the same candidate shape, so the list and
+ *    the action cannot drift apart;
+ * 3. read the display columns for BOTH the admitted and the taken rows — the
+ *    taken ones are shown too, disabled, carrying `canHost`'s own message on
+ *    `takenByMessage`, rather than dropped from the list. The user asked to
+ *    be told which request took a colleague's booking, and a row that simply
+ *    vanishes tells nobody that.
  *
  * Matching is on `AccRequest.StaffId`, not StaffId-or-EmployeeId as
  * `requester-trips.ts` does, because the input is a person the picker chose out
@@ -658,21 +708,40 @@ export async function loadHostableRequests(
   if (scannedIds.length === 0) return [];
 
   const { candidates } = await loadShareCandidates(pool, scannedIds);
-  const admitted: number[] = [];
+  // Shown ids (admitted or taken, in that priority) and, for the taken ones
+  // alone, the message the card must display. `takenMessages` has no entry
+  // for an admitted id, which is exactly what `?? null` below turns into
+  // `takenByMessage: null` on the row.
+  const shown: number[] = [];
+  const takenMessages = new Map<number, string>();
   for (const id of scannedIds) {
     const candidate = candidates.get(id);
     if (!candidate) continue;
     if (!hostHasBeenFiled(candidate)) continue;
-    if (canHost(candidate) !== null) continue;
-    admitted.push(id);
+    const refusal = canHost(candidate);
+    if (refusal === null) {
+      shown.push(id);
+      continue;
+    }
+    if (refusal.code === "host_taken") {
+      // Rule 2: shown, disabled, with the reason — the picker must not hide
+      // a host the requester might recognise, it must say why it cannot be
+      // chosen. Every OTHER refusal (dead, no room, already a guest) still
+      // drops the row, exactly as before this rule existed.
+      shown.push(id);
+      takenMessages.set(id, refusal.message);
+      continue;
+    }
   }
-  if (admitted.length === 0) return [];
+  if (shown.length === 0) return [];
 
-  const display = await loadHostDisplayRows(pool, admitted);
+  const display = await loadHostDisplayRows(pool, shown);
   const out: HostCandidateRow[] = [];
-  for (const id of admitted) {
+  for (const id of shown) {
     const row = display.get(id);
-    if (row) out.push(row);
+    if (!row) continue;
+    const takenByMessage = takenMessages.get(id) ?? null;
+    out.push(takenByMessage === null ? row : { ...row, takenByMessage });
   }
   return out;
 }
@@ -840,6 +909,26 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
+ * Which of this table's two unique indexes a violation names — SQL Server's
+ * 2601/2627 error messages quote the index name verbatim, so no second query
+ * is needed to tell them apart.
+ *
+ * Both races are already meant to be closed by the `{ lock: true }` re-read
+ * above (`UPDLOCK, HOLDLOCK` on both `AccRequest` rows serialises two saves
+ * naming the same guest OR the same host — see the M13 argument in
+ * `room-share-response-shape-guard.test.ts`, which applies identically in
+ * both directions). Reaching the index instead of the lock means that
+ * discipline was bypassed somehow; the two messages below still tell the
+ * requester the right thing to do either way.
+ */
+function violatedRoomShareIndex(err: unknown): "guest" | "host" | null {
+  const message = (err as { message?: string } | null)?.message ?? "";
+  if (message.indexOf("UQ_AccTravelRoomShare_Host") !== -1) return "host";
+  if (message.indexOf("UQ_AccTravelRoomShare_Guest") !== -1) return "guest";
+  return null;
+}
+
+/**
  * Write, replace or clear this guest's binding — **on the caller's open
  * transaction, as part of saving the tab.**
  *
@@ -1003,6 +1092,15 @@ export async function applyRoomShareSelection(
                WHERE r.Id = @hid`);
   } catch (e) {
     if (isUniqueViolation(e)) {
+      const which = violatedRoomShareIndex(e);
+      if (which === "host") {
+        // `UQ_AccTravelRoomShare_Host` (migration 165) is the backstop
+        // `canHost`'s "host_taken" refusal normally speaks for; reaching it
+        // means two saves raced past the { lock: true } re-read above. A
+        // different sentence from the guest-side one below, because the two
+        // races name different offending requests.
+        throw new AccConflictError("คำขอนี้ถูกเลือกเป็นห้องพักร่วมไปแล้วโดยคำขออื่น — กรุณาโหลดหน้านี้ใหม่");
+      }
       // `UQ_AccTravelRoomShare_Guest` is the backstop `canAttach`'s
       // `guest_has_host` refusal normally speaks for; reaching it means two
       // saves raced. Same message, so the requester reads one answer.
