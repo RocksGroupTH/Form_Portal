@@ -91,6 +91,19 @@ const ROUTES = [
   [`${CLR_ROOT}/erp-sync/route.ts`, "requireRole", null],
   [`${CLR_ROOT}/locations/sync/route.ts`, "requireRole", null],
 
+  /* ── admin-only: the grant cannot be stored ──
+   *
+   * A message grants nothing, but `AccAdvClrAccessTab` is shared with ACC
+   * Portal, whose own writer deletes an approver's whole tab set and
+   * re-inserts only the keys ITS list knows (spec §8). A `messages` grant made
+   * here would vanish on that app's next save with no error either side — the
+   * exact defect the 2026-09-24 work fixed for AP-17's menu ticks. AP-2 and
+   * AP-3 each get their own route rather than sharing one, for the same reason
+   * they have two Interface ERP keys rather than one.
+   */
+  [`${ADV_ROOT}/messages/route.ts`, "requireRole", null],
+  [`${CLR_ROOT}/messages/route.ts`, "requireRole", null],
+
   /* ── admin-only, and NOT by design: the two `[id]` DELETEs ──
    *
    * `banks` and `tiers` are grantable and their collection routes are

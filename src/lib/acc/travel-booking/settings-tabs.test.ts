@@ -292,12 +292,21 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
     }
   }
 
-  // Two routes may stay admin-only, for two different reasons.
-  // (A third, settings/provinces, was here until 2026-09-02 and is deleted.)
+  // Three routes may stay admin-only, for three different reasons.
+  // (A fourth, settings/provinces, was here until 2026-09-02 and is deleted.)
   //
   //   approvers — สิทธิ์เข้าถึง hands out the grants, so it can never be opened
   //               by one.
-
+  //
+  //   messages  — a message grants nothing, but AccBookingApproverTab is
+  //               shared with ACC Portal, whose own writer deletes an
+  //               approver's whole tab set and re-inserts only the keys ITS
+  //               list knows. A `messages` grant made here would vanish on
+  //               that app's next save with no error either side — the exact
+  //               defect the 2026-09-24 work fixed for this same table's
+  //               bookingQueue/accountApproval keys (see CLAUDE.md, and spec
+  //               §8 of 2026-09-25-form-message-tab-design.md).
+  //
   //   per-diem  — a row here changes what the company PAYS a travelling
   //               employee per day, on the path that writes
   //               AccRequest.TotalAmount. AP-17's tab grants hand out sight of a
@@ -308,15 +317,15 @@ test("every AP-17 settings handler is gated, and approvers is the admin-only one
   // order and says nothing.
   assert.deepEqual(
     roleGated.slice().sort(),
-    ["approvers", "per-diem"],
-    "only these two settings routes may stay on requireRole — read the note above before adding a third",
+    ["approvers", "messages", "per-diem"],
+    "only these three settings routes may stay on requireRole — read the note above before adding a fourth",
   );
 
   // Pinning the count means a new handler on an existing route has to be looked
   // at rather than merged on the strength of the file already being gated.
   assert.equal(
     handlerCount,
-    14,
+    16,
     "the AP-17 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

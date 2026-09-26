@@ -145,6 +145,10 @@ test("SETTINGS_ROUTE_TABS maps nothing that is not a real route", async () => {
 test("the admin-only routes are the ones that must never be granted", () => {
   const adminOnly = SETTINGS_ROUTE_TABS.filter((r) => r.tab === null).map((r) => r.route);
   assert.deepEqual(adminOnly, [
+    // Admin-only for storage, not risk — see the route entry's own note: the
+    // grant would be silently deleted by ACC Portal's own AccApproverSettingsTab
+    // save, which knows nothing of this key.
+    "messages",
     // Ruled 2026-08-20: the `departments` grant is read-only. This write
     // reaches `DepartmentErpMap`, rows two sibling applications read to
     // prepare financial journal postings — shared rows, whichever database
@@ -226,7 +230,7 @@ test("every settings handler opens with the gate its table entry names", async (
       // …and the refusal must be returned. Both gates answer with *either* a
       // session or the `Response` to send, so a handler that calls the gate and
       // drops its result is ungated while looking gated — and every assertion
-      // above would still pass. All 31 check it today.
+      // above would still pass. All 33 check it today.
       assert.ok(
         h.body.indexOf("instanceof Response) return") !== -1,
         `${rule.route} ${h.method} calls its gate but never returns the refusal`,
@@ -239,7 +243,7 @@ test("every settings handler opens with the gate its table entry names", async (
   // of the file already having an entry.
   assert.equal(
     handlerCount,
-    31,
+    33,
     "the settings routes gained or lost a handler — check its gate, then update this number",
   );
 });
