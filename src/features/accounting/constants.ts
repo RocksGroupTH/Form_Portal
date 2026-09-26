@@ -151,6 +151,16 @@ export const MAPS_UNAVAILABLE_USER_MESSAGE =
  * `weekMondayNoon` the way `reimburse/payment-calendar.ts` does, so nothing here
  * enforces it. If it is ever meant to be enforced, this copy is not the change
  * to make; the calendar is.
+ *
+ * **Since 2026-09-25 this is the FALLBACK, not what renders.** The live copy
+ * is `Fast_Core.dbo.FormMessage` (migration 164), edited at Settings →
+ * Message. This array is what the form shows when that table is missing — the
+ * window before 164 is applied — so deleting it would make that window a blank
+ * header rather than the one the form has always had.
+ *
+ * It is also 164's seed for the first three of AP-1's four bullets; the fourth
+ * is the contact line that used to sit in a second box at the foot of the form,
+ * carrying the `{เจ้าของฟอร์ม}` token.
  */
 export const AP1_HEADER_MESSAGE_LINES: string[] = [
   "รอบการเบิกจ่ายค่าเดินทาง — ตัดรอบวันจันทร์ (อนุมัติแล้ว) และจ่ายตามปฏิทินการชำระของบริษัท (ทุกศุกร์ที่ 2 และศุกร์ที่ 4 ของเดือน)",
