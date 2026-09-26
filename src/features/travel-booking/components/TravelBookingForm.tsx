@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useFormOwnerNotice } from "@/components/FormOwnerNotice";
+import { useFormMessage } from "@/lib/hooks/useFormMessage";
 import { toast } from "sonner";
 import { AlertTriangle, Check, Circle, History, Info, Loader2, Mail, Phone, Plus, Save, Send, Trash2, User, UserCog, Wallet } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
@@ -15,7 +16,6 @@ import { tabNeedsIdCard, useTravelBookingForm } from "@/features/travel-booking/
 import { TravelBookingTab } from "./TravelBookingTab";
 import { lockedTravelDates } from "@/features/travel-booking/lib/date-locks";
 import { SectionCard, fmtBaht } from "./shared";
-import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
 import type { TravelBookingGroup } from "@/features/travel-booking/types";
 
 interface TravelBookingFormProps {
@@ -51,6 +51,7 @@ function scrollToField(key: string) {
 export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBookingFormProps) {
   /* Read off `/api/form-environment`, which this page already fetches. */
   const ownerNotice = useFormOwnerNotice("AP-17");
+  const messageBlocks = useFormMessage("AP-17");
 
   const form = useTravelBookingForm(initial);
   const {
@@ -191,30 +192,37 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         <UatDataBanner requestId={anchorRequestId} holdSpace={false} />
       </div>
 
-      {/* คำแนะนำ */}
-      <div
-        data-tour="ap17-notice"
-        className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
-        style={{
-          background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
-          border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
-        }}
-      >
-        <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
-        <div className="flex flex-col gap-1">
-          {AP17_HEADER_MESSAGE_LINES.map((line, i) => (
-            <p key={i} className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
-              {line}
+      {/* คำแนะนำ — copy comes from Settings → Message; falls back to
+          AP17_HEADER_MESSAGE_LINES when the table is missing. */}
+      {messageBlocks.length > 0 && (
+        <div
+          data-tour="ap17-notice"
+          className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
+          style={{
+            background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
+            border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
+          }}
+        >
+          <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
+          <div className="flex flex-col gap-1">
+            {messageBlocks.map((line, i) => (
+              <p
+                key={i}
+                className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {line}
+              </p>
+            ))}
+            {/* Who to ask about a cancellation, on every form (the user,
+                2026-09-24). Falls back to the bare sentence while nobody is
+                named — see `formOwnerNotice`. */}
+            <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
+              {ownerNotice}
             </p>
-          ))}
-          {/* Who to ask about a cancellation, on every form (the user,
-              2026-09-24). Falls back to the bare sentence while nobody is
-              named — see `formOwnerNotice`. */}
-          <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
-            {ownerNotice}
-          </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ผู้ขอเบิก (read-only) */}
       <SectionCard

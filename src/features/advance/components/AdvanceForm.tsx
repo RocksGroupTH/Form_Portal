@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { User, Mail, UserCog, Paperclip, Camera, X, FileText } from "lucide-react";
+import { User, Mail, UserCog, Paperclip, Camera, X, FileText, Info } from "lucide-react";
+import { useFormMessage } from "@/lib/hooks/useFormMessage";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
@@ -18,7 +19,7 @@ import { CurrencyCombobox } from "@/features/advance/components/CurrencyCombobox
 import { TravelExpenseLoadingPopup } from "@/features/accounting/components/TravelExpenseLoadingPopup";
 import type { AccBrandOption } from "@/features/accounting/types";
 import type { AdvancePayeeType, AdvanceRequest, AdvanceSaveInput } from "@/features/advance/types";
-import { AP2_DEFAULT_CURRENCY, AP2_MAX_CLEAR_DAYS, AP2_PRPO_THRESHOLD } from "@/features/advance/constants";
+import { AP2_DEFAULT_CURRENCY, AP2_FORM_CODE, AP2_MAX_CLEAR_DAYS, AP2_PRPO_THRESHOLD } from "@/features/advance/constants";
 import type { BankOption } from "@/lib/adv/bank-master-service";
 
 interface Props {
@@ -38,6 +39,12 @@ const fieldStyle = {
 } as const;
 
 export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Props) {
+  /* The notice box's bullets, from Settings → Message. Read off
+     `/api/form-environment`, which this page already fetches for its
+     environment chip, so it costs no request of its own. `[]` while loading
+     and on a failed fetch — AP-2 has no fallback constant, so it renders
+     nothing until an admin types something. */
+  const messageBlocks = useFormMessage(AP2_FORM_CODE);
   const [brands, setBrands] = useState<AccBrandOption[]>([]);
   const [banks, setBanks] = useState<BankOption[]>([]);
   // Requester = the logged-in user (auto from HR), same as AP-1's ผู้ขอเบิก part.
@@ -512,6 +519,32 @@ export function AdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange }: Pr
 
   return (
     <div className="flex flex-col gap-4 pb-20">
+      {/* คำแนะนำ — same shape as AP-1's and AP-17's, from Settings → Message.
+          AP-2 has no fallback constant, so this renders nothing until an
+          admin types something. */}
+      {messageBlocks.length > 0 && (
+        <div
+          className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
+          style={{
+            background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
+            border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
+          }}
+        >
+          <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
+          <div className="flex flex-col gap-1">
+            {messageBlocks.map((line, i) => (
+              <p
+                key={i}
+                className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {line}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Requester (รหัสพนักงาน กรอกเอง → auto ดึง HR) + brand chips like AP-1 */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
         {/* ผู้ขอเบิก — same card + on-behalf picker as AP-1 */}

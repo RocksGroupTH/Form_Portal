@@ -165,6 +165,17 @@ export function validateRuleText(
  * the leading space on the second line of the fourth block and the informal
  * register are all part of the source. Each element is one paragraph and may
  * contain newlines.
+ *
+ * **Since 2026-09-25 this is the FALLBACK, not what renders.** The live copy
+ * is `Fast_Core.dbo.FormMessage` (migration 164), edited at Settings →
+ * Message — the sentence above about living "in code, reviewed like code"
+ * describes how this array is still guarded, not how the form gets its
+ * copy any more. This array is what `ReimburseNotice` shows when that table
+ * is missing — the window before 164 is applied — so deleting it would make
+ * that window a blank panel rather than the one the form has always had. It
+ * is also 164's seed for AP-4, byte-identical; `constants.test.ts` pins
+ * that round trip against the migration file, so drifting one from the
+ * other fails the suite.
  */
 export const REIMBURSE_NOTICE: readonly string[] = [
   "วิธีการเบิกค่าใช้จ่าย\n- ปริ้นใบสรุปค่าใช้จ่าย Excel เเละเเนบใบเสร็จ/ใบกำกับภาษี (ตัวจริง) มาที่บัญชี ภายใน 1 เดือนหลังจากที่มีการจ่ายชำระค่าสินค้า/ค่าบริการ\n- หากเป็นค่าบริการที่มีการจ่ายชำระมากกว่า 1,000 บาท ต้องมีการหัก ณ ที่จ่ายและนำส่งเอกสารภายในวันที่ 5 ของเดือนถัดไปของวันที่มีการจ่ายชำระค่าบริการ (จ่ายค่าบริการวันที่ 01-31/08/2024 ส่งเอกสารภายในวันที่ 01/09/2024  ติดวันหยุดส่งวันถัดไปตามปฎิทินวันทำงาน)",
