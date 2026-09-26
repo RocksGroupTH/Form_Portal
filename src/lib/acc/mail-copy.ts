@@ -54,11 +54,19 @@ export function esc(s: unknown): string {
  * list is that a reader can see all five agree on a shape; five constants in
  * five folders is how one ends up phrased differently from the rest.
  *
- * **AP-1 is spelled `(ออฟฟิศ)` here and `(ออฟฟิต)` in `AccFormMaster.FormNameTh`**,
- * which is what Home and the form filter show. The user wrote `ออฟฟิศ` in the
- * copy they supplied and that is what the mail says; renaming the catalogue
- * entry to match is a database change nobody has asked for. Recorded so the
- * difference reads as a decision rather than a typo.
+ * **Since 2026-09-26 this map is the FALLBACK, not what a mail normally says.**
+ * `resolveMailFormName` reads `AccFormMaster` and every mail builder prefers
+ * it; these strings are reached only when that read fails or the table has no
+ * row for the code. Do not edit them expecting a mail to change — rename the
+ * form at Settings → Form Environment instead.
+ *
+ * **AP-1 is spelled `(ออฟฟิศ)` here and `(ออฟฟิต)` in `AccFormMaster.FormNameTh`.**
+ * That difference used to be confined to Home and the form filter, because the
+ * mail read this map; it is now live in the mail too, since the canonical row
+ * wins whenever it can be read. So the ordinary mail says `(ออฟฟิต)` and only a
+ * failed read says `(ออฟฟิศ)`. Recorded so the two spellings read as a decision
+ * rather than a typo — and so nobody "fixes" it here, where it no longer
+ * governs anything.
  */
 export const MAIL_FORM_NAMES = {
   "AP-1": "แบบฟอร์มเบิกค่าเดินทาง (ออฟฟิศ)",
