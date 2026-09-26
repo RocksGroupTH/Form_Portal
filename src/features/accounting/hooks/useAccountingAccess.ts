@@ -7,6 +7,8 @@ interface AccountingAccessData {
   approver: boolean;
   admin: boolean;
   settingsTabs: string[];
+  /** `AccApprover.CanMessage` (migration 166) — a column, not a settingsTabs entry. */
+  canMessage: boolean;
   canSettings: boolean;
 }
 
@@ -38,7 +40,9 @@ export function useAccountingAccess() {
     isAdmin: access?.admin ?? false,
     /** Grantable tabs this non-admin approver may open; [] for admins. */
     settingsTabs: access?.settingsTabs ?? [],
-    /** admin OR at least one granted tab. */
+    /** Whether this non-admin approver holds the Message tab's own column. */
+    canMessage: access?.canMessage ?? false,
+    /** admin OR at least one granted tab OR the Message column. */
     canSettings: access?.canSettings ?? false,
   };
 }

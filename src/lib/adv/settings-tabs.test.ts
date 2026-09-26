@@ -346,7 +346,20 @@ test("a posted key from the other form cannot be written by this form's save", (
 
 test("grantable and ungrantable partition ALL_ADV_CLR_TABS exactly", () => {
   // Two lists describing one thing; this is what stops them drifting.
+  //
+  // **`advanceMessages` / `clearMessages` are the one deliberate exception,
+  // since migration 166.** They carry neither `adminOnly` NOR grantable
+  // TabKey status: the Message tab genuinely is grantable now, just through a
+  // COLUMN (`AccAdvClrAccess.CanAdvanceMessage` / `.CanClearMessage`) that
+  // `AdvClrAccessSettings.tsx` renders with its own bespoke `MessageGrantCell`
+  // rather than through this `TabKey` vocabulary at all — see
+  // `@/lib/acc/message-grant`. The invariant this test polices — "not
+  // adminOnly implies grantable here" — is exactly what would let a message
+  // key slip back into `tabs` and render a tick that never saves, so the
+  // exclusion is narrow and named rather than a blanket skip.
+  const MESSAGE_KEYS = ["advanceMessages", "clearMessages"];
   for (const t of ALL_ADV_CLR_TABS) {
+    if (MESSAGE_KEYS.indexOf(t.key) !== -1) continue;
     assert.equal(
       isGrantableAdvClrTabKey(t.key),
       !t.adminOnly,
@@ -357,6 +370,20 @@ test("grantable and ungrantable partition ALL_ADV_CLR_TABS exactly", () => {
     assert.ok(
       ALL_ADV_CLR_TABS.some((x) => x.key === t.key),
       `${t.key} is grantable but absent from the grid's list`,
+    );
+  }
+});
+
+test("the message keys are neither adminOnly nor TabKey-grantable — they are column-backed", () => {
+  for (const key of ["advanceMessages", "clearMessages"]) {
+    const entry = ALL_ADV_CLR_TABS.find((t) => t.key === key);
+    assert.ok(entry, `${key} is missing from ALL_ADV_CLR_TABS`);
+    assert.equal(entry!.adminOnly, undefined, `${key} still claims to be admin-only`);
+    assert.equal(entry!.note, undefined, `${key} carries a note meant for a TabKey column it no longer has`);
+    assert.equal(
+      isGrantableAdvClrTabKey(key),
+      false,
+      `${key} must stay out of the TabKey grantable list — its grant is a column`,
     );
   }
 });

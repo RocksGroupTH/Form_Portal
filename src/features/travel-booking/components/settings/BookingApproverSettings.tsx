@@ -33,6 +33,12 @@ interface BookingApproverRow {
    * unticking all three, since migration 124 defaults them to granted.
    */
   areas: string[];
+  /**
+   * Whether this approver may open the Message tab — `AccBookingApprover.CanMessage`
+   * (migration 166), a COLUMN rather than a `settingsTabs` entry or a fourth
+   * `areas` member. See `@/lib/acc/message-grant`.
+   */
+  canMessage: boolean;
 }
 
 /* ── Confirm Modal — same shape as the UAT Users panel's ── */
@@ -416,6 +422,68 @@ function GrantCells({
 }
 
 /**
+ * The Message tab's tick — its own column, deliberately outside `GrantCells`
+ * above and the two grant groups it serves.
+ *
+ * **Not `areas` and not `settingsTabs`.** `messages` is not, and must never
+ * become, a `GrantableBookingTabKey`: the grant is
+ * `AccBookingApprover.CanMessage` (migration 166), a column ACC Portal's own
+ * settings-tab saver never names and so never deletes, unlike a `TabKey` row
+ * in the table that saver rewrites wholesale. It is also not a fourth
+ * `BookingAreaKey` — the Message tab is configuration, not a working screen.
+ * See `@/lib/acc/message-grant`.
+ */
+function MessageGrantCell({ row, onSaved }: { row: BookingApproverRow; onSaved: () => void }) {
+  const [checked, setChecked] = useState(row.canMessage);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setChecked(row.canMessage);
+  }, [row.id, row.canMessage]);
+
+  const toggle = async () => {
+    const next = !checked;
+    setChecked(next);
+    setSaving(true);
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: row.email,
+          displayName: row.displayName,
+          isActive: row.isActive,
+          canMessage: next,
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onSaved();
+      } else {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        setChecked(row.canMessage);
+      }
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+      setChecked(row.canMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <td className="px-3 py-2.5 text-center" style={{ borderLeft: "1px solid var(--border-light)" }}>
+      <TabGrantCheckbox
+        checked={checked}
+        saving={saving}
+        onChange={() => void toggle()}
+        ariaLabel={`${row.displayName || row.email} — Message`}
+      />
+    </td>
+  );
+}
+
+/**
  * AP-17's สิทธิ์เข้าถึง tab — who may see the booking queue and the booking
  * report.
  *
@@ -626,7 +694,11 @@ export function BookingApproverSettings() {
                     เมนูที่เห็น
                   </th>
                   <th
-                    colSpan={GRANTABLE_BOOKING_TABS.length}
+                    // +1 for the Message column, grouped here visually — it
+                    // is still configuration, even though its grant is a
+                    // COLUMN (AccBookingApprover.CanMessage) rather than a
+                    // GRANTABLE_BOOKING_TABS/settingsTabs entry underneath.
+                    colSpan={GRANTABLE_BOOKING_TABS.length + 1}
                     className="text-center px-3 pt-2.5 pb-1.5 text-[10px] font-bold uppercase tracking-wide"
                     style={{
                       color: "var(--nav-active-text)",
@@ -690,6 +762,16 @@ export function BookingApproverSettings() {
                       {tab.label}
                     </th>
                   ))}
+                  {/* Grouped with the settings tabs above, but its own column:
+                      the grant is AccBookingApprover.CanMessage (migration
+                      166), never a GRANTABLE_BOOKING_TABS entry. See
+                      MessageGrantCell and @/lib/acc/message-grant. */}
+                  <th
+                    className="text-center px-3 py-2 font-semibold whitespace-nowrap"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Message
+                  </th>
                   {/* Not a checkbox column, deliberately. The tick columns above
                       are a CLOSED vocabulary — a fixed list of tabs and menus —
                       while brands are data that changes at Settings →
@@ -744,6 +826,7 @@ export function BookingApproverSettings() {
                       stored={r.settingsTabs}
                       onSaved={() => void mutate()}
                     />
+                    <MessageGrantCell row={r} onSaved={() => void mutate()} />
                     <BrandScopeCell row={r} onSaved={() => void mutate()} />
                     {/* Ticked for an inactive row too, for the same reason the
                         grant ticks are shown there: this one is not access at

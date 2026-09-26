@@ -79,8 +79,13 @@ export async function listApprovers(
   activeOnly = false,
 ): Promise<AccApproverRow[]> {
   const pool = await getAccPool();
+  // `CanMessage` rides along on the same row as everything else here — it is a
+  // column (migration 166), not a child-table join like `interfaceBrandCodes`
+  // / `settingsTabs` below, so it needs no separate fail-closed loader: a
+  // database without 166 fails this whole read, the same way it would fail on
+  // any other missing column of this same table.
   const r = await pool.request().query(`
-    SELECT Id, StaffId, Email, DisplayName, IsActive, PhotoUrl FROM [dbo].[AccApprover]
+    SELECT Id, StaffId, Email, DisplayName, IsActive, PhotoUrl, CanMessage FROM [dbo].[AccApprover]
     ${activeOnly ? "WHERE IsActive = 1" : ""} ORDER BY DisplayName, Email
   `);
   const rows = r.recordset.map((x: Record<string, unknown>) => ({
@@ -90,6 +95,7 @@ export async function listApprovers(
     displayName: (x.DisplayName as string) ?? null,
     isActive: !!x.IsActive,
     photoUrl: (x.PhotoUrl as string) ?? null,
+    canMessage: !!x.CanMessage,
   }));
   const ids = rows.map((row) => row.id);
   // Two independent side-table reads on the same pool — run them together so
@@ -128,6 +134,14 @@ export async function upsertApprover(
     displayName?: string | null;
     isActive?: boolean;
     photoUrl?: string | null;
+    /**
+     * Three-valued exactly like `isActive`: omitted leaves `CanMessage`
+     * (migration 166) alone; `true`/`false` sets it. Never posted by the "add
+     * approver" flow, so a brand-new row keeps the column's own `DEFAULT 0`
+     * rather than this function silently granting the tab to somebody nobody
+     * ticked.
+     */
+    canMessage?: boolean;
   },
   userId: number,
 ): Promise<void> {
@@ -145,6 +159,11 @@ export async function upsertApprover(
         sql.Bit,
         a.isActive === undefined ? null : a.isActive ? 1 : 0,
       )
+      .input(
+        "canMessage",
+        sql.Bit,
+        a.canMessage === undefined ? null : a.canMessage ? 1 : 0,
+      )
       .input("user", sql.Int, userId || null);
     if (a.id) {
       req.input("id", sql.Int, a.id);
@@ -154,11 +173,13 @@ export async function upsertApprover(
         DisplayName = COALESCE(@name, DisplayName),
         PhotoUrl = COALESCE(@photo, PhotoUrl),
         IsActive = COALESCE(@active, IsActive),
+        CanMessage = COALESCE(@canMessage, CanMessage),
         UpdatedAt = SYSDATETIME() WHERE Id=@id`);
     } else {
       await req.query(`MERGE [dbo].[AccApprover] AS t USING (SELECT @email AS Email) AS s ON t.Email=s.Email
         WHEN MATCHED THEN UPDATE SET StaffId=COALESCE(@staff,t.StaffId), DisplayName=COALESCE(@name,t.DisplayName),
-          PhotoUrl=COALESCE(@photo,t.PhotoUrl), IsActive=COALESCE(@active,t.IsActive), UpdatedAt=SYSDATETIME()
+          PhotoUrl=COALESCE(@photo,t.PhotoUrl), IsActive=COALESCE(@active,t.IsActive),
+          CanMessage=COALESCE(@canMessage,t.CanMessage), UpdatedAt=SYSDATETIME()
         WHEN NOT MATCHED THEN INSERT (StaffId,Email,DisplayName,PhotoUrl,IsActive,CreatedBy)
         VALUES (@staff,@email,@name,@photo,COALESCE(@active,1),@user);`);
     }

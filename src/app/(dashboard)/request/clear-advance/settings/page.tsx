@@ -57,10 +57,13 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   glAccounts: { label: "หมวดบัญชี G/L", icon: <ListTree size={15} /> },
   buGlMap: { label: "Fix G/L by BU or Branch", icon: <Pin size={15} /> },
   locations: { label: "Location / BU", icon: <MapPin size={15} /> },
-  // Admin-only — `@/lib/adv/settings-tabs` excludes it from
-  // `GRANTABLE_ADV_CLR_TABS` because the grant could not be stored:
-  // `AccAdvClrAccessTab` is shared with ACC Portal, whose own save rewrites
-  // that table through its own key filter, which has never heard of this key.
+  // `@/lib/adv/settings-tabs` excludes `clearMessages` from
+  // `GRANTABLE_ADV_CLR_TABS`, and always will: `AccAdvClrAccessTab` is shared
+  // with ACC Portal, whose own save rewrites that table through its own key
+  // filter, which has never heard of this key. That does NOT make the tab
+  // admin-only any more (migration 166) — see `useVisibleTabs`'s
+  // `canClearMessage`, which reads `AccAdvClrAccess.CanClearMessage`, a
+  // column that saver never touches.
   clearMessages: { label: "Message", icon: <MessageSquare size={15} /> },
   clearErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
@@ -103,13 +106,23 @@ function parseTabKey(raw: string | null): TabKey {
 function useVisibleTabs() {
   const { data } = useSWR<{
     ok: boolean;
-    data?: { isAdmin: boolean; settingsTabs: Record<string, boolean> };
+    data?: {
+      isAdmin: boolean;
+      settingsTabs: Record<string, boolean>;
+      /** `AccAdvClrAccess.CanClearMessage` (migration 166) — a column, not a settingsTabs entry. */
+      canClearMessage?: boolean;
+    };
   }>("/api/request/advance/access", (url: string) => fetch(url).then((r) => r.json()));
   if (!data) return undefined;
   const d = data.ok ? data.data : undefined;
   if (!d) return [];
   if (d.isAdmin) return TABS;
-  return TABS.filter((t) => d.settingsTabs?.[t.key]);
+  // `clearMessages` is a SEPARATE arm: `settingsTabs` never carries it and
+  // never must — the grant is a COLUMN, not a `TabKey` row. See
+  // `@/lib/acc/message-grant`.
+  return TABS.filter(
+    (t) => d.settingsTabs?.[t.key] || (t.key === "clearMessages" && d.canClearMessage),
+  );
 }
 
 export default function ClearAdvanceSettingsPage() {

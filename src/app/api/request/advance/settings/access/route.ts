@@ -81,7 +81,14 @@ export async function GET() {
 
 /**
  * POST — add or update one person.
- * Body: `{ email, displayName?, isActive?, settingsTabs?, form? }`
+ * Body: `{ email, displayName?, isActive?, settingsTabs?, form?, canAdvanceMessage?, canClearMessage? }`
+ *
+ * `canAdvanceMessage` / `canClearMessage`: three-valued exactly like
+ * `isActive` — omitted leaves the matching `AccAdvClrAccess` column (migration
+ * 166) alone; a boolean sets it. Deliberately NOT part of `settingsTabs` and
+ * not gated behind `form`: they are two independent columns on the one shared
+ * row, exactly like `advanceErpInterface` / `clearErpInterface` are two
+ * settings-tab keys. See `@/lib/acc/message-grant`.
  *
  * `StaffId` is the natural key and is resolved **here**, from HR, by email —
  * the client never supplies one. AD search returns an Entra identity, which
@@ -150,6 +157,10 @@ export async function POST(req: NextRequest) {
       email,
       displayName,
       isActive: typeof body?.isActive === "boolean" ? body.isActive : undefined,
+      canAdvanceMessage:
+        typeof body?.canAdvanceMessage === "boolean" ? body.canAdvanceMessage : undefined,
+      canClearMessage:
+        typeof body?.canClearMessage === "boolean" ? body.canClearMessage : undefined,
       createdBy: Number(session.user.id),
     });
 

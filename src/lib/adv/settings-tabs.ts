@@ -213,11 +213,13 @@ export const ALL_ADV_CLR_TABS: readonly {
   },
   { key: "matrix", label: "ขั้นตามเงิน" },
   { key: "banks", label: "ธนาคาร Master" },
-  {
-    key: "advanceMessages",
-    label: "Message",
-    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
-  },
+  // Neither `adminOnly` nor `note`: since migration 166 this tab is granted
+  // through its own COLUMN (`AccAdvClrAccess.CanAdvanceMessage`), not through
+  // this table's `TabKey` vocabulary at all — so `AdvClrAccessSettings.tsx`
+  // excludes it explicitly from both `tabs` and `adminOnlyTabs` and renders it
+  // through its own bespoke `MessageGrantCell` instead. See
+  // `@/lib/acc/message-grant`.
+  { key: "advanceMessages", label: "Message" },
   {
     key: "advanceErpInterface",
     label: "Interface ERP",
@@ -234,11 +236,8 @@ export const ALL_ADV_CLR_TABS: readonly {
     note: "เป็นกฎชุดเดียวกับ AP-4 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
   },
   { key: "locations", label: "Location / BU" },
-  {
-    key: "clearMessages",
-    label: "Message",
-    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
-  },
+  // Same rule as `advanceMessages` above, for AP-3's `CanClearMessage`.
+  { key: "clearMessages", label: "Message" },
   {
     key: "clearErpInterface",
     label: "Interface ERP",

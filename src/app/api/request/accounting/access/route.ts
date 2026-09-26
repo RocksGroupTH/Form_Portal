@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/api-auth";
 import { isAccApprover } from "@/lib/acc/access";
 import { isAdminRole } from "@/lib/roles";
 import { resolveApproverSettingsTabsByEmail } from "@/lib/acc/approver-settings-tabs";
+import { resolveApproverCanMessageByEmail } from "@/lib/acc/approver-message-access";
 
 /* ── GET /api/request/accounting/access — viewer's AP-1 capabilities ──
  *
@@ -31,17 +32,28 @@ export async function GET(_req: NextRequest) {
     // grants degrade to none — the fail-closed direction for the settings half
     // — while the area half is answered from a read that succeeded.
     let settingsTabs: string[] = [];
+    // `canMessage` is a COLUMN (AccApprover.CanMessage, migration 166), never a
+    // `settingsTabs` entry — see `@/lib/acc/message-grant`. Its own try, for
+    // the same reason `settingsTabs`' has one: the two answer different
+    // questions from different storage, and an unreadable one must not cost
+    // the other.
+    let canMessage = false;
     if (!admin) {
       try {
         settingsTabs = await resolveApproverSettingsTabsByEmail(email);
       } catch (err) {
         console.error("[accounting/access] grant read failed — reporting no grants", err);
       }
+      try {
+        canMessage = await resolveApproverCanMessageByEmail(email);
+      } catch (err) {
+        console.error("[accounting/access] message-grant read failed — reporting not granted", err);
+      }
     }
-    const canSettings = admin || settingsTabs.length > 0;
+    const canSettings = admin || settingsTabs.length > 0 || canMessage;
     return NextResponse.json({
       ok: true,
-      data: { account: approver, approver, admin, settingsTabs, canSettings },
+      data: { account: approver, approver, admin, settingsTabs, canMessage, canSettings },
     });
   } catch (err) {
     console.error("[api/request/accounting/access] GET", err);

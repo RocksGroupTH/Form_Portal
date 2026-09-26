@@ -4,6 +4,7 @@ import { isBookingApprover } from "@/lib/acc/booking-access";
 import { isAdminRole } from "@/lib/roles";
 import { resolveBookingTabsByEmail } from "@/lib/acc/travel-booking/booking-approver-tabs";
 import { resolveBookingAreasByEmail } from "@/lib/acc/travel-booking/booking-approver-areas";
+import { resolveBookingApproverCanMessageByEmail } from "@/lib/acc/travel-booking/booking-approver-message-access";
 
 /* ── GET /api/request/travel-booking/access — viewer's AP-17 capabilities ──
  *
@@ -51,6 +52,10 @@ export async function GET(_req: NextRequest) {
     // succeeded.
     let settingsTabs: string[] = [];
     let areas: string[] = [];
+    // `canMessage` is a COLUMN (AccBookingApprover.CanMessage, migration 166),
+    // never a `settingsTabs` entry or a fourth `areas` member — see
+    // `@/lib/acc/message-grant`.
+    let canMessage = false;
     if (!admin) {
       try {
         settingsTabs = await resolveBookingTabsByEmail(email);
@@ -65,8 +70,13 @@ export async function GET(_req: NextRequest) {
       } catch (err) {
         console.error("[travel-booking/access] area read failed — reporting no menus", err);
       }
+      try {
+        canMessage = await resolveBookingApproverCanMessageByEmail(email);
+      } catch (err) {
+        console.error("[travel-booking/access] message-grant read failed — reporting not granted", err);
+      }
     }
-    const canSettings = admin || settingsTabs.length > 0;
+    const canSettings = admin || settingsTabs.length > 0 || canMessage;
     // Admins see both menus; a grant list only governs non-admins, exactly as
     // `settingsTabs` above does. `approver` (the AccBookingApprover roster) is
     // still what decides whether an action is permitted once a page is open.
@@ -77,6 +87,7 @@ export async function GET(_req: NextRequest) {
         approver,
         admin,
         settingsTabs,
+        canMessage,
         canSettings,
         areas,
         bookingQueue: admin || areas.indexOf("queue") !== -1,

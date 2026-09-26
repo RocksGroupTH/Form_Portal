@@ -39,11 +39,21 @@ const ENDPOINT = "/api/request/reimburse/settings/access";
  * grantable reappears as a column by itself — which is exactly what
  * `Interface ERP`, `หมวดบัญชี G/L` and `Fix G/L by BU or Branch` just did,
  * with no edit here.
+ *
+ * **`messages` is excluded from BOTH this and `ADMIN_ONLY_TABS` below,
+ * explicitly.** It carries neither `adminOnly` nor `note` in
+ * `REIMBURSE_ALL_TAB_META` any more (migration 166 made it grantable, so it is
+ * no longer admin-only), which would otherwise let it fall into `TAB_COLUMNS`
+ * — but its grant is `AccReimburseAccess.CanMessage`, a COLUMN, never a
+ * `settingsTabs`/`TabKey` entry, so a checkbox built from `GRANTABLE_REIMBURSE_TABS`
+ * would tick it visually and save nothing (that list still excludes it, and
+ * always must — see `@/lib/acc/message-grant`). `ApproverMessageGrantCell`
+ * below is its own bespoke column instead.
  */
-const TAB_COLUMNS = ALL_REIMBURSE_TABS.filter((t) => !t.adminOnly);
+const TAB_COLUMNS = ALL_REIMBURSE_TABS.filter((t) => !t.adminOnly && t.key !== "messages");
 
 /** Named under the table instead of given a dead column — see `TAB_COLUMNS`. */
-const ADMIN_ONLY_TABS = ALL_REIMBURSE_TABS.filter((t) => t.adminOnly);
+const ADMIN_ONLY_TABS = ALL_REIMBURSE_TABS.filter((t) => t.adminOnly && t.key !== "messages");
 
 /**
  * The tabs whose reach is wider than their label, printed under the table and
@@ -104,6 +114,13 @@ interface ReimburseAccessRow {
    * `displayActiveFor` below.
    */
   hasAccessRow: boolean;
+  /**
+   * Whether this person may open the Message tab — `AccReimburseAccess.CanMessage`
+   * (migration 166), a COLUMN rather than a `settingsTabs` entry. `false` for
+   * an orphan row (`hasAccessRow === false`): there is no `AccReimburseAccess`
+   * row to read the column off. See `@/lib/acc/message-grant`.
+   */
+  canMessage: boolean;
 }
 
 /**
@@ -510,6 +527,80 @@ function TabGrantCells({
 }
 
 /**
+ * The Message tab's tick — its own column, deliberately outside `TabGrantCells`
+ * above and both groups it renders.
+ *
+ * **Not a `settingsTabs` entry, and not a menu key either.** `messages` is
+ * excluded from `GRANTABLE_REIMBURSE_TABS` and always must be: the grant is
+ * `AccReimburseAccess.CanMessage` (migration 166), a column ACC Portal's own
+ * settings-tab saver never names and so never deletes, unlike a `TabKey` row
+ * in the table that saver rewrites wholesale. See `@/lib/acc/message-grant`.
+ *
+ * Renders on an orphan row too, disabled by `saving`-style state being
+ * irrelevant — an orphan has no `AccReimburseAccess.Id` (`row.id === null`),
+ * so there is no row to set the column on. `canMessage` reads `false` for
+ * such rows (the GET route's own mapping), and a tick attempted there would
+ * silently create nothing, so this component treats `id === null` as
+ * unsaveable and disables the box rather than pretending the tick works.
+ */
+function ReimburseMessageGrantCell({
+  row,
+  onSaved,
+}: {
+  row: ReimburseAccessRow;
+  onSaved: () => void;
+}) {
+  const [checked, setChecked] = useState(row.canMessage);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setChecked(row.canMessage);
+  }, [row.staffId, row.canMessage]);
+
+  const toggle = async () => {
+    if (row.id === null) return;
+    const next = !checked;
+    setChecked(next);
+    setSaving(true);
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: row.email,
+          displayName: row.displayName,
+          isActive: row.isActive,
+          canMessage: next,
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onSaved();
+      } else {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        setChecked(row.canMessage);
+      }
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+      setChecked(row.canMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <td className="px-3 py-2.5 text-center" style={{ borderLeft: "1px solid var(--border-light)" }}>
+      <TabGrantCheckbox
+        checked={checked}
+        saving={saving || row.id === null}
+        onChange={() => void toggle()}
+        ariaLabel={`${row.displayName || row.email} — Message`}
+      />
+    </td>
+  );
+}
+
+/**
  * AP-4's สิทธิ์เข้าถึง tab — who may open which of AP-4's back-office settings,
  * AND, since 2026-09-10, who approves real reimbursement payments.
  *
@@ -810,6 +901,18 @@ export function ReimburseAccessSettings() {
                     >
                       หน้าใช้งาน
                     </th>
+                    {/* Its own single-column header, `rowSpan={2}` like
+                        เจ้าของฟอร์ม/สถานะ beside it, rather than a group of one:
+                        the grant is AccReimburseAccess.CanMessage (migration
+                        166), never a TAB_COLUMNS/REIMBURSE_MENUS entry — see
+                        ReimburseMessageGrantCell and @/lib/acc/message-grant. */}
+                    <th
+                      rowSpan={2}
+                      className="text-center px-3 py-2 font-semibold align-bottom whitespace-nowrap"
+                      style={{ color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }}
+                    >
+                      Message
+                    </th>
                     {/* Before สถานะ (the user, 2026-09-24), and deliberately
                         outside all three labelled groups: an owner is a
                         contact line printed at the foot of the form and grants
@@ -968,6 +1071,7 @@ export function ReimburseAccessSettings() {
                             switching them on. The save cannot flip the status: the
                             payload echoes `isActive` back unchanged. */}
                         <TabGrantCells row={r} onSaved={() => void mutate()} />
+                        <ReimburseMessageGrantCell row={r} onSaved={() => void mutate()} />
                         {/* Ticked for an inactive row too, and for an orphan:
                             this one is not access at all, so neither switching
                             somebody off nor their having no สิทธิ์เข้าถึง row is

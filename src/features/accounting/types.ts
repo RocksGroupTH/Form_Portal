@@ -249,6 +249,13 @@ export interface AccApproverRow {
    * never all. Only keys in `GRANTABLE_SETTINGS_TABS` ever appear here.
    */
   settingsTabs: string[];
+  /**
+   * Whether this approver may open the Message tab — `AccApprover.CanMessage`
+   * (migration 166), a COLUMN rather than a `settingsTabs` entry. See
+   * `@/lib/acc/message-grant` for why `messages` is deliberately never one of
+   * the `settingsTabs` keys above.
+   */
+  canMessage: boolean;
 }
 export interface AccSameDayBrandRow {
   id: number;

@@ -43,6 +43,13 @@ export interface BookingApproverRow {
    * deliberately unticking all three.
    */
   areas: BookingAreaKey[];
+  /**
+   * Whether this approver may open the Message tab — `AccBookingApprover.CanMessage`
+   * (migration 166), a COLUMN rather than a `settingsTabs` entry or a fourth
+   * menu area. See `@/lib/acc/message-grant` for why `messages` is
+   * deliberately never one of the `settingsTabs` keys above.
+   */
+  canMessage: boolean;
 }
 
 /**
@@ -56,20 +63,25 @@ export async function listBookingApprovers(
   activeOnly = false,
 ): Promise<BookingApproverRow[]> {
   const pool = await getAccPool();
+  // `CanMessage` rides along on this same row — it is a column (migration
+  // 166), not a child-table join like `settingsTabs` / `brandCodes` / `areas`
+  // below, so it needs no separate fail-closed loader.
   const r = await pool.request().query(`
-    SELECT Id, StaffId, Email, DisplayName, IsActive
+    SELECT Id, StaffId, Email, DisplayName, IsActive, CanMessage
     FROM [dbo].[AccBookingApprover]
     ${activeOnly ? "WHERE IsActive = 1" : ""}
     ORDER BY DisplayName, StaffId
   `);
   const rows = (r.recordset as Array<{
     Id: number; StaffId: number; Email: string; DisplayName: string; IsActive: boolean;
+    CanMessage: boolean;
   }>).map((x) => ({
     id: x.Id,
     staffId: x.StaffId,
     email: x.Email,
     displayName: x.DisplayName,
     isActive: !!x.IsActive,
+    canMessage: !!x.CanMessage,
   }));
   // One batch read for the whole page, the same shape AP-1's `listApprovers`
   // uses. `loadBookingTabsByApproverIds` degrades a *missing table* to no
@@ -140,9 +152,19 @@ export async function upsertBookingApprover(a: {
   isActive?: boolean;
   createdBy?: number | null;
   areas?: BookingAreaKey[];
+  /**
+   * Three-valued, same shape as `areas`: omitted leaves `CanMessage`
+   * (migration 166) alone; a boolean sets it. Never posted by the "add
+   * approver" flow, so a brand-new row keeps the column's own `DEFAULT 0`
+   * rather than this function silently granting the tab to somebody nobody
+   * ticked. Deliberately not a fourth `BookingAreaKey` — see
+   * `@/lib/acc/message-grant` for why the Message grant is not a menu area.
+   */
+  canMessage?: boolean;
 }): Promise<void> {
   const setAreas = a.areas !== undefined;
   const granted = a.areas ?? [];
+  const setCanMessage = a.canMessage !== undefined;
   await writeBothPools(async (tx) => {
     const req = tx
       .request()
@@ -150,7 +172,8 @@ export async function upsertBookingApprover(a: {
       .input("email", sql.NVarChar(200), a.email)
       .input("name", sql.NVarChar(200), a.displayName)
       .input("active", sql.Bit, a.isActive === undefined ? true : a.isActive)
-      .input("by", sql.Int, a.createdBy ?? null);
+      .input("by", sql.Int, a.createdBy ?? null)
+      .input("canMessage", sql.Bit, a.canMessage ?? false);
     for (const area of BOOKING_AREAS) {
       req.input(`area_${area.key}`, sql.Bit, granted.indexOf(area.key) >= 0);
     }
@@ -162,7 +185,9 @@ export async function upsertBookingApprover(a: {
       USING (SELECT @staffId AS StaffId) AS s ON t.StaffId = s.StaffId
       WHEN MATCHED THEN UPDATE SET
         Email = @email, DisplayName = @name, IsActive = @active,
-        UpdatedBy = @by, UpdatedAt = SYSDATETIME()${setAreas ? areaSet : ""}
+        UpdatedBy = @by, UpdatedAt = SYSDATETIME()${setAreas ? areaSet : ""}${
+          setCanMessage ? ", CanMessage = @canMessage" : ""
+        }
       WHEN NOT MATCHED THEN
         INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)
         VALUES (@staffId, @email, @name, @active, @by);

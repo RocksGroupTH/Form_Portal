@@ -19,6 +19,8 @@ function access(over: Partial<AccessRosterRow> = {}): AccessRosterRow {
     displayName: "Anna",
     isActive: true,
     settingsTabs: [],
+    canAdvanceMessage: false,
+    canClearMessage: false,
     ...over,
   };
 }

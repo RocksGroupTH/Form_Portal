@@ -142,6 +142,10 @@ export async function GET() {
         displayName: a.displayName,
         isActive: false,
         settingsTabs: [] as string[],
+        // No `AccReimburseAccess` row at all, so no `CanMessage` to read — an
+        // orphan cannot hold the Message grant until an admin's next save
+        // gives them an access row (see `upsertReimburseAccess`).
+        canMessage: false,
         brandTargets: brandMap.get(a.id) ?? [],
         // Read off the row, not hardcoded — the filter above no longer
         // guarantees it is true, and a deactivated orphan must render as ปิด
@@ -159,7 +163,12 @@ export async function GET() {
 
 /**
  * POST /api/request/reimburse/settings/access
- * Body: { email, displayName?, isActive?, settingsTabs?, brandTargets? }
+ * Body: { email, displayName?, isActive?, settingsTabs?, brandTargets?, canMessage? }
+ *
+ * `canMessage`: three-valued exactly like `isActive` — omitted leaves
+ * `AccReimburseAccess.CanMessage` (migration 166) alone; a boolean sets it.
+ * Deliberately NOT part of `settingsTabs` — see `@/lib/acc/message-grant` for
+ * why that grant cannot be a `TabKey` row.
  *
  * `StaffId` is the natural key of the table and is resolved **here**, from HR,
  * by email — the client never supplies one. AD search returns an Entra
@@ -234,6 +243,10 @@ export async function POST(req: NextRequest) {
       email,
       displayName,
       isActive: typeof body?.isActive === "boolean" ? body.isActive : true,
+      // Three-valued exactly like `isActive` — omitted leaves
+      // `AccReimburseAccess.CanMessage` (migration 166) alone. Deliberately
+      // NOT part of `settingsTabs` below — see `@/lib/acc/message-grant`.
+      canMessage: typeof body?.canMessage === "boolean" ? body.canMessage : undefined,
       // Passed on every call, not only when adding — the service feeds it to
       // `UpdatedBy` on the MERGE's matched branch as well as `CreatedBy` on the
       // insert, so omitting it on an edit would record the wrong person.

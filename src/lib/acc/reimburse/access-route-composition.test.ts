@@ -58,10 +58,18 @@ test("settingsTabs is never assigned the raw granted list directly — the exact
 
 test("canSettings is computed from the narrowed settingsTabs, never from granted directly", async () => {
   const source = await readRouteSource();
+  // `|| canMessage` joined this expression with migration 166: `canMessage`
+  // reads `AccReimburseAccess.CanMessage`, a COLUMN entirely outside
+  // `granted`/`settingsTabs` (see `@/lib/acc/message-grant`), so a holder of
+  // ONLY that column must still open the settings page. That is a distinct,
+  // deliberate widening from the regression this test guards against —
+  // `settingsTabs.length` must still be the tab-grant term, never
+  // `granted.length` — so the regex requires exactly this three-term shape
+  // rather than merely tolerating extra clauses.
   assert.match(
     source,
-    /const\s+canSettings\s*=\s*admin\s*\|\|\s*settingsTabs\.length\s*>\s*0\s*;/,
-    "canSettings must read settingsTabs.length — reading granted.length would let a menu-only grant flip it on",
+    /const\s+canSettings\s*=\s*admin\s*\|\|\s*settingsTabs\.length\s*>\s*0\s*\|\|\s*canMessage\s*;/,
+    "canSettings must read settingsTabs.length || canMessage — reading granted.length would let a menu-only grant flip it on, and dropping canMessage would strand a Message-only holder",
   );
   // The narrow settings-tab filter is imported by name, not aliased or
   // reimplemented inline — grep-ability is what lets a reviewer trust the

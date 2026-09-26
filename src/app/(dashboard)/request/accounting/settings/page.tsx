@@ -111,6 +111,7 @@ function AccountingSettingsContent() {
     loading: accessLoading,
     isAdmin: accessIsAdmin,
     settingsTabs,
+    canMessage,
     canSettings,
   } = useAccountingAccess();
 
@@ -143,10 +144,18 @@ function AccountingSettingsContent() {
   // by hand — that tab is the one that hands out access, so it must never
   // become reachable by grant, and deriving the rule keeps a seventh tab from
   // leaking in through a list somebody forgot to update.
+  //
+  // `messages` is a SEPARATE arm, deliberately not folded into the
+  // `isGrantableSettingsTabKey` test above: that key is not, and must never
+  // become, a `GrantableSettingsTabKey` — the grant is `AccApprover.CanMessage`
+  // (migration 166), a column ACC Portal's own settings-tab saver cannot
+  // delete, not a `TabKey` row it can. See `@/lib/acc/message-grant`.
   const visibleTabs = isAdmin
     ? TABS
     : TABS.filter(
-        (t) => isGrantableSettingsTabKey(t.key) && settingsTabs.indexOf(t.key) !== -1,
+        (t) =>
+          (isGrantableSettingsTabKey(t.key) && settingsTabs.indexOf(t.key) !== -1) ||
+          (t.key === "messages" && canMessage),
       );
   if (visibleTabs.length === 0) return <NoAccessState />;
 

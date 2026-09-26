@@ -57,7 +57,13 @@ export async function GET() {
 
 /**
  * POST /api/request/travel-booking/settings/approvers
- * Body: { email, displayName?, isActive?, settingsTabs? }
+ * Body: { email, displayName?, isActive?, settingsTabs?, areas?, canMessage? }
+ *
+ * `canMessage`: three-valued exactly like `isActive` and `areas` — omitted
+ * leaves `AccBookingApprover.CanMessage` (migration 166) alone; a boolean
+ * sets it. Deliberately NOT part of `settingsTabs` or `areas` — see
+ * `@/lib/acc/message-grant` for why the Message grant is a column rather than
+ * a `TabKey` row or a fourth menu area.
  *
  * `StaffId` is the natural key of the table and is resolved **here**, from HR,
  * by email — the client never supplies one. AD search returns an Entra
@@ -131,6 +137,13 @@ export async function POST(req: NextRequest) {
       // every menu, which is what being on this roster meant before 124 split
       // it, and what ACC Portal's own add does.
       areas: Array.isArray(body.areas) ? filterBookingAreaKeys(body.areas) : undefined,
+      // Also a column on this same row (migration 166), but three-valued the
+      // same way `isActive` is rather than array-shaped like `areas`: the add
+      // call sends neither, so a brand-new row keeps the column's own
+      // DEFAULT 0 — nobody is granted the Message tab just for joining this
+      // roster. Deliberately NOT part of `settingsTabs` below — see
+      // @/lib/acc/message-grant.
+      canMessage: typeof body.canMessage === "boolean" ? body.canMessage : undefined,
     });
 
     // `Array.isArray` is what makes "omitted" different from "[]". Without it a

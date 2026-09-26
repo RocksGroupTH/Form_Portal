@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
 import { resolveAdvClrTabsByEmail } from "@/lib/adv/access-service";
+import {
+  resolveAdvanceCanMessageByEmail,
+  resolveClearCanMessageByEmail,
+} from "@/lib/adv/access-message-access";
 import { isAnyAdvanceApprover } from "@/lib/adv/advance-approver-service";
 import { isAnyClrApprover } from "@/lib/clr/clear-advance-approver-service";
 import {
@@ -53,6 +57,24 @@ export async function GET() {
   for (const t of GRANTABLE_ADV_CLR_TABS) {
     settingsTabs[t.key] = decideAdvClrTabAccess(isAdmin, granted, t.key);
   }
+  // `canAdvanceMessage` / `canClearMessage` are COLUMNS
+  // (`AccAdvClrAccess.CanAdvanceMessage` / `.CanClearMessage`, migration 166),
+  // never `settingsTabs` entries — see `@/lib/acc/message-grant`. Each form's
+  // own try, so an unreadable column costs only that form's Message tab.
+  let canAdvanceMessage = false;
+  let canClearMessage = false;
+  if (!isAdmin) {
+    try {
+      canAdvanceMessage = await resolveAdvanceCanMessageByEmail(session.user.email);
+    } catch (err) {
+      console.error("[api/request/advance/access] AP-2 message-grant read failed", err);
+    }
+    try {
+      canClearMessage = await resolveClearCanMessageByEmail(session.user.email);
+    } catch (err) {
+      console.error("[api/request/advance/access] AP-3 message-grant read failed", err);
+    }
+  }
   /**
    * Whether that form's settings page has a single tab this viewer may open.
    *
@@ -62,9 +84,16 @@ export async function GET() {
    * becoming grantable on 2026-09-22, which needed no edit here at all. The
    * ungrantable tabs are still skipped: `access` is on both strips but open to
    * admins only, and the admin arm is already ahead of it.
+   *
+   * The Message tab is a SEPARATE arm, deliberately not folded into the
+   * `!t.adminOnly` test above: `advanceMessages` / `clearMessages` are not,
+   * and must never be, `GrantableAdvClrTabKey` entries — their grant is a
+   * column, not a `TabKey` row. See `@/lib/acc/message-grant`.
    */
   const canSettingsFor = (form: AdvClrForm) =>
-    isAdmin || advClrTabsForForm(form).some((t) => !t.adminOnly && settingsTabs[t.key]);
+    isAdmin ||
+    advClrTabsForForm(form).some((t) => !t.adminOnly && settingsTabs[t.key]) ||
+    (form === "AP-2" ? canAdvanceMessage : canClearMessage);
   /**
    * **Roster OR grant, never grant alone.** `AccAdvClrAccess` ships empty with
    * no backfill, so gating the hubs on the tick alone would take AP-2's queue
@@ -125,6 +154,8 @@ export async function GET() {
       canAdvanceSettings: canSettingsFor("AP-2"),
       canClearSettings: canSettingsFor("AP-3"),
       settingsTabs,
+      canAdvanceMessage,
+      canClearMessage,
       menus,
     },
   });

@@ -321,6 +321,83 @@ function TabGrantCells({
 }
 
 /**
+ * The Message tab's tick — its own column, deliberately outside `TabGrantCells`
+ * above and both groups it renders.
+ *
+ * **Not a `settingsTabs` entry.** `advanceMessages` / `clearMessages` are
+ * excluded from `GRANTABLE_ADV_CLR_TABS` and always must be: the grant is
+ * `AccAdvClrAccess.CanAdvanceMessage` / `.CanClearMessage` (migration 166), a
+ * column ACC Portal's own settings-tab saver never names and so never
+ * deletes, unlike a `TabKey` row in the table that saver rewrites wholesale.
+ * See `@/lib/acc/message-grant`.
+ *
+ * **One component for both forms**, reading and writing whichever column
+ * `form` selects — exactly like the two Interface ERP settings-tab keys are
+ * one shared shape with a form-selected key.
+ *
+ * Disabled for an approver-only row (`row.access === null`): there is no
+ * `AccAdvClrAccess` row to hold the column, so a tick there would have
+ * nothing to set. `row.access`'s absence is also why this cell reads `false`
+ * rather than the wrong form's flag.
+ */
+function MessageGrantCell({
+  form,
+  row,
+  onSaved,
+}: {
+  form: AdvClrForm;
+  row: AccessGridRow;
+  onSaved: () => Promise<unknown>;
+}) {
+  const stored = form === "AP-2" ? row.access?.canAdvanceMessage : row.access?.canClearMessage;
+  const [checked, setChecked] = useState(!!stored);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setChecked(!!stored);
+  }, [row.key, stored]);
+
+  const toggle = async () => {
+    if (!row.access) return;
+    const next = !checked;
+    setChecked(next);
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = {
+        email: row.email,
+        displayName: row.displayName,
+        isActive: row.access.isActive,
+        ...(form === "AP-2" ? { canAdvanceMessage: next } : { canClearMessage: next }),
+      };
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = (await res.json()) as { ok: boolean; error?: string };
+      if (!j.ok) throw new Error(j.error ?? "บันทึกไม่สำเร็จ");
+      await onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+      setChecked(!!stored);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <td className="px-3 py-2.5 text-center" style={{ borderLeft: "1px solid var(--border-light)" }}>
+      <GrantCheckbox
+        checked={checked}
+        saving={saving || !row.access}
+        onChange={() => void toggle()}
+        ariaLabel={`${row.displayName} — Message`}
+      />
+    </td>
+  );
+}
+
+/**
  * Who may open which of ONE form's settings tabs and working menus, and who
  * approves its money — one table, one row per person, one column per right.
  *
@@ -414,9 +491,24 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
    * looking for "who may open Interface ERP" should find the answer rather
    * than conclude the tab is missing. That need is real, so it is met by the
    * line under the table instead of by a dead column.
+   *
+   * **`advanceMessages` / `clearMessages` are excluded EXPLICITLY, from both
+   * filters, since migration 166.** Neither carries `adminOnly` or `note` any
+   * more — the tab genuinely is grantable now, just not through this table's
+   * TabKey vocabulary at all: the grant is `AccAdvClrAccess.CanAdvanceMessage`
+   * / `.CanClearMessage`, a column, and `MessageGrantCell` is its own bespoke
+   * checkbox. Without the `t.key !== "…Messages"` guard, a message tab would
+   * pass the `!t.adminOnly` test and land in `tabs`, where its tick would
+   * render through `TabGrantCells` but never save — `GRANTABLE_ADV_CLR_TABS`,
+   * which the payload is built from, still excludes it and always must (see
+   * `@/lib/acc/message-grant`).
    */
-  const tabs = advClrTabsForForm(form).filter((t) => !t.adminOnly);
-  const adminOnlyTabs = advClrTabsForForm(form).filter((t) => t.adminOnly);
+  const tabs = advClrTabsForForm(form).filter(
+    (t) => !t.adminOnly && t.key !== "advanceMessages" && t.key !== "clearMessages",
+  );
+  const adminOnlyTabs = advClrTabsForForm(form).filter(
+    (t) => t.adminOnly && t.key !== "advanceMessages" && t.key !== "clearMessages",
+  );
   const columns = advClrApproverColumnsForForm(form);
   const otherForm: AdvClrForm = form === "AP-2" ? "AP-3" : "AP-2";
 
@@ -480,7 +572,9 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
      the card below that — AP-4's answer at narrow widths, matched rather than
      re-invented. Computed instead of hardcoded because the two forms have
      different column counts (AP-2 has three approver levels, AP-3 one). */
-  const minWidth = 430 + 74 * (columns.length + tabs.length + menus.length);
+  // +1 for the Message column, which is not counted in `tabs` — see that
+  // const's own comment for why it is excluded.
+  const minWidth = 430 + 74 * (columns.length + tabs.length + menus.length + 1);
   const notes = tabs.filter((t) => t.note);
   const loadFailed = !!error || (!!data && !data.ok);
 
@@ -648,6 +742,19 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
                     >
                       หน้าใช้งาน
                     </th>
+                    {/* Its own single-column header, `rowSpan={2}` like
+                        เจ้าของฟอร์ม/สถานะ beside it, rather than a group of
+                        one: the grant is AccAdvClrAccess.CanAdvanceMessage /
+                        .CanClearMessage (migration 166), never a
+                        tabs/menus entry — see MessageGrantCell and
+                        @/lib/acc/message-grant. */}
+                    <th
+                      rowSpan={2}
+                      className="text-center px-3 py-2 font-semibold align-bottom whitespace-nowrap"
+                      style={{ color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }}
+                    >
+                      Message
+                    </th>
                     {/* Before สถานะ (the user, 2026-09-24), outside every grant
                         group: an owner grants nothing, so it must not read as
                         another kind of tick. **It is per FORM even though the
@@ -789,6 +896,7 @@ export function AdvClrAccessSettings({ form }: { form: AdvClrForm }) {
                         menus={menus}
                         onSaved={refresh}
                       />
+                      <MessageGrantCell form={form} row={r} onSaved={refresh} />
                       {/* Ticked for a row with no สิทธิ์เข้าถึง row at all, and
                           for one that is switched off: this is not access, so
                           neither state is a reason to stop telling requesters

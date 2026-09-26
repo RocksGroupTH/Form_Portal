@@ -144,10 +144,13 @@ const REIMBURSE_ALL_TAB_META: Record<
 > = {
   brands: { label: "แบรนด์ที่เบิกได้" },
   rules: { label: "ระเบียบการจ่าย" },
-  messages: {
-    label: "Message",
-    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
-  },
+  // Neither `adminOnly` nor `note`: since migration 166 this tab is granted
+  // through its own COLUMN (`AccReimburseAccess.CanMessage`), not through this
+  // table's `TabKey` vocabulary at all — so it is not rendered from
+  // `TAB_COLUMNS`/`ADMIN_ONLY_TABS` (both explicitly exclude "messages"; see
+  // `ReimburseAccessSettings.tsx`) and carries its own bespoke checkbox column
+  // instead. See `@/lib/acc/message-grant`.
+  messages: { label: "Message" },
   glAccounts: {
     label: "หมวดบัญชี G/L",
     note: "เป็นข้อมูลชุดเดียวกับ AP-3 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",

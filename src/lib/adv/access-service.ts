@@ -57,6 +57,14 @@ export interface AdvClrAccessRow {
    * grants do not come from here; they see every tab and every menu.
    */
   settingsTabs: string[];
+  /**
+   * Whether this person may open AP-2's Message tab —
+   * `AccAdvClrAccess.CanAdvanceMessage` (migration 166), a COLUMN rather than a
+   * `settingsTabs` entry. See `@/lib/acc/message-grant`.
+   */
+  canAdvanceMessage: boolean;
+  /** Same shape, for AP-3's Message tab — `AccAdvClrAccess.CanClearMessage`. */
+  canClearMessage: boolean;
 }
 
 /**
@@ -121,20 +129,26 @@ export async function loadAdvClrTabsByAccessIds(
 /** The whole roster with each person's grants, for the สิทธิ์เข้าถึง grid. */
 export async function listAdvClrAccess(activeOnly = false): Promise<AdvClrAccessRow[]> {
   const pool = await getAccPool();
+  // Both message columns ride along on this same row — they are columns
+  // (migration 166), not a child-table join like `settingsTabs` below, so they
+  // need no separate fail-closed loader.
   const r = await pool.request().query(`
-    SELECT Id, StaffId, Email, DisplayName, IsActive
+    SELECT Id, StaffId, Email, DisplayName, IsActive, CanAdvanceMessage, CanClearMessage
     FROM [dbo].[AccAdvClrAccess]
     ${activeOnly ? "WHERE IsActive = 1" : ""}
     ORDER BY DisplayName, StaffId
   `);
   const rows = (r.recordset as Array<{
     Id: number; StaffId: number; Email: string; DisplayName: string; IsActive: boolean;
+    CanAdvanceMessage: boolean; CanClearMessage: boolean;
   }>).map((x) => ({
     id: x.Id,
     staffId: x.StaffId,
     email: x.Email,
     displayName: x.DisplayName,
     isActive: !!x.IsActive,
+    canAdvanceMessage: !!x.CanAdvanceMessage,
+    canClearMessage: !!x.CanClearMessage,
   }));
   const tabMap = await loadAdvClrTabsByAccessIds(rows.map((row) => row.id));
   return rows.map((row) => ({ ...row, settingsTabs: tabMap.get(row.id) ?? [] }));
@@ -175,6 +189,15 @@ export async function upsertAdvClrAccess(a: {
   displayName: string;
   isActive?: boolean;
   createdBy?: number | null;
+  /**
+   * Three-valued exactly like `isActive`: omitted leaves `CanAdvanceMessage`
+   * (migration 166) alone; a boolean sets it. Never posted by the "add" flow,
+   * so a brand-new row keeps the column's own `DEFAULT 0`. Deliberately NOT
+   * part of `settingsTabs` — see `@/lib/acc/message-grant`.
+   */
+  canAdvanceMessage?: boolean;
+  /** Same shape, for AP-3's `CanClearMessage`. */
+  canClearMessage?: boolean;
 }): Promise<void> {
   await writeBothPools(async (tx) => {
     await tx
@@ -183,6 +206,16 @@ export async function upsertAdvClrAccess(a: {
       .input("email", sql.NVarChar(200), a.email)
       .input("name", sql.NVarChar(200), a.displayName)
       .input("active", sql.Bit, a.isActive === undefined ? null : a.isActive)
+      .input(
+        "canAdvanceMessage",
+        sql.Bit,
+        a.canAdvanceMessage === undefined ? null : a.canAdvanceMessage,
+      )
+      .input(
+        "canClearMessage",
+        sql.Bit,
+        a.canClearMessage === undefined ? null : a.canClearMessage,
+      )
       .input("by", sql.Int, a.createdBy ?? null)
       .query(`
         MERGE [dbo].[AccAdvClrAccess] WITH (HOLDLOCK) AS t
@@ -190,6 +223,8 @@ export async function upsertAdvClrAccess(a: {
         WHEN MATCHED THEN UPDATE SET
           Email = @email, DisplayName = @name,
           IsActive = COALESCE(@active, t.IsActive),
+          CanAdvanceMessage = COALESCE(@canAdvanceMessage, t.CanAdvanceMessage),
+          CanClearMessage = COALESCE(@canClearMessage, t.CanClearMessage),
           UpdatedBy = @by, UpdatedAt = SYSDATETIME()
         WHEN NOT MATCHED THEN
           INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)

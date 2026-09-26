@@ -23,6 +23,13 @@ export interface ReimburseAccessRow {
    * grants do not come from here; they see every tab and every menu.
    */
   settingsTabs: string[];
+  /**
+   * Whether this person may open the Message tab — `AccReimburseAccess.CanMessage`
+   * (migration 166), a COLUMN rather than a `settingsTabs` entry. See
+   * `@/lib/acc/message-grant` for why `messages` is deliberately never one of
+   * the `settingsTabs` keys above.
+   */
+  canMessage: boolean;
 }
 
 /**
@@ -46,20 +53,25 @@ export async function listReimburseAccess(
   activeOnly = false,
 ): Promise<ReimburseAccessRow[]> {
   const pool = await getAccPool();
+  // `CanMessage` rides along on this same row — it is a column (migration
+  // 166), not a child-table join like `settingsTabs` below, so it needs no
+  // separate fail-closed loader.
   const r = await pool.request().query(`
-    SELECT Id, StaffId, Email, DisplayName, IsActive
+    SELECT Id, StaffId, Email, DisplayName, IsActive, CanMessage
     FROM [dbo].[AccReimburseAccess]
     ${activeOnly ? "WHERE IsActive = 1" : ""}
     ORDER BY DisplayName, StaffId
   `);
   const rows = (r.recordset as Array<{
     Id: number; StaffId: number; Email: string; DisplayName: string; IsActive: boolean;
+    CanMessage: boolean;
   }>).map((x) => ({
     id: x.Id,
     staffId: x.StaffId,
     email: x.Email,
     displayName: x.DisplayName,
     isActive: !!x.IsActive,
+    canMessage: !!x.CanMessage,
   }));
   // One batch read for the whole page. `loadReimburseTabsByAccessIds` degrades a
   // *missing table* to no grants and rethrows everything else on purpose — the
@@ -97,6 +109,13 @@ export async function upsertReimburseAccess(a: {
   displayName: string;
   isActive?: boolean;
   createdBy?: number | null;
+  /**
+   * Three-valued exactly like `isActive`: omitted leaves `CanMessage`
+   * (migration 166) alone; a boolean sets it. Never posted by the "add"
+   * flow, so a brand-new row keeps the column's own `DEFAULT 0`. Deliberately
+   * NOT part of `settingsTabs` — see `@/lib/acc/message-grant`.
+   */
+  canMessage?: boolean;
 }): Promise<void> {
   await writeBothPools(async (tx) => {
     await tx
@@ -120,6 +139,7 @@ export async function upsertReimburseAccess(a: {
       // distinction `ApiKey`'s `expiresAt` PATCH makes, for the same reason:
       // "leave it alone" has to be expressible.
       .input("active", sql.Bit, a.isActive === undefined ? null : a.isActive)
+      .input("canMessage", sql.Bit, a.canMessage === undefined ? null : a.canMessage)
       .input("by", sql.Int, a.createdBy ?? null)
       .query(`
         MERGE [dbo].[AccReimburseAccess] WITH (HOLDLOCK) AS t
@@ -127,6 +147,7 @@ export async function upsertReimburseAccess(a: {
         WHEN MATCHED THEN UPDATE SET
           Email = @email, DisplayName = @name,
           IsActive = COALESCE(@active, t.IsActive),
+          CanMessage = COALESCE(@canMessage, t.CanMessage),
           UpdatedBy = @by, UpdatedAt = SYSDATETIME()
         WHEN NOT MATCHED THEN
           INSERT (StaffId, Email, DisplayName, IsActive, CreatedBy)

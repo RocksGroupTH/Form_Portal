@@ -282,6 +282,68 @@ function TabGrantCheckbox({
   );
 }
 
+/**
+ * The Message tab's tick — its own column, deliberately outside the
+ * `GRANTABLE_SETTINGS_TABS` loop beside it.
+ *
+ * **Not a `settingsTabs` entry.** `messages` is not, and must never become, a
+ * `GrantableSettingsTabKey`: the grant is `AccApprover.CanMessage` (migration
+ * 166), a column ACC Portal's own settings-tab saver never names and so never
+ * deletes, unlike a `TabKey` row in the table that saver rewrites wholesale.
+ * See `@/lib/acc/message-grant`. Posting it inside `settingsTabs` would put it
+ * right back in that table.
+ */
+function ApproverMessageGrantCell({
+  approver,
+  onSaved,
+}: {
+  approver: AccApproverRow;
+  onSaved: () => void;
+}) {
+  const [checked, setChecked] = useState(approver.canMessage);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setChecked(approver.canMessage);
+  }, [approver.id, approver.canMessage]);
+
+  const toggle = async () => {
+    const next = !checked;
+    setChecked(next);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/request/accounting/settings/approvers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: approver.id, email: approver.email, canMessage: next }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        onSaved();
+      } else {
+        toast.error(json.error ?? "บันทึกไม่สำเร็จ");
+        setChecked(approver.canMessage);
+      }
+    } catch {
+      toast.error("บันทึกไม่สำเร็จ");
+      setChecked(approver.canMessage);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <td className="px-3 py-2.5 text-center" style={{ borderLeft: "1px solid var(--border-light)" }}>
+      <TabGrantCheckbox
+        checked={checked}
+        saving={saving}
+        onChange={() => void toggle()}
+        ariaLabel={`${approver.displayName ?? approver.email} — Message`}
+      />
+    </td>
+  );
+}
+
 function ApproverTabGrantCells({
   approver,
   onSaved,
@@ -389,6 +451,14 @@ function ApproverTabGrantTable({
                     {tab.label}
                   </th>
                 ))}
+                {/* Its own column, not part of GRANTABLE_SETTINGS_TABS above —
+                    see ApproverMessageGrantCell for why. */}
+                <th
+                  className="text-center px-3 py-2.5 font-semibold whitespace-nowrap"
+                  style={{ color: "var(--text-muted)", borderLeft: "1px solid var(--border-light)" }}
+                >
+                  Message
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -415,11 +485,14 @@ function ApproverTabGrantTable({
                     </p>
                   </td>
                   {a.isActive ? (
-                    <ApproverTabGrantCells approver={a} onSaved={onSaved} />
+                    <>
+                      <ApproverTabGrantCells approver={a} onSaved={onSaved} />
+                      <ApproverMessageGrantCell approver={a} onSaved={onSaved} />
+                    </>
                   ) : (
                     <td
                       className="px-3 py-2.5 text-center"
-                      colSpan={GRANTABLE_SETTINGS_TABS.length}
+                      colSpan={GRANTABLE_SETTINGS_TABS.length + 1}
                     >
                       <span className="text-[11px]" style={{ color: "var(--text-faint)" }}>
                         เปิดใช้งานเพื่อกำหนดสิทธิ์แท็บ

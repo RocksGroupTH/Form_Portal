@@ -196,23 +196,51 @@ test("only GRANTABLE tabs get a checkbox column, and the rest are named below", 
   // Filtering on `adminOnly` rather than naming keys is itself load-bearing:
   // it is what let Interface ERP reappear as a real column, with no edit to
   // this component, the moment it became grantable.
+  //
+  // **Both filters ALSO exclude `advanceMessages` / `clearMessages` by key,
+  // since migration 166.** Neither carries `adminOnly` any more — the tab
+  // genuinely is grantable now, just not through this table's TabKey
+  // vocabulary: the grant is `AccAdvClrAccess.CanAdvanceMessage` /
+  // `.CanClearMessage`, a column, and `MessageGrantCell` is its own bespoke
+  // checkbox. Without the key exclusion, removing `adminOnly` from the meta
+  // would pull the message tab straight into `tabs`, where its tick would
+  // render through `TabGrantCells` but never save —
+  // `GRANTABLE_ADV_CLR_TABS`, which the payload is built from, still excludes
+  // it and always must (see `@/lib/acc/message-grant`).
   const fn = topLevelFunction("AdvClrAccessSettings");
   assert.match(
     fn,
-    /const tabs = advClrTabsForForm\(form\)\.filter\(\(t\) => !t\.adminOnly\);/,
-    "the grid's columns are no longer filtered to the grantable tabs",
+    /const tabs = advClrTabsForForm\(form\)\.filter\(\s*\(t\) => !t\.adminOnly && t\.key !== "advanceMessages" && t\.key !== "clearMessages",\s*\);/,
+    "the grid's columns are no longer filtered to the grantable tabs, or no longer exclude the message keys",
   );
   // …and the ones that lost their column must still be findable, or an admin
   // asking "who may open สิทธิ์เข้าถึง?" gets no row, no column and no answer
   // and reasonably concludes the tab is gone.
   assert.match(
     fn,
-    /const adminOnlyTabs = advClrTabsForForm\(form\)\.filter\(\(t\) => t\.adminOnly\);/,
-    "the ungrantable tabs are no longer collected for the line under the table",
+    /const adminOnlyTabs = advClrTabsForForm\(form\)\.filter\(\s*\(t\) => t\.adminOnly && t\.key !== "advanceMessages" && t\.key !== "clearMessages",\s*\);/,
+    "the ungrantable tabs are no longer collected for the line under the table, or no longer exclude the message keys",
   );
   assert.match(SRC, /\{adminOnlyTabs\.length > 0 && \(/, "that line is no longer rendered");
   // The reach warnings are printed, not left to a `title` nobody hovers.
   assert.match(SRC, /\{notes\.length > 0 && \(/, "the `note` lines are no longer rendered");
+});
+
+test("the Message tick is its OWN column, saved through its own field", () => {
+  // `advanceMessages` / `clearMessages` must never appear in the
+  // GRANTABLE_ADV_CLR_TABS-built payload — see @/lib/acc/message-grant — so
+  // they need their own component posting their own field. If this component
+  // or its field names are renamed, this is the test that goes red rather
+  // than silently reverting to no UI at all.
+  assert.match(SRC, /function MessageGrantCell/, "the bespoke Message checkbox component is missing");
+  assert.match(
+    SRC,
+    /<MessageGrantCell form=\{form\} row=\{r\} onSaved=\{refresh\}\s*\/>/,
+    "the Message checkbox is not rendered in the table body",
+  );
+  const fn = topLevelFunction("MessageGrantCell");
+  assert.match(fn, /canAdvanceMessage:\s*next/, "MessageGrantCell does not post canAdvanceMessage for AP-2");
+  assert.match(fn, /canClearMessage:\s*next/, "MessageGrantCell does not post canClearMessage for AP-3");
 });
 
 /* ── the approver column ── */

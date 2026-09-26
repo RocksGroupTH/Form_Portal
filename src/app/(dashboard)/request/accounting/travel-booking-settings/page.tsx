@@ -149,6 +149,7 @@ export default function TravelBookingSettingsPage() {
     loading: accessLoading,
     isAdmin: accessIsAdmin,
     settingsTabs,
+    canMessage,
     canSettings,
   } = useBookingAccess();
 
@@ -172,10 +173,19 @@ export default function TravelBookingSettingsPage() {
   // hand: that tab hands out the grants, so it must never become reachable
   // through one, and deriving the rule keeps a sixth tab from leaking in
   // through a list somebody forgot to update.
+  //
+  // `messages` is a SEPARATE arm, deliberately not folded into the
+  // `isGrantableBookingTabKey` test above: that key is not, and must never
+  // become, a `GrantableBookingTabKey` — the grant is
+  // `AccBookingApprover.CanMessage` (migration 166), a column ACC Portal's own
+  // settings-tab saver cannot delete, not a `TabKey` row it can. See
+  // `@/lib/acc/message-grant`.
   const visibleTabs = isAdmin
     ? TABS
     : TABS.filter(
-        (t) => isGrantableBookingTabKey(t.key) && settingsTabs.indexOf(t.key) !== -1,
+        (t) =>
+          (isGrantableBookingTabKey(t.key) && settingsTabs.indexOf(t.key) !== -1) ||
+          (t.key === "messages" && canMessage),
       );
   if (visibleTabs.length === 0) return <NoAccessState />;
 

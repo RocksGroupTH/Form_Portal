@@ -7,6 +7,8 @@ interface BookingAccessData {
   approver: boolean;
   admin: boolean;
   settingsTabs: string[];
+  /** `AccBookingApprover.CanMessage` (migration 166) — a column, not a settingsTabs entry. */
+  canMessage: boolean;
   canSettings: boolean;
   bookingQueue: boolean;
   accountApproval: boolean;
@@ -49,7 +51,9 @@ export function useBookingAccess() {
      * `[]` for admins, who see every tab.
      */
     settingsTabs: access?.settingsTabs ?? [],
-    /** admin OR at least one granted tab. */
+    /** Whether this non-admin booking approver holds the Message tab's own column. */
+    canMessage: access?.canMessage ?? false,
+    /** admin OR at least one granted tab OR the Message column. */
     canSettings: access?.canSettings ?? false,
     /**
      * Menu grant for the Admin booking-fill queue — admin OR `CanQueue` on

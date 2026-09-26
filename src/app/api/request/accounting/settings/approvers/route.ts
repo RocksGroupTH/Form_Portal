@@ -44,11 +44,14 @@ export async function GET() {
  * POST /api/request/accounting/settings/approvers
  * Upserts an approver record.
  * Body: { id?, staffId?, email, displayName?, isActive?, interfaceBrandCodes?,
- *         settingsTabs? }
+ *         settingsTabs?, canMessage? }
  * interfaceBrandCodes: null | omitted = all groups; string[] = explicit subset
  * settingsTabs: omitted = leave the grants alone; string[] = the granted set,
  *   so [] revokes everything. Unknown keys — `approvers` above all — are
  *   dropped by setApproverSettingsTabs, never stored.
+ * canMessage: omitted leaves `AccApprover.CanMessage` (migration 166) alone;
+ *   a boolean sets it. Deliberately NOT part of `settingsTabs` — see
+ *   `@/lib/acc/message-grant` for why that grant cannot be a `TabKey` row.
  * Requires IT Admin or System Admin.
  */
 export async function POST(req: NextRequest) {
@@ -70,7 +73,13 @@ export async function POST(req: NextRequest) {
         /* HR lookup is best-effort — don't block adding the approver */
       }
     }
-    await upsertApprover(body, Number(session.user.id));
+    await upsertApprover(
+      {
+        ...body,
+        canMessage: typeof body.canMessage === "boolean" ? body.canMessage : undefined,
+      },
+      Number(session.user.id),
+    );
 
     if ("interfaceBrandCodes" in body) {
       const approverId =

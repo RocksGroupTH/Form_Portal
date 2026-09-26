@@ -5,6 +5,8 @@ import useSWR from "swr";
 interface ReimburseAccessData {
   admin: boolean;
   settingsTabs: string[];
+  /** `AccReimburseAccess.CanMessage` (migration 166) — a column, not a settingsTabs entry. */
+  canMessage: boolean;
   canSettings: boolean;
   /**
    * Sight of `/request/reimburse/approvals` — the `approvalQueue` menu grant
@@ -66,10 +68,13 @@ export function useReimburseAccess() {
      * who see every tab.
      */
     settingsTabs: access?.settingsTabs ?? [],
+    /** Whether this non-admin holds the Message tab's own column. */
+    canMessage: access?.canMessage ?? false,
     /**
-     * admin OR at least one granted tab. **Membership alone is false** — an
-     * `AccReimburseAccess` row with no ticks opens nothing, so adding somebody
-     * and then walking away leaves them exactly where they were.
+     * admin OR at least one granted tab OR the Message column.
+     * **Membership alone is false** — an `AccReimburseAccess` row with no
+     * ticks opens nothing, so adding somebody and then walking away leaves
+     * them exactly where they were.
      */
     canSettings: access?.canSettings ?? false,
     /**

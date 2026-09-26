@@ -72,10 +72,12 @@ type TabKey = ReimburseSettingsTabKey;
 
 const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   rules: { label: "ระเบียบการจ่าย", icon: <FileCheck size={15} /> },
-  // Admin-only — `@/lib/acc/reimburse/settings-tabs` excludes it from
-  // `GrantableReimburseTabKey` because the grant could not be stored:
-  // `AccReimburseAccessTab` is shared with ACC Portal, whose own save rewrites
-  // that table through its own key filter, which has never heard of this key.
+  // `@/lib/acc/reimburse/settings-tabs` excludes `messages` from
+  // `GrantableReimburseTabKey`, and always will: `AccReimburseAccessTab` is
+  // shared with ACC Portal, whose own save rewrites that table through its own
+  // key filter, which has never heard of this key. That does NOT make the tab
+  // admin-only any more (migration 166) — see `canMessage` above, which reads
+  // `AccReimburseAccess.CanMessage`, a column that saver never touches.
   messages: { label: "Message", icon: <MessageSquare size={15} /> },
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   erpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
@@ -163,6 +165,7 @@ function ReimburseSettingsContent() {
     loading: accessLoading,
     isAdmin: accessIsAdmin,
     settingsTabs,
+    canMessage,
     canSettings,
   } = useReimburseAccess();
 
@@ -183,9 +186,15 @@ function ReimburseSettingsContent() {
   // Admins see everything; a granted non-admin sees only what they hold. The
   // `isAdmin` arm has to come first — `settingsTabs` is `[]` for an admin, so
   // filtering on it alone would show them nothing.
+  //
+  // `messages` is a SEPARATE arm: `settingsTabs` already comes pre-filtered to
+  // `GRANTABLE_REIMBURSE_TABS`, which `messages` is not and must never be —
+  // the grant is `AccReimburseAccess.CanMessage` (migration 166), a column ACC
+  // Portal's own settings-tab saver cannot delete, not a `TabKey` row it can.
+  // See `@/lib/acc/message-grant`.
   const visibleTabs = isAdmin
     ? TABS
-    : TABS.filter((t) => settingsTabs.indexOf(t.key) !== -1);
+    : TABS.filter((t) => settingsTabs.indexOf(t.key) !== -1 || (t.key === "messages" && canMessage));
 
   // `?tab=` can name a tab this viewer does not hold, and `parseTabKey` only
   // checks that it is a real one. Fall back to the first tab they actually have

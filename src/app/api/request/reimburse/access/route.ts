@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isAdminRole } from "@/lib/roles";
 import { resolveReimburseTabsByEmail } from "@/lib/acc/reimburse/access-tabs";
+import { resolveReimburseAccessCanMessageByEmail } from "@/lib/acc/reimburse/access-message-access";
 import {
   decideReimburseMenuAccess,
   filterGrantableReimburseTabKeys,
@@ -61,6 +62,11 @@ export async function GET(_req: NextRequest) {
     // working for an admin while migration 120 is still landing on one of the
     // two databases.
     let granted: string[] = [];
+    // `canMessage` is a COLUMN (AccReimburseAccess.CanMessage, migration 166),
+    // never a `settingsTabs` entry — see `@/lib/acc/message-grant`. Its own
+    // try, for the reason the read above has one: the two answer different
+    // questions from different storage.
+    let canMessage = false;
     if (!admin) {
       try {
         granted = await resolveReimburseTabsByEmail(email);
@@ -71,12 +77,17 @@ export async function GET(_req: NextRequest) {
         // anyway — and never hands one out.
         console.error("[reimburse/access] grant read failed — reporting no grants", err);
       }
+      try {
+        canMessage = await resolveReimburseAccessCanMessageByEmail(email);
+      } catch (err) {
+        console.error("[reimburse/access] message-grant read failed — reporting not granted", err);
+      }
     }
     // `granted` is the raw stored list — tabs and menus mixed together, since
     // that is what the table holds. Each surface narrows it with its own
     // filter: settings tabs never see a menu key and vice versa.
     const settingsTabs = filterGrantableReimburseTabKeys(granted);
-    const canSettings = admin || settingsTabs.length > 0;
+    const canSettings = admin || settingsTabs.length > 0 || canMessage;
     // Sight of a working screen, which is a different question from sight of a
     // settings tab and is answered by a different filter. `granted` is the raw
     // stored list; `decideReimburseMenuAccess` is what decides, so an admin
@@ -88,6 +99,7 @@ export async function GET(_req: NextRequest) {
       data: {
         admin,
         settingsTabs,
+        canMessage,
         canSettings,
         menus,
         approvalQueue,

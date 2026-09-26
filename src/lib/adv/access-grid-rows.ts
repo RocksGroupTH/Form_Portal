@@ -37,6 +37,10 @@ export interface AccessRosterRow {
   isActive: boolean;
   /** Both forms' keys — see `AdvClrAccessRow.settingsTabs`' own comment. */
   settingsTabs: string[];
+  /** `AccAdvClrAccess.CanAdvanceMessage` (migration 166) — AP-2's Message tab. */
+  canAdvanceMessage: boolean;
+  /** `AccAdvClrAccess.CanClearMessage` (migration 166) — AP-3's Message tab. */
+  canClearMessage: boolean;
 }
 
 /**
