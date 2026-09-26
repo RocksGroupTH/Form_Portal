@@ -926,7 +926,15 @@ async function collectAndDeleteRequestArtifacts(tx: AccTx, requestId: number): P
          with. The statement itself is still required, and still names both
          columns: both foreign keys are NO ACTION, so the `AccRequest` delete
          below raises unless the binding goes first — the guest's side (a
-         requester discarding their own attached draft) as much as the host's. */
+         requester discarding their own attached draft) as much as the host's.
+
+     Rule 3, layer 1 (2026-09-26): "a dying GUEST releases its host" needed a
+     new call at every OTHER death site (`recomputeAfterDeath`, approval.ts),
+     but NOT here. This DELETE already clears `GuestRequestId=@rid` alongside
+     `HostRequestId=@rid`, so a discarded draft that was itself somebody's
+     guest already frees the host it occupied — `releaseGuestShare` would be
+     a second, redundant DELETE on the identical predicate. Checked and
+     confirmed rather than assumed; do not add one here. */
   await tx.request().input("rid", sql.Int, requestId)
     .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId=@rid OR HostRequestId=@rid`);
   await tx.request().input("rid", sql.Int, requestId)

@@ -58,6 +58,7 @@ import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
 import { AccConflictError, AccForbiddenError } from "@/lib/acc/request-errors";
 import { ACL_NOT_EDITABLE, EDITABLE_STATUSES } from "@/lib/acc/request-acl-policy";
 import {
+  DEAD,
   canAttach,
   canHost,
   SELF_ATTACH_MESSAGE,
@@ -436,13 +437,23 @@ async function loadShareCandidates(
   // any of them empty because the caller "only needs canHost" would be a lie
   // the next caller inherits.
   //
-  // `g.RequestNo` comes from an INNER JOIN to the GUEST's own `AccRequest`
-  // row — it is the label `canHost`'s "host_taken" message names.
+  // `g.RequestNo` and `g.Status` come from an INNER JOIN to the GUEST's own
+  // `AccRequest` row — the label `canHost`'s "host_taken" message names, and
+  // rule 3's own defence: a guest whose request has already died (Cancelled
+  // or Rejected) is excluded below, in TypeScript, using the exact same
+  // `DEAD` list `canHost`/`canAttach` and the cascade already use. That is
+  // deliberately NOT spelled as a SQL predicate here — this file's own
+  // "hostability is decided by canHost, not re-expressed as SQL" test bans
+  // exactly that shape, and DEAD.indexOf is what every other aliveness check
+  // in this feature already does. The ordinary path deletes a dying guest's
+  // own row before this ever runs (`releaseGuestShare`, called alongside
+  // `applyRoomShareDeath` at every death site); this is the defence for a
+  // death path that did not.
   const shareReq = runner.request();
   requestIds.forEach((id, i) => shareReq.input(`sid${i}`, sql.Int, id));
   const shareList = requestIds.map((_, i) => `@sid${i}`).join(", ");
   const shares = await shareReq.query(`
-    SELECT s.GuestRequestId, s.HostRequestId, g.RequestNo AS GuestRequestNo
+    SELECT s.GuestRequestId, s.HostRequestId, g.RequestNo AS GuestRequestNo, g.Status AS GuestStatus
       FROM [dbo].[AccTravelRoomShare] s${lockHint}
       INNER JOIN [dbo].[AccRequest] g ON g.Id = s.GuestRequestId
      WHERE s.GuestRequestId IN (${shareList})
@@ -456,7 +467,13 @@ async function loadShareCandidates(
     GuestRequestId: number;
     HostRequestId: number;
     GuestRequestNo: string | null;
+    GuestStatus: string | null;
   }[]) {
+    // Rule 3, layer 2: a guest whose own request has already died does not
+    // occupy anything — for isGuest, hostsFor, hostOf OR takenBy. See the
+    // block comment above for why this is TypeScript rather than SQL.
+    if (DEAD.indexOf(String(s.GuestStatus ?? "")) !== -1) continue;
+
     guestOf.set(s.GuestRequestId, true);
     // Which host, not merely that there is one — see `ShareCandidateRead`.
     hostOf.set(s.GuestRequestId, s.HostRequestId);
@@ -1193,6 +1210,46 @@ export async function claimRoomShareHostNotice(
 
   await queueRoomShareAttachedMail(tx, { guestRequestId, hostRequestId });
   return true;
+}
+
+/* ───────────────────── a dying guest releases its host ───────────────────── */
+
+/**
+ * **Rule 3, layer 1 (2026-09-26): when a GUEST's own request dies, its
+ * room-share binding dies with it — on the caller's open transaction, as
+ * part of the same status change.**
+ *
+ * This is the mirror of `applyRoomShareDeath` (`room-share-cascade-apply.ts`),
+ * which reacts to a HOST dying by cancelling or detaching its guests.
+ * `applyRoomShareDeath` does nothing for a request that is not a host, and
+ * this does nothing for a request that is not a guest — the two are never
+ * both true of the same request (one hop only, spec §3, enforced by
+ * `canHost`/`canAttach`), so calling both on the same dying `requestId` is
+ * always safe: at most one of them finds a row to act on.
+ *
+ * Without this, rule 2's new exclusivity (`UQ_AccTravelRoomShare_Host`,
+ * migration 165) would lock a host forever the moment its one guest died —
+ * exactly the failure rule 3 exists to prevent. The guest itself already gets
+ * its own cancellation's mail, activity row and per-diem give-back through
+ * the ordinary path this function is called alongside; this only clears the
+ * pointer to whatever room it had been leaning on.
+ *
+ * **No mail, no activity row, no per-diem recompute — deliberately.** The
+ * user was asked whether the host should be told a guest withdrew and said
+ * *"ไม่ต้องแจ้ง host"*: the host never consented to the attach in the first
+ * place (spec §2), so it is not owed a notice that it went away either. This
+ * is the plain state-cleanup half of the rule; `loadShareCandidates`'
+ * DEAD-status exclusion (rule 3, layer 2) is the independent defence for a
+ * death path this function was never wired into.
+ *
+ * A request with no guest row is the overwhelming common case and costs one
+ * indexed `DELETE` that matches nothing.
+ */
+export async function releaseGuestShare(tx: SqlRunner, requestId: number): Promise<void> {
+  await tx
+    .request()
+    .input("gid", sql.Int, requestId)
+    .query(`DELETE FROM [dbo].[AccTravelRoomShare] WHERE GuestRequestId = @gid`);
 }
 
 /* ─────────────────────────── the cascade's loader ─────────────────────────── */

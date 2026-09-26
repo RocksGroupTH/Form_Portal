@@ -48,6 +48,22 @@ import path from "node:path";
  * host its owner discards is not a status transition, but its guests are just
  * as stranded.
  *
+ * ## Rule 3 (2026-09-26) added a SIXTH direction, inside `recomputeAfterDeath`
+ * itself rather than a sixth site
+ *
+ * Package E's cascade only ever asked "who are THIS request's guests" —
+ * `applyRoomShareDeath` looks up guests OF the dying request, which answers
+ * nothing when the dying request is itself a GUEST. Once rule 2 made a host
+ * exclusive (`UQ_AccTravelRoomShare_Host`, migration 165), leaving a dead
+ * guest's binding in place would lock its host forever — nobody could ever
+ * attach to it again. `releaseGuestShare` (`room-share-service.ts`) is the
+ * mirror: an unconditional `DELETE … WHERE GuestRequestId = @gid`, called
+ * from the same one place `applyRoomShareDeath` already is, because one hop
+ * only (spec §3) means a request can never be both, so the two calls can
+ * never conflict. No new call site is needed at `collectAndDeleteRequestArtifacts`
+ * — its own hard-delete statement already clears `GuestRequestId=@rid OR
+ * HostRequestId=@rid` in one go, confirmed by reading it rather than assumed.
+ *
  * ## Mutation-verified, 2026-09-22
  *
  * Because a guard nobody has tried to defeat is a guard nobody knows the
@@ -121,6 +137,42 @@ test("recomputeAfterDeath cascades to the host's room-share guests", () => {
 });
 
 /**
+ * **Rule 3, layer 1 (2026-09-26): the dying request could be a GUEST instead
+ * of a host, and `applyRoomShareDeath` does not cover that direction at
+ * all** — it looks up guests OF the dying request, which answers nothing for
+ * a request that is itself somebody else's guest. Without a second call, rule
+ * 2's new `UQ_AccTravelRoomShare_Host` (a host may have at most one guest)
+ * would lock a host forever the moment its one guest was cancelled or
+ * rejected: the binding survives, the index still counts it as taken, and
+ * nobody else can ever attach to that host again.
+ *
+ * One hop only (spec §3: a guest may not itself be a host) means the two
+ * calls can never both find a row for the same dying request, so calling
+ * both unconditionally — as `recomputeAfterDeath` now does — is always safe.
+ */
+test("recomputeAfterDeath also releases the dying request's OWN guest share", () => {
+  const body = bodyOf(APPROVAL, "async function recomputeAfterDeath");
+  assert.ok(
+    /releaseGuestShare\s*\(\s*tx\s*,\s*requestId\s*\)/.test(body),
+    "recomputeAfterDeath no longer calls releaseGuestShare(tx, requestId) — a cancelled or " +
+      "rejected GUEST would keep its room-share binding, and rule 2's UQ_AccTravelRoomShare_Host " +
+      "would then lock that host forever: nobody could ever attach to it again, because the " +
+      "index still counts a dead guest as occupying the one slot",
+  );
+});
+
+/** The same import-presence check `applyRoomShareDeath` already implicitly needs. */
+test("approval.ts imports releaseGuestShare from the room-share service", () => {
+  const src = code(APPROVAL);
+  assert.ok(
+    /import\s*\{\s*releaseGuestShare\s*\}\s*from\s*["']@\/lib\/acc\/travel-booking\/room-share-service["']/.test(
+      src,
+    ),
+    "approval.ts no longer imports releaseGuestShare from room-share-service.ts",
+  );
+});
+
+/**
  * Not a style point. The give-back returns early on a null `GroupKey`, and a
  * request with no group key can still be somebody's host — so a cascade placed
  * inside that guarded branch, or before it behind the same `return`, silently
@@ -152,6 +204,36 @@ test("the cascade is not gated on the host having a GroupKey", () => {
       "applyRoomShareDeath is inside recomputeAfterDeath's `if (groupKey)` block. A request " +
         "with no GroupKey can still be somebody's room-share host, and its guests would " +
         "survive it — the group key gates the per-diem give-back and nothing else",
+    );
+  }
+});
+
+/**
+ * The same defect one level down, for rule 3's `releaseGuestShare` call. A
+ * request with no `GroupKey` can just as easily be somebody's GUEST as
+ * somebody's host, and the per-diem give-back's own early return must not
+ * take the guest-release with it either.
+ */
+test("releaseGuestShare is not gated on the dying request having a GroupKey either", () => {
+  const body = bodyOf(APPROVAL, "async function recomputeAfterDeath");
+
+  assert.ok(
+    !/if\s*\(\s*!groupKey\s*\)\s*return\s*;[\s\S]*releaseGuestShare/.test(body),
+    "releaseGuestShare sits after an `if (!groupKey) return;` — a guest request with no " +
+      "GroupKey would keep its stale binding, locking its host forever under rule 2's " +
+      "UQ_AccTravelRoomShare_Host",
+  );
+
+  const opens = body.indexOf("if (groupKey) {");
+  if (opens !== -1) {
+    const after = body.slice(opens);
+    const closes = after.indexOf("\n  }");
+    assert.notEqual(closes, -1, "could not find the end of recomputeAfterDeath's `if (groupKey)` block");
+    assert.ok(
+      !/releaseGuestShare/.test(after.slice(0, closes)),
+      "releaseGuestShare is inside recomputeAfterDeath's `if (groupKey)` block. A guest request " +
+        "with no GroupKey would then keep its binding — the group key gates the per-diem " +
+        "give-back and nothing else",
     );
   }
 });
@@ -580,6 +662,15 @@ const CASCADE_CALL_SITES: { file: string; name: string; signature: string; call:
     call: "applyRoomShareDates(tx",
     why: "BOOKING_SET is the only writer of DepartDate/ReturnDate in src/, so this is the " +
       "only place a host's dates can move",
+  },
+  {
+    file: APPROVAL,
+    name: "recomputeAfterDeath (guest release)",
+    signature: "async function recomputeAfterDeath",
+    call: "releaseGuestShare(tx",
+    why: "rule 3, layer 1 (2026-09-26): a swallowed failure here would let the guest's own " +
+      "cancellation commit while its stale room-share binding survives, permanently locking " +
+      "the host under rule 2's UQ_AccTravelRoomShare_Host",
   },
 ];
 

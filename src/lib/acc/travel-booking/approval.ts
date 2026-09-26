@@ -9,6 +9,7 @@ import { payoutDateFor, payoutTripKind } from "@/lib/acc/travel-booking/payout-r
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
 import { applyRoomShareDeath } from "@/lib/acc/travel-booking/room-share-cascade-apply";
+import { releaseGuestShare } from "@/lib/acc/travel-booking/room-share-service";
 import { loadPerDiemDependency } from "@/lib/acc/travel-booking/perdiem-dependency-load";
 import { dependencyRefusalText } from "@/lib/acc/travel-booking/perdiem-dependency-text";
 import { AP17_FORM_CODE } from "@/features/travel-booking/constants";
@@ -186,6 +187,14 @@ async function recomputeAfterDeath(
   // the cascade with it. `applyRoomShareDeath` is one indexed read and out
   // when there are no guests, which is almost always.
   await applyRoomShareDeath(tx, requestId);
+  // Rule 3, layer 1 (2026-09-26): the dying request could instead be a GUEST
+  // rather than a host — the mirror direction `applyRoomShareDeath` does not
+  // cover. One hop only (spec §3) means it can never be both, so calling
+  // both unconditionally is safe: at most one finds a row. Without this, a
+  // cancelled or rejected guest would leave its binding in place and, since
+  // rule 2's UQ_AccTravelRoomShare_Host now allows a host exactly one guest,
+  // lock that host forever.
+  await releaseGuestShare(tx, requestId);
 }
 
 export async function approveByManager(requestId: number, actor: Actor): Promise<TravelBookingRequest> {

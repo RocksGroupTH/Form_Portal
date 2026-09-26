@@ -656,7 +656,10 @@ test("the service exports exactly the surface Task 4 defines", () => {
   // 2026-09-23 — it reads no host row and returns nothing about one, so it
   // adds no reach for this file's own subject; it is listed because the
   // surface is pinned whole. `room-share-notify-guard.test.ts` is what
-  // polices what it does.
+  // polices what it does. `releaseGuestShare` is rule 3's layer 1
+  // (2026-09-26) — the mirror of `applyRoomShareDeath`, reacting to the
+  // GUEST dying instead of the host; `room-share-cascade-guard.test.ts` pins
+  // that it is actually called from every death site.
   assert.deepEqual(found, [
     "HOST_NOT_FILED_MESSAGE",
     "HostCandidateRow",
@@ -669,6 +672,7 @@ test("the service exports exactly the surface Task 4 defines", () => {
     "loadHostByRequestNo",
     "loadHostableRequests",
     "loadRoomShare",
+    "releaseGuestShare",
   ]);
 });
 
@@ -932,6 +936,55 @@ test("loadShareCandidates populates takenBy from the same share-row read as host
 });
 
 /**
+ * **Rule 3, layer 2 — the defence for an unforeseen death path.** Layer 1
+ * (`releaseGuestShare`, called from `recomputeAfterDeath`) deletes a dying
+ * guest's own binding synchronously; this is what happens if some future
+ * death path is not wired into that call — package E's own final review
+ * found a *fifth* way a request dies that its spec had not listed, and an
+ * unforeseen sixth must degrade to "the host is free", never "locked for
+ * ever". Asserted as `DEAD.indexOf`, the exact idiom `canHost`/`canAttach`
+ * and the cascade already use for "alive" — NOT a SQL predicate, which is
+ * precisely what "hostability is decided by canHost, not re-expressed as
+ * SQL" (above) already bans from this file.
+ */
+test("a dead guest's share row is excluded from isGuest, hostsFor AND takenBy alike", () => {
+  const body = bodyOf(code(SERVICE), "async function loadShareCandidates");
+  assert.ok(
+    /DEAD\.indexOf\(\s*String\(\s*s\.GuestStatus/.test(body),
+    "loadShareCandidates no longer excludes a share row whose GUEST has already died. A stale " +
+      "binding left behind by an unforeseen death path would then keep the host permanently " +
+      "taken, and under rule 2's UQ_AccTravelRoomShare_Host nobody could ever attach to it again",
+  );
+  // Structural: the exclusion must run BEFORE every map it protects, or a
+  // `continue` added below one of them (rather than at the top of the loop)
+  // would leave that one map still counting the dead guest.
+  const deadAt = body.search(/DEAD\.indexOf\(\s*String\(\s*s\.GuestStatus/);
+  const guestOfAt = body.indexOf("guestOf.set(");
+  const hostsForAt = body.indexOf("hostsFor.set(");
+  const takenByAt = body.indexOf("takenBy.set(");
+  for (const [label, at] of [
+    ["guestOf", guestOfAt],
+    ["hostsFor", hostsForAt],
+    ["takenBy", takenByAt],
+  ] as const) {
+    assert.notEqual(at, -1, `${label}.set( not found in loadShareCandidates`);
+    assert.ok(
+      deadAt < at,
+      `the DEAD-status exclusion no longer runs before ${label} is populated, so a dead guest's ` +
+        "row could still be counted there even though it is excluded elsewhere",
+    );
+  }
+  assert.ok(
+    /import\s*\{[^}]*\bDEAD\b[^}]*\}\s*from\s*["']@\/lib\/acc\/travel-booking\/room-share-policy["']/.test(
+      code(SERVICE),
+    ),
+    "room-share-service.ts no longer imports DEAD from room-share-policy.ts — a re-spelled " +
+      "['Cancelled','Rejected'] here would be an eighth definition of 'alive', which is exactly " +
+      "the disagreement room-share-policy.ts's own DEAD comment warns against",
+  );
+});
+
+/**
  * **The picker must not simply DROP a taken host — it must show it, disabled,
  * with the reason.** This is the behavioural half of the field test above:
  * carrying `takenByMessage` on the type is pointless if the row carrying it
@@ -953,5 +1006,23 @@ test("loadHostableRequests keeps a taken host in the list rather than dropping i
     /takenByMessage/.test(body),
     "loadHostableRequests no longer threads a takenByMessage onto the rows it returns — the " +
       "field exists on HostCandidateRow and nothing populates it for a genuinely taken host",
+  );
+});
+
+/** `releaseGuestShare` takes a runner and opens no pool of its own — the same shape `loadGuestsOf` requires, for the same reason: it is called from inside a caller-owned transaction. */
+test("releaseGuestShare takes a runner and opens no pool of its own", () => {
+  const src = code(SERVICE);
+  assert.match(
+    src,
+    /export async function releaseGuestShare\(\s*tx:\s*SqlRunner,/,
+    "releaseGuestShare must take a SqlRunner (a pool OR an open transaction) as its first " +
+      "parameter, so the caller's own transaction is used rather than a separate connection",
+  );
+  const body = bodyOf(src, "export async function releaseGuestShare");
+  assert.ok(
+    body.indexOf("getAccPool(") === -1,
+    "releaseGuestShare opens its own pool, so a guest's dying transaction could commit while " +
+      "the release runs on a different connection outside it — or not at all, if the caller's " +
+      "own transaction then rolls back",
   );
 });
