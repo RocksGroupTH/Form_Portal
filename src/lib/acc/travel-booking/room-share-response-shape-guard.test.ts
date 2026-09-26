@@ -1026,3 +1026,67 @@ test("releaseGuestShare takes a runner and opens no pool of its own", () => {
       "own transaction then rolls back",
   );
 });
+
+/* ═══════ rule 3, layer 3 (2026-09-26, fix round 1) — the TARGET HOST's own
+   stale row must be cleared before the bind ═══════ */
+
+/**
+ * **The gap this closes.** Layer 2 (`loadShareCandidates`'s DEAD-status
+ * exclusion, tested above) makes `canHost`/`canAttach` treat a host whose
+ * only guest has died as FREE — but that only changes what the *candidate*
+ * says; it never touches the physical row. Left in place, the INSERT a few
+ * lines below collides with `UQ_AccTravelRoomShare_Host` (migration 165)
+ * every single time, `violatedRoomShareIndex` answers `"host"`, and the
+ * requester is told to reload — which never helps, because `canHost`
+ * answers "free" again on the very next attempt, forever, until a DBA
+ * deletes the orphan by hand. So layer 2 WITHOUT this layer is worse than no
+ * layer 2 at all: the stale row would otherwise produce a refusal that at
+ * least matches what the database can do. This layer is what actually
+ * removes the orphan, at bind time, so the INSERT has somewhere to land.
+ */
+test("applyRoomShareSelection clears a stale row for the TARGET HOST before the INSERT, keyed on DEAD", () => {
+  const body = bodyOf(code(SERVICE), "export async function applyRoomShareSelection");
+
+  // Keyed on the TARGET host (HostRequestId), joined to the GUEST's own
+  // AccRequest row for its status — the mirror of layer 2's read, applied as
+  // a write. This must not be satisfied by any of the function's other
+  // DELETEs, which are all keyed on GuestRequestId.
+  const cleanupRe =
+    /DELETE\s+s[\s\S]*?FROM \[dbo\]\.\[AccTravelRoomShare\] s[\s\S]*?INNER JOIN \[dbo\]\.\[AccRequest\] g ON g\.Id = s\.GuestRequestId[\s\S]*?WHERE s\.HostRequestId\s*=\s*@hid[\s\S]*?g\.Status IN/;
+  const cleanupAt = body.search(cleanupRe);
+  assert.notEqual(
+    cleanupAt,
+    -1,
+    "applyRoomShareSelection no longer deletes a stale AccTravelRoomShare row keyed on the " +
+      "TARGET host (s.HostRequestId, joined to the guest's own AccRequest.Status) before the " +
+      "insert. Without it, a host whose only guest has died reads as free from canHost (layer " +
+      "2) but the INSERT still collides with UQ_AccTravelRoomShare_Host, and reloading never " +
+      "helps because canHost answers free again every time",
+  );
+
+  const insertAt = body.indexOf("INSERT INTO [dbo].[AccTravelRoomShare]");
+  assert.notEqual(insertAt, -1, "the attach INSERT itself was not found — has it been renamed?");
+  assert.ok(
+    cleanupAt < insertAt,
+    "the stale-host cleanup no longer runs BEFORE the attach INSERT — it must run first, or " +
+      "the INSERT would still collide with the very row this cleanup exists to remove",
+  );
+
+  // Built from the exported DEAD list with bound parameters, never a literal
+  // ('Cancelled','Rejected') — the same discipline layer 2 uses. A regex over
+  // rendered SQL text cannot tell a re-spelled literal from the real thing,
+  // which is why this asserts the SOURCE construct (DEAD.map) rather than the
+  // interpolated string, and separately refuses the literal spelling.
+  assert.ok(
+    /DEAD\.map\(/.test(body),
+    "the stale-host cleanup no longer derives its status list from the DEAD export via " +
+      "DEAD.map(...) — a re-spelled ('Cancelled','Rejected') here would be an eighth " +
+      "definition of 'alive', exactly what room-share-policy.ts's own DEAD comment warns " +
+      "against",
+  );
+  assert.ok(
+    !/g\.Status IN \(\s*'Cancelled'/.test(body),
+    "the stale-host cleanup's status list was inlined as a literal ('Cancelled', …) instead " +
+      "of built from DEAD's bound parameters",
+  );
+});

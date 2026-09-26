@@ -1089,6 +1089,43 @@ export async function applyRoomShareSelection(
   // binding in place without relying on the caller's rollback to put it back.
   if (refusal) throw refusalError(refusal);
 
+  /* Rule 3, layer 3 (2026-09-26, fix round 1): a host `canHost`/`canAttach`
+     just answered "free" under layer 2 (its only guest already died) may
+     still carry the STALE row that made it look taken in the first place —
+     layer 2 only made `loadShareCandidates` stop COUNTING that row, it never
+     deleted it. Left in place, the INSERT below collides with
+     `UQ_AccTravelRoomShare_Host` every time, `violatedRoomShareIndex`
+     answers "host", and the requester is told to reload — which never
+     helps, because `canHost` answers "free" again on the very next attempt,
+     forever, until a DBA deletes the orphan by hand. So layer 2 without this
+     would be worse than no layer 2 at all: the ghost row would at least
+     produce a refusal that matches what the database can actually do.
+
+     Deletes ANY row for this host whose guest has died — not only the
+     guest this call is attaching, and not scoped to `input.guestRequestId`
+     — because the host may be occupied by a THIRD request's dead guest,
+     unrelated to the one being saved here. Runs under the same lock
+     `loadShareCandidates({ lock: true })` already took on this host's rows
+     a few lines up, so there is no second acquisition to reason about.
+
+     Built from the exported `DEAD` list with bound parameters, never a
+     literal `('Cancelled','Rejected')` — the same discipline layer 2 uses
+     and for the same reason: CLAUDE.md records that "which statuses count
+     as alive" already has six definitions in this neighbourhood, and a
+     seventh that disagreed would be the bug. */
+  const cleanupReq = tx.request().input("hid", sql.Int, hostRequestId);
+  const deadParams = DEAD.map((status, i) => {
+    cleanupReq.input(`dead${i}`, sql.NVarChar, status);
+    return `@dead${i}`;
+  });
+  await cleanupReq.query(`
+    DELETE s
+      FROM [dbo].[AccTravelRoomShare] s
+      INNER JOIN [dbo].[AccRequest] g ON g.Id = s.GuestRequestId
+     WHERE s.HostRequestId = @hid
+       AND g.Status IN (${deadParams.join(", ")})
+  `);
+
   try {
     if (currentHostId !== null) {
       await tx
@@ -1118,10 +1155,17 @@ export async function applyRoomShareSelection(
         // races name different offending requests.
         throw new AccConflictError("คำขอนี้ถูกเลือกเป็นห้องพักร่วมไปแล้วโดยคำขออื่น — กรุณาโหลดหน้านี้ใหม่");
       }
-      // `UQ_AccTravelRoomShare_Guest` is the backstop `canAttach`'s
-      // `guest_has_host` refusal normally speaks for; reaching it means two
-      // saves raced. Same message, so the requester reads one answer.
-      throw new AccConflictError("คำขอนี้แนบกับห้องพักร่วมอื่นอยู่แล้ว — กรุณาโหลดหน้านี้ใหม่");
+      if (which === "guest") {
+        // `UQ_AccTravelRoomShare_Guest` is the backstop `canAttach`'s
+        // `guest_has_host` refusal normally speaks for; reaching it means two
+        // saves raced. Same message, so the requester reads one answer.
+        throw new AccConflictError("คำขอนี้แนบกับห้องพักร่วมอื่นอยู่แล้ว — กรุณาโหลดหน้านี้ใหม่");
+      }
+      // `which === null`: a unique-violation error whose message names
+      // NEITHER index. That used to fall through to the guest-side message
+      // above by default — asserting "you're the one already attached"
+      // about a failure that might be neither is worse than an unmapped
+      // error, so this is its own outcome: rethrow rather than guess.
     }
     throw e;
   }
