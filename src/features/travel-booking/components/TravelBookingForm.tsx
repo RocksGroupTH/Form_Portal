@@ -192,37 +192,43 @@ export function TravelBookingForm({ initial, onSaved, onSubmitted }: TravelBooki
         <UatDataBanner requestId={anchorRequestId} holdSpace={false} />
       </div>
 
-      {/* คำแนะนำ — copy comes from Settings → Message; falls back to
-          AP17_HEADER_MESSAGE_LINES when the table is missing. */}
-      {messageBlocks.length > 0 && (
-        <div
-          data-tour="ap17-notice"
-          className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
-          style={{
-            background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
-            border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
-          }}
-        >
-          <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
-          <div className="flex flex-col gap-1">
-            {messageBlocks.map((line, i) => (
-              <p
-                key={i}
-                className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {line}
-              </p>
-            ))}
-            {/* Who to ask about a cancellation, on every form (the user,
-                2026-09-24). Falls back to the bare sentence while nobody is
-                named — see `formOwnerNotice`. */}
-            <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
-              {ownerNotice}
+      {/* คำแนะนำ — the bullets come from Settings → Message (falling back to
+          AP17_HEADER_MESSAGE_LINES when the table is missing); the box itself
+          is NOT gated on them, because the contact line below always renders
+          — `formOwnerNotice` never returns an empty string, so there is
+          nothing for a length check to guard against, and gating the box on
+          `messageBlocks` would blank the contact line on every ordinary page
+          load until /api/form-environment resolves, and again for good if an
+          admin ever clears AP-17's message. Only the bullets are conditional. */}
+      <div
+        data-tour="ap17-notice"
+        className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
+        style={{
+          background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
+          border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
+        }}
+      >
+        <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
+        <div className="flex flex-col gap-1">
+          {messageBlocks.map((line, i) => (
+            <p
+              key={i}
+              className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {line}
             </p>
-          </div>
+          ))}
+          {/* Who to ask about a cancellation — unconditional, unlike the
+              bullets above. `useFormOwnerNotice` always returns text: with no
+              owner named it falls back to the bare sentence (the user,
+              2026-09-24), so this paragraph never has an empty case to
+              guard. */}
+          <p className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
+            {ownerNotice}
+          </p>
         </div>
-      )}
+      </div>
 
       {/* ผู้ขอเบิก (read-only) */}
       <SectionCard

@@ -2002,8 +2002,7 @@ export function TravelExpenseForm({
             </ul>
           )}
         </div>
-
-          </>
+        </>
         ) : (
           <SectionLockedHint message={travelDetailsLockedMessage} />
         )}
