@@ -9,7 +9,7 @@
  * The three notice constants it imports have no runtime imports of their own,
  * which is what makes this module safe to load in a test.
  */
-import { expandFormMessage } from "./form-message-text";
+import { expandFormMessage, FORM_OWNER_TOKEN } from "./form-message-text";
 import type { FormOwnerRef } from "./form-owner-text";
 import { AP1_HEADER_MESSAGE_LINES } from "@/features/accounting/constants";
 import { AP17_HEADER_MESSAGE_LINES } from "@/features/travel-booking/constants";
@@ -22,9 +22,23 @@ import { REIMBURSE_NOTICE } from "@/features/reimburse/constants";
  * a row exists with an empty body, which means "this form shows no notice" and
  * is a decision an admin took. AP-2 and AP-3 have no entry because they have
  * no notice to fall back to.
+ *
+ * **AP-1's entry is one bullet longer than `AP1_HEADER_MESSAGE_LINES` itself,
+ * and that is deliberate — do not "simplify" it back to the bare constant.**
+ * AP-1's footer block, deleted when this feature folded its copy into the
+ * settings-backed notice, was the only thing that ever rendered AP-1's contact
+ * line; this form renders no `FormOwnerNotice` anywhere else (AP-17 and AP-2/3/4
+ * all still do, which is why their fallbacks stay the bare constant). Leaving
+ * `AP1_HEADER_MESSAGE_LINES` as the fallback would mean a deployment that has
+ * not yet applied migration 164 — or a `FormMessage` row somebody later deletes
+ * — shows three bullets and no way to reach the form's owner at all.
+ * `AP1_HEADER_MESSAGE_LINES` itself is left untouched, at three lines, because
+ * it is pinned by other tests as the raw copy.
  */
 export const FORM_MESSAGE_FALLBACK: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "AP-1": AP1_HEADER_MESSAGE_LINES,
+  "AP-1": Array.from(AP1_HEADER_MESSAGE_LINES).concat([
+    `กรณีต้องการยกเลิกติดต่อเจ้าของฟอร์ม: ${FORM_OWNER_TOKEN}`,
+  ]),
   "AP-17": AP17_HEADER_MESSAGE_LINES,
   "AP-4": REIMBURSE_NOTICE,
 });
