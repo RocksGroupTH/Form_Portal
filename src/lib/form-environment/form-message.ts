@@ -83,6 +83,12 @@ export async function getFormMessage(formCode: string): Promise<FormMessageRow |
  * `FormCode` is the primary key, so there is nothing to diff. Bounded to the
  * one form — **the caller passes a literal, never a value off the wire**, which
  * is what stops a grant on one form's tab from rewriting another form's copy.
+ *
+ * `WITH (HOLDLOCK)` on the target, matching `booking-approver-service.ts`,
+ * `reimburse/access-service.ts` and `sequence.ts`: without it, two admins
+ * saving a form's *first* message at once can both miss the `WHEN MATCHED`
+ * branch and both attempt the `INSERT`, and the second loses to the primary
+ * key rather than being serialised into an `UPDATE`.
  */
 export async function setFormMessage(
   formCode: string,
@@ -98,7 +104,7 @@ export async function setFormMessage(
     .input("body", sql.NVarChar(sql.MAX), String(body ?? ""))
     .input("by", sql.NVarChar, actorEmail || null)
     .query(
-      `MERGE [dbo].[FormMessage] AS t
+      `MERGE [dbo].[FormMessage] WITH (HOLDLOCK) AS t
        USING (SELECT @code AS FormCode) AS s ON t.FormCode = s.FormCode
        WHEN MATCHED THEN
          UPDATE SET BodyText = @body, UpdatedBy = @by, UpdatedAt = SYSDATETIME()

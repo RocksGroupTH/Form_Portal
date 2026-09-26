@@ -42,7 +42,16 @@ export async function POST(req: NextRequest) {
   if (session instanceof Response) return session;
   try {
     const body = await req.json();
-    const text = typeof body?.body === "string" ? body.body : "";
+    // Absent and explicit-empty must not collapse into the same thing: an
+    // explicit "" legitimately means "show no notice" (an admin's decision),
+    // while a malformed or field-less POST is not that decision and must not
+    // silently clear a form's notice with nothing to undo it — FormMessage
+    // keeps no change log. Same distinction the API-key PATCH's `expiresAt`
+    // and AP-17's `roomShareHostRequestId` draw for the same reason.
+    if (typeof body?.body !== "string") {
+      return NextResponse.json({ ok: false, error: "body is required" }, { status: 400 });
+    }
+    const text = body.body;
     const problem = messageBodyProblem(text);
     if (problem) return NextResponse.json({ ok: false, error: problem }, { status: 400 });
     await setFormMessage(FORM_CODE, text, session.user?.email ?? null);
