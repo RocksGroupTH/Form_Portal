@@ -44,7 +44,15 @@ export function FormMessageSettings({
   endpoint: string;
   formCode: string;
 }) {
-  const { data, error, isLoading, mutate } = useSWR<MessageRow>(endpoint, fetcher);
+  // `revalidateOnFocus: false` matches every other editing panel in this repo
+  // (`ReimburseForm.tsx`, `ApiKeySettings.tsx`, `ReimburseDetail.tsx`): SWR's
+  // default is on with no global `SWRConfig` here, and an admin who tabs away
+  // mid-edit and comes back into a failed background revalidation must not
+  // have their in-progress copy replaced by an error screen — see the `error`
+  // gate below, which is the other half of the same fix.
+  const { data, error, isLoading, mutate } = useSWR<MessageRow>(endpoint, fetcher, {
+    revalidateOnFocus: false,
+  });
   const { data: env } = useFormEnvironments();
   const owners = env?.forms?.[formCode]?.owners ?? [];
 
@@ -57,7 +65,11 @@ export function FormMessageSettings({
     if (data && text === null) setText(data.body);
   }, [data, text]);
 
-  const body = text ?? "";
+  // Falling back to "" alone paints an empty textarea for the one render
+  // between SWR resolving and the seeding effect above running, with `dirty`
+  // already true and Save enabled against nothing. Falling back to the
+  // server's own body first means that render shows the real copy instead.
+  const body = text ?? data?.body ?? "";
   const blocks = expandFormMessage(body, owners);
   const problem = messageBodyProblem(body);
   const dirty = data != null && body !== data.body;
@@ -85,9 +97,16 @@ export function FormMessageSettings({
   if (isLoading) {
     return <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>กำลังโหลด...</p>;
   }
-  // A failed read must never render as an empty message: saving over it would
-  // wipe the real copy. Same rule `LogPanel` learned the hard way.
-  if (error) {
+  // A failed FIRST load must never render as an empty message: saving over it
+  // would wipe the real copy. Same rule `LogPanel` learned the hard way.
+  //
+  // But this must fire only when there is no `data` to fall back on. With
+  // `revalidateOnFocus` off this is now almost always a first-load failure —
+  // a background revalidation error is the rarer case, and replacing the whole
+  // editor with this message would discard whatever the admin was typing, in
+  // React state but unreachable behind this early return. `ApiKeySettings.tsx`'s
+  // `LogPanel` draws the same line for the same reason.
+  if (error && !data) {
     return (
       <p className="text-[13px]" style={{ color: "var(--text-danger)" }}>
         โหลดข้อความไม่สำเร็จ — กรุณาลองใหม่อีกครั้ง
@@ -102,7 +121,16 @@ export function FormMessageSettings({
         style={{ background: "var(--bg-card-alt)", border: "1px solid var(--border-card)", color: "var(--text-secondary)" }}
       >
         <p className="m-0">• คั่นแต่ละข้อด้วย<strong>บรรทัดว่าง 1 บรรทัด</strong> — การขึ้นบรรทัดใหม่เฉย ๆ จะยังอยู่ในข้อเดียวกัน</p>
-        <p className="m-0">• พิมพ์ <code>{FORM_OWNER_TOKEN}</code> เพื่อแทนชื่อเจ้าของฟอร์ม — ถ้าลบออก บรรทัดติดต่อจะหายไปด้วย</p>
+        {/* Only AP-1 folded its contact line into this box — it renders no
+            `FormOwnerNotice` anywhere else. AP-17 and AP-2/AP-3/AP-4 all still
+            render that line as its own paragraph outside this box, so telling
+            them the SAME thing this hint tells AP-1 would invite an admin to
+            type the token here too and get the contact line twice. */}
+        {formCode === "AP-1" ? (
+          <p className="m-0">• พิมพ์ <code>{FORM_OWNER_TOKEN}</code> เพื่อแทนชื่อเจ้าของฟอร์ม — ถ้าลบออก บรรทัดติดต่อจะหายไปด้วย</p>
+        ) : (
+          <p className="m-0">• ฟอร์มนี้แสดงบรรทัดติดต่อเจ้าของฟอร์มแยกต่างหากอยู่แล้ว — ถ้าพิมพ์ <code>{FORM_OWNER_TOKEN}</code> ในข้อความนี้ด้วย บรรทัดติดต่อจะซ้ำกัน</p>
+        )}
         <p className="m-0">• ปล่อยว่างไว้ = ไม่แสดงกล่องข้อความบนฟอร์มนี้</p>
       </div>
 
@@ -111,6 +139,7 @@ export function FormMessageSettings({
         onChange={(e) => setText(e.target.value)}
         rows={14}
         spellCheck={false}
+        disabled={saving}
         className="w-full rounded-xl px-3 py-2.5 text-[13px] leading-relaxed font-mono"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border-card)", color: "var(--text-primary)" }}
       />
@@ -148,7 +177,14 @@ export function FormMessageSettings({
             }}
           >
             {blocks.map((b, i) => (
-              <p key={i} className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line" style={{ color: "var(--text-secondary)" }}>
+              // `pre-wrap`, not `pre-line` — AP-4's `ReimburseNotice` renders
+              // with `whitespace-pre-wrap`, and `pre-line` collapses runs of
+              // spaces and drops a line's leading space. Its docblock (and
+              // migration 164's own seed comment) call the fourth
+              // `REIMBURSE_NOTICE` block's leading space part of the owner's
+              // compliance source text — `pre-wrap` is a superset that
+              // preserves it and is correct for all five forms' previews.
+              <p key={i} className="text-[12.5px] leading-relaxed m-0 whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>
                 {b}
               </p>
             ))}
