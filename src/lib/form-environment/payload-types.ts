@@ -44,6 +44,17 @@ export interface FormAccess {
    * payload that never arrived, exactly as `owners` can.
    */
   message: string[];
+  /**
+   * `AccFormMaster.FormNameTh` / `.FormNameEn` — the admin-editable pair set at
+   * Settings → Form Environment, read production-only (see
+   * `form-names-service.ts`'s `listFormNames`). `null` for a code the table
+   * does not name, or while the read could not be done at all, in which case
+   * the caller falls back to its own hardcoded name rather than rendering
+   * nothing — the same `null`-means-fall-back rule `owners`/`message` do not
+   * need, because those two already have an empty-array "nothing here" value.
+   */
+  nameTh: string | null;
+  nameEn: string | null;
 }
 
 /** One named owner. Mirrors `FormOwner` in `./form-owner`, minus the id. */

@@ -18,6 +18,7 @@
  */
 import { sql } from "@/lib/acc/pool";
 import { writeBothPools } from "@/lib/acc/dual-write";
+import { getProductionFormPool } from "@/lib/db/mssql";
 
 export async function setFormNames(
   formCode: string,
@@ -43,4 +44,53 @@ export async function setFormNames(
     if (matched === 0) matched = r.rowsAffected[0] ?? 0;
   });
   return matched > 0;
+}
+
+/** One form's canonical, admin-editable name pair. */
+export interface CanonicalFormNames {
+  nameTh: string;
+  nameEn: string;
+}
+
+/** True for the one error this is allowed to swallow: the table is not there. */
+function isMissingAccFormMaster(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e);
+  return /Invalid object name/i.test(message) && /AccFormMaster/i.test(message);
+}
+
+/**
+ * Every form's canonical name pair, keyed by `FormCode`.
+ *
+ * Read through **`getProductionFormPool()`**, never `getFormPool()`/`getAccPool()`:
+ * `AccFormMaster` is dual-written (`setFormNames` above), so both databases
+ * already hold identical names, and production is the stable choice that does
+ * not vary with which database the *caller's own* request happens to resolve
+ * to — Home's catalogue reads this for every viewer alike, tester or not.
+ *
+ * Degrades like `form-owner.ts`'s `listFormOwners`: a missing table answers
+ * `{}` rather than throwing, and every other failure is rethrown, because
+ * silently printing no names over a real fault would hide the fault without
+ * helping anybody. A form absent from the result is a code the caller should
+ * fall back on, not one it should render blank.
+ */
+export async function listFormNames(): Promise<Readonly<Record<string, CanonicalFormNames>>> {
+  let rows: { FormCode: string; FormNameTh: string; FormNameEn: string }[];
+  try {
+    const pool = await getProductionFormPool();
+    const res = await pool.request().query<{
+      FormCode: string;
+      FormNameTh: string;
+      FormNameEn: string;
+    }>(`SELECT FormCode, FormNameTh, FormNameEn FROM [dbo].[AccFormMaster]`);
+    rows = res.recordset;
+  } catch (e) {
+    if (isMissingAccFormMaster(e)) return {};
+    throw e;
+  }
+
+  const out: Record<string, CanonicalFormNames> = {};
+  for (const r of rows) {
+    out[r.FormCode] = { nameTh: r.FormNameTh, nameEn: r.FormNameEn };
+  }
+  return out;
 }

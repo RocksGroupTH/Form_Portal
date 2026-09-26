@@ -38,6 +38,16 @@ import { Search, Route, Luggage, Receipt, ReceiptText, ClipboardCheck, FilePen, 
  * The *order* here is not one of the things kept by hand: write entries in
  * whatever order is convenient, and `sortByFormCode` renders them by form
  * number.
+ *
+ * **`name` is now a FALLBACK, not what most viewers read.** Since 2026-09-26
+ * the card prefers `AccFormMaster.FormNameTh`/`.FormNameEn` — the same
+ * admin-editable pair Settings → Form Environment renames — read off
+ * `/api/form-environment`'s own `nameTh`/`nameEn` (the user: "ใช้ชื่อที่เก็บไว้
+ * ทั้งดุ้น", i.e. the stored name whole, not a shortened one). `name` here and
+ * `formNameEn` below are what the card falls back to while that payload is
+ * still loading, has failed, or names a code `AccFormMaster` does not carry —
+ * they are deliberately kept, not deleted, so Home still renders a name with
+ * no network at all.
  */
 /*
  * The English name is NOT here: it comes from `formNameEn`, keyed on the code.
@@ -177,6 +187,7 @@ function PendingLink({ href, Icon, title, subtitle, count }: {
 function AccountingFormCard({
   code,
   name,
+  nameEn,
   desc,
   href,
   Icon,
@@ -184,12 +195,13 @@ function AccountingFormCard({
 }: {
   code: string;
   name: string;
+  /** Resolved by the caller — the canonical `AccFormMaster` name, or `formNameEn(code)`. */
+  nameEn: string;
   desc: string;
   href: string;
   Icon: React.ComponentType<{ size?: number }>;
   comingSoon: boolean;
 }) {
-  const nameEn = formNameEn(code);
   const body = (
     <>
       <span
@@ -334,6 +346,15 @@ export function HomeCatalogue() {
    * never invent a state, and here the safe invention is "no watermark".
    */
   const isFormComingSoon = (code: string) => forms?.[code]?.comingSoon ?? false;
+  /**
+   * The canonical `AccFormMaster` pair for this code, or `null` while the
+   * payload has not landed, has failed, or the table names nothing for this
+   * code — every one of which falls back to `ACCOUNTING_FORMS`' own hardcoded
+   * `name` / `formNameEn`. `""` reads the same as absent: a blank stored name
+   * is not a name to prefer over the fallback.
+   */
+  const canonicalNameTh = (code: string) => forms?.[code]?.nameTh?.trim() || null;
+  const canonicalNameEn = (code: string) => forms?.[code]?.nameEn?.trim() || null;
 
   const hrefWithBrand = (href: string) => {
     const current = new URLSearchParams(sp.toString());
@@ -359,10 +380,18 @@ export function HomeCatalogue() {
     ACCOUNTING_FORMS.filter((f) => isFormAvailable(f.code) || isFormComingSoon(f.code)),
     (f) => f.code,
   );
-  // The English name is searchable as well, or adding it would put a word on
-  // screen that typing finds nothing for.
+  // The canonical name is searchable too, on both sides — a viewer typing what
+  // is actually printed on the card (the stored name, once it has loaded) must
+  // find it, not just the hardcoded fallback nobody sees any more once it has.
   const accounting = shownAccounting.filter((f) =>
-    matches(f.code, f.name, f.desc, formNameEn(f.code)),
+    matches(
+      f.code,
+      f.name,
+      f.desc,
+      formNameEn(f.code),
+      canonicalNameTh(f.code),
+      canonicalNameEn(f.code),
+    ),
   );
 
   const name = session?.user?.nickname || session?.user?.name || "";
@@ -518,7 +547,11 @@ export function HomeCatalogue() {
               <AccountingFormCard
                 key={code}
                 code={code}
-                name={formName}
+                // The stored name whole, not a shortened version of it — the
+                // user's own instruction — falling back to the hardcoded short
+                // name while the payload has not landed or names nothing here.
+                name={canonicalNameTh(code) ?? formName}
+                nameEn={canonicalNameEn(code) ?? formNameEn(code)}
                 desc={desc}
                 href={hrefWithBrand(href)}
                 Icon={Icon}

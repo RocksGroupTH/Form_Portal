@@ -18,9 +18,20 @@
  * `REQUEST_CARDS` carries a label, but **several cards share one badge** — a
  * fill card and a management card — so a map built from it takes whichever was
  * declared last, which is arbitrary: AP-1 resolves to "เบิกค่าเดินทาง
- * (ออฟฟิต)", its Settings entry, rather than to the form. These names mirror
- * `ACCOUNTING_FORMS` in `HomeCatalogue.tsx`, which is one entry per code and is
- * the vocabulary Home already teaches people.
+ * (ออฟฟิต)", its Settings entry, rather than to the form.
+ *
+ * **These names used to mirror `ACCOUNTING_FORMS` in `HomeCatalogue.tsx`, and
+ * since 2026-09-26 they no longer do.** Home now prefers the canonical
+ * `AccFormMaster.FormNameTh`/`.FormNameEn` pair — read off
+ * `/api/form-environment`'s `nameTh`/`nameEn` — stored *whole* rather than
+ * shortened, per the user's own instruction ("ใช้ชื่อที่เก็บไว้ทั้งดุ้น").
+ * `ACCOUNTING_FORMS`' hardcoded `name` is now only Home's fallback for a
+ * payload that has not landed or a code the table does not carry. This map
+ * stays exactly as short as it always was — the user asked for the *filter*
+ * to keep the short names on 2026-09-24 for the bracket-collision reason
+ * below, and that decision is independent of what Home shows two days later.
+ * The two surfaces are allowed to read differently for the same form; see
+ * `formFilterLabel`'s own docblock for why.
  *
  * ## Why not an endpoint
  *
