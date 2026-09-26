@@ -22,6 +22,30 @@ const ROUTES = [
   { path: "src/app/api/request/clear-advance/settings/messages/route.ts", code: "AP-3" },
 ];
 
+/**
+ * Each exported HTTP handler in a route file, as `[method, body-from-here]`.
+ *
+ * Copied from `settings-tabs.test.ts`'s own `splitHandlers` rather than
+ * reinvented: an ordering check run over the WHOLE FILE is satisfied by import
+ * declaration order alone, since every symbol these routes touch is named once
+ * in an `import` line before it is ever called — see the `POST`-body check
+ * below, which is exactly the assertion that used to read the imports and pass
+ * regardless of what the handler actually did.
+ */
+function splitHandlers(source: string): { method: string; body: string }[] {
+  const decl = /export async function (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(/g;
+  const starts: { method: string; at: number }[] = [];
+  let m = decl.exec(source);
+  while (m) {
+    starts.push({ method: m[1], at: m.index });
+    m = decl.exec(source);
+  }
+  return starts.map((s, i) => ({
+    method: s.method,
+    body: source.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : source.length),
+  }));
+}
+
 for (const r of ROUTES) {
   const src = readFileSync(r.path, "utf8");
 
@@ -70,8 +94,13 @@ for (const r of ROUTES) {
   });
 
   test(`${r.code}: the body is validated before anything is written`, () => {
+    const post = splitHandlers(src).find((h) => h.method === "POST");
+    assert.ok(post, `${r.path} exports no POST handler`);
+    // Sliced to the handler body on purpose — over the whole file this passes
+    // on import order alone, because both names are named once in an `import`
+    // line before either is ever called.
     assert.ok(
-      src.indexOf("messageBodyProblem") < src.indexOf("setFormMessage"),
+      post.body.indexOf("messageBodyProblem") < post.body.indexOf("setFormMessage"),
       `${r.path} writes before it validates`,
     );
   });

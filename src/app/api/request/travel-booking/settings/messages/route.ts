@@ -7,7 +7,7 @@ import { getFormMessage, setFormMessage } from "@/lib/form-environment/form-mess
  * AP-17's notice copy — the box at the top of the travel-booking form.
  *
  * **`FORM_CODE` is a literal and is never read from the body.** Which form a
- * route governs is a property of the route, the same rule `requireSettingsTab`
+ * route governs is a property of the route, the same rule `requireBookingSettingsTab`
  * states for its tab key; a posted form code would let this route rewrite
  * another form's notice.
  *
