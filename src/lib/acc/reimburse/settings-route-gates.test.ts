@@ -59,6 +59,13 @@ const ROUTE_GATES: { route: string; gate: Gate; publicRead?: "GET" }[] = [
       why: "writes Rocks_ERP_Data — the Business Central mirror Rocks Fast also writes and ACC Portal reads through Fast_Data's synonyms; the same rule AP-1's erp-accounts/sync and AP-3's locations/sync carry. It is the sync button INSIDE the two G/L tabs, so a grant holder works those tabs and this button alone answers 403 — the one deliberately partial grant here, and it stayed that way when the tabs opened",
     },
   },
+  {
+    route: "messages",
+    gate: {
+      kind: "role",
+      why: "a message grants nothing, but the grant could not be stored: AccReimburseAccessTab is shared with ACC Portal, whose own writer deletes an approver's whole tab set and re-inserts only the keys ITS list knows (spec §8, measured against the sibling checkout). A messages grant made here would vanish on that app's next save with no error either side — the exact defect the 2026-09-24 work fixed for AP-17's menu ticks",
+    },
+  },
 ];
 
 async function readRouteFile(route: string): Promise<string> {
@@ -172,10 +179,11 @@ test("every AP-4 settings handler opens with the gate its table entry names", as
   // onto AP-3's BU/branch account rules, admin-only because those rows carry
   // no FormCode and are therefore another form's posting rules too — +2, to 12.
   // Then AP-4's own doors onto AP-3's G/L categories: `gl-accounts` (GET +
-  // POST) and `erp-sync` (POST), +3, to 15.
+  // POST) and `erp-sync` (POST), +3, to 15. Then `messages` (GET + POST),
+  // admin-only because the grant cannot be stored (spec §8) — +2, to 17.
   assert.equal(
     handlerCount,
-    15,
+    17,
     "the AP-4 settings routes gained or lost a handler — check its gate, then update this number",
   );
 });

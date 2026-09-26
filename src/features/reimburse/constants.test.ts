@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   isPurposeGiven,
   REIMBURSE_NOTICE,
@@ -9,6 +10,7 @@ import {
   unknownRuleAckIds,
   validateRuleText,
 } from "./constants";
+import { parseFormMessage } from "@/lib/form-environment/form-message-text";
 
 /*
  * The 1,000-character boundary on `AccReimburseRule.RuleText`.
@@ -133,4 +135,33 @@ test("nothing, or only whitespace, is not a purpose", () => {
 test("a non-string is not a purpose", () => {
   assert.equal(isPurposeGiven(42 as never), false);
   assert.equal(isPurposeGiven({} as never), false);
+});
+
+/* ────────── migration 164 seeds this notice byte-identically ────────── */
+
+/**
+ * Migration 164 seeds AP-4's notice into `Fast_Core.dbo.FormMessage`, and from
+ * then on that seed — not the constant — is what a requester reads.
+ *
+ * The byte-identical test above never reads the migration, so without this one
+ * the compliance copy could be corrupted by the seed while that test stayed
+ * green. Asserting the joined constant appears in the file is the whole check:
+ * the seed IS `REIMBURSE_NOTICE.join("\n\n")` inside an N'…' literal.
+ *
+ * Line endings are normalised because git checks this repo out with CRLF, and
+ * `parseFormMessage` normalises the stored value the same way on read.
+ */
+test("migration 164 seeds AP-4's notice byte-identically", () => {
+  const sql = readFileSync("migrations/164_core_form_message.sql", "utf8").replace(/\r\n?/g, "\n");
+  assert.ok(
+    sql.includes(Array.from(REIMBURSE_NOTICE).join("\n\n")),
+    "migration 164's AP-4 seed is not REIMBURSE_NOTICE joined by blank lines",
+  );
+});
+
+test("migration 164's AP-4 seed parses back to exactly the six blocks", () => {
+  const sql = readFileSync("migrations/164_core_form_message.sql", "utf8").replace(/\r\n?/g, "\n");
+  const seed = Array.from(REIMBURSE_NOTICE).join("\n\n");
+  assert.deepEqual(parseFormMessage(seed), Array.from(REIMBURSE_NOTICE));
+  assert.ok(sql.includes(seed));
 });

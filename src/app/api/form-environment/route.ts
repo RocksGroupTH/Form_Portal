@@ -5,6 +5,7 @@ import { getFormSwitchMap, isComingSoon, resolveFormAccess } from "@/lib/form-en
 import type { FormAccess, FormEnvironmentPayload, ViewerUatStatus } from "@/lib/form-environment/payload-types";
 import { getActiveUatTester } from "@/lib/uat-tester/service";
 import { listFormOwners } from "@/lib/form-environment/form-owner";
+import { listFormMessageBodies, resolveFormMessageBlocks } from "@/lib/form-environment/form-message";
 import { UAT_MODE_COOKIE, isUatModeCookieOn } from "@/lib/uat-mode";
 import { REQUEST_CARDS } from "@/lib/constants";
 
@@ -28,11 +29,12 @@ export async function GET() {
     /* `listFormOwners` is a fourth read on the same Fast_Core pool, and it
        swallows a missing table so the window before migration 163 is applied
        costs the contact line and nothing else — see its own header. */
-    const [switches, tester, cookieStore, owners] = await Promise.all([
+    const [switches, tester, cookieStore, owners, messages] = await Promise.all([
       getFormSwitchMap(),
       getActiveUatTester(email),
       cookies(),
       listFormOwners(),
+      listFormMessageBodies(),
     ]);
 
     // Not just Object.keys(switches): a form with no FormEnvironment row is
@@ -70,6 +72,9 @@ export async function GET() {
           email: o.email,
           displayName: o.displayName,
         })),
+        // Resolved here, not on the client: the owners the token expands to
+        // are already in hand, so the renderers get a plain string[].
+        message: resolveFormMessageBlocks(code, messages, owners[code] ?? []),
       };
     });
 

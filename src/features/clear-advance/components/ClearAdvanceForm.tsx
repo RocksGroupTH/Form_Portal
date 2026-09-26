@@ -5,9 +5,10 @@ import { toast } from "sonner";
 import { suggestPndType } from "@/lib/clr/wht-pnd-core";
 import { DEFAULT_TAX_BRANCH_CODE, taxBranchCode } from "@/lib/clr/tax-branch-core";
 import {
-  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer,
+  Check, Paperclip, Camera, X, Plus, Trash2, Banknote, User, Mail, FileText, Printer, Info,
   Maximize2, Minimize2, UserCog,
 } from "lucide-react";
+import { useFormMessage } from "@/lib/hooks/useFormMessage";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Avatar } from "@/components/ui/Avatar";
@@ -82,6 +83,7 @@ import type {
 } from "@/features/clear-advance/types";
 import {
   AP3_DEFAULT_CURRENCY,
+  AP3_FORM_CODE,
   isRocksPcBrand,
   FORCE_GL_NON_ROCKS_PC,
 } from "@/features/clear-advance/constants";
@@ -188,6 +190,12 @@ function emptyLine(): LineRow {
 }
 
 export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange, onAutoDraft }: Props) {
+  /* The notice box's bullets, from Settings → Message. Read off
+     `/api/form-environment`, which this page already fetches for its
+     environment chip, so it costs no request of its own. `[]` while loading
+     and on a failed fetch — AP-3 has no fallback constant, so it renders
+     nothing until an admin types something. */
+  const messageBlocks = useFormMessage(AP3_FORM_CODE);
   const [brands, setBrands] = useState<AccBrandOption[]>([]);
   const [pending, setPending] = useState<PendingAdvanceOption[]>([]);
   // True while the brand-scoped pending-advance list is being fetched — avoids
@@ -1448,6 +1456,32 @@ export function ClearAdvanceForm({ initial, onSaved, onSubmitted, onDirtyChange,
 
   return (
     <div className="flex flex-col gap-4" ref={rootRef}>
+      {/* คำแนะนำ — same shape as AP-1's and AP-17's, from Settings → Message.
+          AP-3 has no fallback constant, so this renders nothing until an
+          admin types something. */}
+      {messageBlocks.length > 0 && (
+        <div
+          className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
+          style={{
+            background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
+            border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
+          }}
+        >
+          <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
+          <div className="flex flex-col gap-1">
+            {messageBlocks.map((line, i) => (
+              <p
+                key={i}
+                className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {line}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Requester note + brand */}
       <div className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3" style={box}>
         {/* เคลียร์แทน — the same control AP-2 carries, on the same modal. Hidden

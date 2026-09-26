@@ -34,19 +34,30 @@ test("no key is both a settings tab and a menu", () => {
   }
 });
 
-test("access is the ONLY settings tab that can never be granted", () => {
-  // It hands out power — and here it also edits both approver pools.
-  assert.equal(isGrantableAdvClrTabKey("access"), false, "access became grantable");
-  assert.equal(
-    decideAdvClrTabAccess(false, ["access"], "access"),
-    false,
-    "access opened on a stored row",
-  );
+test("access, advanceMessages and clearMessages are the only settings tabs that can never be granted", () => {
+  // `access` hands out power — and here it also edits both approver pools.
+  // The two Message tabs are excluded for an unrelated reason: the grant
+  // could not be STORED. `AccAdvClrAccessTab` is a table shared in shape with
+  // AP-1's `AccApproverSettingsTab`, and ACC Portal's own save rewrites that
+  // table through its own key filter, which has never heard of either key. A
+  // grant would silently vanish the next time somebody edited that person's
+  // tabs over there — the exact defect 8a3ab358 fixed for AP-17's menu ticks.
+  const neverGrantable = ["access", "advanceMessages", "clearMessages"];
+  for (const key of neverGrantable) {
+    assert.equal(isGrantableAdvClrTabKey(key), false, `${key} became grantable`);
+    assert.equal(
+      decideAdvClrTabAccess(false, [key], key),
+      false,
+      `${key} opened on a stored row`,
+    );
+    // An admin still opens it — the tab exists, it is just never handed out.
+    assert.equal(decideAdvClrTabAccess(true, [], key), true, `${key} refused an admin`);
+  }
   // Nothing else on either strip is excluded any more. Written as a sweep
   // rather than a list so a new ungrantable tab has to be argued for here.
   const strips = [...ADVANCE_SETTINGS_TAB_ORDER, ...CLEAR_SETTINGS_TAB_ORDER] as string[];
   for (const key of strips) {
-    if (key === "access") continue;
+    if (neverGrantable.indexOf(key) !== -1) continue;
     assert.equal(isGrantableAdvClrTabKey(key), true, `${key} is on a strip but ungrantable`);
   }
 });

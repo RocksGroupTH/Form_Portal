@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { useFormOwnerNotice } from "@/components/FormOwnerNotice";
+import { useFormMessage } from "@/lib/hooks/useFormMessage";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { toast } from "sonner";
 import {
@@ -51,7 +51,7 @@ import { countryNames } from "@/lib/acc/country-currency";
 import { referenceRateNote } from "@/lib/acc/currency-display";
 import { lineNeedsCurrency, typedLineFigure } from "@/features/accounting/lib/claim-currency";
 import type { AccRequest, TravelDraftSummary, TravelExpenseDetail, TravelExpenseItem, AccVehicle } from "@/features/accounting/types";
-import { AP1_HEADER_MESSAGE_LINES, MAPS_UNAVAILABLE_USER_MESSAGE } from "@/features/accounting/constants";
+import { MAPS_UNAVAILABLE_USER_MESSAGE } from "@/features/accounting/constants";
 
 /* ── Props ── */
 
@@ -205,9 +205,10 @@ export function TravelExpenseForm({
   const [copyPickerOpen, setCopyPickerOpen] = useState(false);
   const [removeDateConfirm, setRemoveDateConfirm] = useState<string | null>(null);
   const [blockedTravelDates, setBlockedTravelDates] = useState<string[]>([]);
-  /* Who to contact about this form. Read off `/api/form-environment`, which
-     this page already fetches, so it costs no request of its own. */
-  const ownerNotice = useFormOwnerNotice(AP1_FORM_CODE);
+  /* The notice box's bullets, from Settings → Message. Read off
+     `/api/form-environment`, which this page already fetches, so it costs no
+     request of its own. `[]` while loading and on a failed fetch. */
+  const messageBlocks = useFormMessage(AP1_FORM_CODE);
 
   // Refs for scrolling/focusing the first incomplete field on a submit attempt.
   const brandRef = useRef<HTMLDivElement>(null);
@@ -1065,24 +1066,34 @@ export function TravelExpenseForm({
         <UatDataBanner requestId={requestId} holdSpace={false} />
       </div>
 
-      {/* คำแนะนำ — AP-17's notice, same shape and same place. */}
-      <div
-        data-tour="ap1-notice"
-        className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
-        style={{
-          background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
-          border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
-        }}
-      >
-        <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
-        <div className="flex flex-col gap-1">
-          {AP1_HEADER_MESSAGE_LINES.map((line, i) => (
-            <p key={i} className="text-[12.5px] leading-relaxed m-0" style={{ color: "var(--text-secondary)" }}>
-              {line}
-            </p>
-          ))}
+      {/* คำแนะนำ — AP-17's notice, same shape and same place. The single
+          notice box now: its four bullets (three copy lines plus the
+          กรณีต้องการยกเลิก contact line) come from Settings → Message, and
+          the grey footer block that used to repeat the contact line at the
+          foot of the card is gone. */}
+      {messageBlocks.length > 0 && (
+        <div
+          data-tour="ap1-notice"
+          className="rounded-2xl px-4 py-3.5 flex items-start gap-2.5"
+          style={{
+            background: "color-mix(in srgb, var(--color-action) 8%, var(--bg-card))",
+            border: "1px solid color-mix(in srgb, var(--color-action) 25%, var(--border-card))",
+          }}
+        >
+          <Info size={16} className="shrink-0 mt-0.5" style={{ color: "var(--color-action)" }} />
+          <div className="flex flex-col gap-1">
+            {messageBlocks.map((line, i) => (
+              <p
+                key={i}
+                className="text-[12.5px] leading-relaxed m-0 whitespace-pre-line"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {line}
+              </p>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {requesterCard}
 
@@ -1991,35 +2002,7 @@ export function TravelExpenseForm({
             </ul>
           )}
         </div>
-
-        {/* Footer notes */}
-        <div
-          className="rounded-xl px-4 py-3 flex flex-col gap-1.5"
-          style={{
-            background: "var(--bg-card-alt)",
-            border: "1px solid var(--border-card)",
-          }}
-        >
-          {[
-            "รอบการเบิกจ่ายค่าเดินทาง ตัดรอบวันจันทร์ (แบบฟอร์มที่ได้รับการอนุมัติแล้ว) และจ่ายตามปฏิทินการชำระของบริษัท (ทุกศุกร์ที่ 2 และ 4 ของเดือน)",
-            "สำหรับพนักงานออฟฟิศที่กลับบ้านเกิน 21.00 หรือ Working hour > 8h สามารถเบิกค่าเดินทางกลับบ้านได้",
-            "หากติดวันหยุดจะเลื่อนการเบิกจ่ายเป็นวันทำการถัดไป",
-            /* The owners are appended by `useFormOwnerNotice`, which falls
-               back to this exact sentence when nobody is named — so the line
-               reads as it always did until an admin sets one. */
-            ownerNotice,
-          ].map((note, i) => (
-            <p
-              key={i}
-              className="text-[12px] leading-relaxed"
-              style={{ color: "var(--text-muted)" }}
-            >
-              • {note}
-            </p>
-          ))}
-        </div>
-
-          </>
+        </>
         ) : (
           <SectionLockedHint message={travelDetailsLockedMessage} />
         )}

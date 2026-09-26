@@ -91,6 +91,7 @@
 export const REIMBURSE_SETTINGS_TAB_ORDER = [
   "brands",
   "rules",
+  "messages",
   "glAccounts",
   "buGlMap",
   // Interface ERP sits directly ahead of สิทธิ์เข้าถึง (user, 2026-09-14) — the
@@ -119,7 +120,7 @@ export type ReimburseSettingsTabKey = (typeof REIMBURSE_SETTINGS_TAB_ORDER)[numb
  * tab-gated route. A new tab whose route is left `requireRole` therefore fails
  * the suite rather than shipping as a tick that grants nothing.
  */
-export type GrantableReimburseTabKey = Exclude<ReimburseSettingsTabKey, "access">;
+export type GrantableReimburseTabKey = Exclude<ReimburseSettingsTabKey, "access" | "messages">;
 
 /**
  * Every settings tab, in strip order, with its label and whether it can be
@@ -143,6 +144,10 @@ const REIMBURSE_ALL_TAB_META: Record<
 > = {
   brands: { label: "แบรนด์ที่เบิกได้" },
   rules: { label: "ระเบียบการจ่าย" },
+  messages: {
+    label: "Message",
+    adminOnly: "แก้ได้เฉพาะแอดมิน — สิทธิ์นี้เก็บไม่ได้ เพราะ ACC Portal เขียนทับตารางสิทธิ์แท็บ",
+  },
   glAccounts: {
     label: "หมวดบัญชี G/L",
     note: "เป็นข้อมูลชุดเดียวกับ AP-3 — แก้ที่นี่มีผลกับทั้งสองฟอร์ม",
@@ -193,14 +198,21 @@ const REIMBURSE_TAB_LABELS: Record<GrantableReimburseTabKey, string> = {
  * Display order — filtered from the page's own tab order rather than written
  * out again, so the checkbox columns cannot drift from the tab strip.
  *
- * The predicate is `key !== "access"`, not a list of the five: one statement
- * of which tab cannot be handed out, in the same place the type makes it.
+ * The predicate excludes `access` and `messages` — the two keys
+ * `GrantableReimburseTabKey` excludes — not a list of the four: one statement
+ * of which tabs cannot be handed out, in the same place the type makes it. A
+ * type predicate only asserts a narrowing; it does not verify the boolean
+ * logic actually matches, so this must stay in lockstep with the `Exclude<…>`
+ * above by hand — a predicate testing one of the two keys and not the other
+ * would leak the missed key into this list at runtime with no compile error,
+ * since `REIMBURSE_TAB_LABELS` is indexed by the asserted type rather than
+ * checked against it.
  */
 export const GRANTABLE_REIMBURSE_TABS: readonly {
   key: GrantableReimburseTabKey;
   label: string;
 }[] = REIMBURSE_SETTINGS_TAB_ORDER.filter(
-  (key): key is GrantableReimburseTabKey => key !== "access",
+  (key): key is GrantableReimburseTabKey => key !== "access" && key !== "messages",
 ).map((key) => ({ key, label: REIMBURSE_TAB_LABELS[key] }));
 
 export function isGrantableReimburseTabKey(key: string): boolean {

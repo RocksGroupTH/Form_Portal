@@ -85,6 +85,17 @@ export const DIRECTION_LABEL_TH: Record<TravelDirection, string> = {
 /**
  * Header message shown on the AP-17 form (spec §1), verbatim.
  * Rendered as separate lines/bullets by the form UI.
+ *
+ * **Since 2026-09-25 this is the FALLBACK, not what renders.** The live copy
+ * is `Fast_Core.dbo.FormMessage` (migration 164), edited at Settings →
+ * Message. This array is what the form shows when that table is missing — the
+ * window before 164 is applied — so deleting it would make that window a blank
+ * header rather than the one the form has always had.
+ *
+ * It is also 164's seed for AP-17's three bullets, verbatim. Unlike AP-1's,
+ * this seed carries no `{เจ้าของฟอร์ม}` token — the contact line stays a
+ * separate paragraph rendered from `useFormOwnerNotice`, not folded into this
+ * array.
  */
 export const AP17_HEADER_MESSAGE_LINES: string[] = [
   "กรุณาแจ้งข้อมูลการเดินทางล่วงหน้าอย่างน้อย 3 วันทำการ — ทีม Admin ตรวจสอบรายการจองทุกวันจันทร์–ศุกร์ เวลา 16.00",

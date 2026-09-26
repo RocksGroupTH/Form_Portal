@@ -118,6 +118,20 @@ export const SETTINGS_ROUTE_TABS: readonly SettingsRouteTabRule[] = [
   { route: "same-day-brand", tab: "sameDayBrand" },
   { route: "vehicles", tab: "vehicles" },
   { route: "vehicles/reorder", tab: "vehicles" },
+  {
+    route: "messages",
+    tab: null,
+    // Admin-only, and NOT because a message is dangerous — it grants nothing,
+    // decides no approval, no posting target and no read. It is because the
+    // grant could not be stored: `AccApproverSettingsTab` is shared with ACC
+    // Portal, whose own save deletes every row for an approver and re-inserts
+    // only the keys ITS list knows (`approver-settings-tabs.ts:47-56`). A
+    // `messages` grant would vanish the next time somebody edited that
+    // person's tabs over there, with no error on either side — the defect
+    // 8a3ab358 fixed for AP-17's menu ticks. Making it grantable means adding
+    // the key to BOTH applications in one change, not to this list alone.
+    note: "grant unstorable — ACC Portal rewrites AccApproverSettingsTab through its own key filter",
+  },
   { route: "departments", tab: "departments", note: "the read half; the write below is not granted" },
   {
     route: "departments/map",

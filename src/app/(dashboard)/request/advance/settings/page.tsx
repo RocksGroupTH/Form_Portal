@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import useSWR from "swr";
-import { Users, Landmark, Wallet, SlidersHorizontal, Link2, Building2, ShieldCheck } from "lucide-react";
+import { Users, Landmark, Wallet, SlidersHorizontal, Link2, Building2, ShieldCheck, MessageSquare } from "lucide-react";
 import { backTo } from "@/lib/request-hub-nav";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { PageHeaderBar } from "@/components/layout/PageHeaderBar";
@@ -14,6 +14,7 @@ import { AdvanceBankMasterSettings } from "@/features/advance/components/setting
 import { AdvanceErpInterfaceSettings } from "@/features/advance/components/settings/AdvanceErpInterfaceSettings";
 import { AdvClrBrandSettings } from "@/features/advance/components/settings/AdvClrBrandSettings";
 import { AdvClrAccessSettings } from "@/features/advance/components/settings/AdvClrAccessSettings";
+import { FormMessageSettings } from "@/components/settings/FormMessageSettings";
 import { ADVANCE_SETTINGS_TAB_ORDER } from "@/lib/adv/settings-tabs";
 
 type TabKey = (typeof ADVANCE_SETTINGS_TAB_ORDER)[number];
@@ -50,6 +51,11 @@ const TAB_META: Record<TabKey, { label: string; icon: React.ReactNode }> = {
   brands: { label: "แบรนด์ที่เบิกได้", icon: <Building2 size={15} /> },
   matrix: { label: "ขั้นตามเงิน", icon: <SlidersHorizontal size={15} /> },
   banks: { label: "ธนาคาร (Master)", icon: <Landmark size={15} /> },
+  // Admin-only — `@/lib/adv/settings-tabs` excludes it from
+  // `GRANTABLE_ADV_CLR_TABS` because the grant could not be stored:
+  // `AccAdvClrAccessTab` is shared with ACC Portal, whose own save rewrites
+  // that table through its own key filter, which has never heard of this key.
+  advanceMessages: { label: "Message", icon: <MessageSquare size={15} /> },
   advanceErpInterface: { label: "Interface ERP", icon: <Link2 size={15} /> },
   access: { label: "สิทธิ์เข้าถึง", icon: <ShieldCheck size={15} /> },
 };
@@ -223,6 +229,9 @@ function AdvanceSettingsContent() {
           {openTab === "access" && <AdvClrAccessSettings form="AP-2" />}
           {openTab === "matrix" && <AdvanceApprovalMatrixSettings />}
           {openTab === "banks" && <AdvanceBankMasterSettings />}
+          {openTab === "advanceMessages" && (
+            <FormMessageSettings endpoint="/api/request/advance/settings/messages" formCode="AP-2" />
+          )}
           {openTab === "advanceErpInterface" && <AdvanceErpInterfaceSettings />}
         </div>
       </div>
