@@ -827,6 +827,16 @@ export function TravelExpenseForm({
     setSubmitting(true);
     /* Set only when THIS call created the draft — see below. */
     let justSavedId: number | null = null;
+    /* Set the moment a successful submit has already sent the browser to the
+       detail page, so the `finally` block below does not ALSO send it to the
+       form page. Without this, `justSavedId !== null` fired on every path —
+       success included — queuing a `router.replace` to `?id=` right behind
+       the `router.push` to the detail page `onSubmitted` had just made. Those
+       target different route segments, so the replace won the race, remounted
+       the form page with the new id, and its own "not editable any more"
+       redirect immediately bounced back to the detail page — the "กำลังโหลด
+       แบบร่าง..." popup flashing several times instead of settling once. */
+    let navigatedAway = false;
     try {
       // First ensure we have a saved request
       let id = requestId;
@@ -871,6 +881,7 @@ export function TravelExpenseForm({
       }
       toast.success("ส่งคำขอแล้ว");
       onSubmitted?.(id);
+      navigatedAway = true;
     } catch {
       toast.error("ส่งคำขอไม่สำเร็จ");
     } finally {
@@ -878,7 +889,7 @@ export function TravelExpenseForm({
       /* Only on the way out, and only if the submit did not navigate away:
          the URL catches up with the draft that was created, so the overlay the
          user sees is still one screen and nothing is stranded. */
-      if (justSavedId !== null) onSaved?.(justSavedId);
+      if (justSavedId !== null && !navigatedAway) onSaved?.(justSavedId);
     }
   }, [requestId, brandCode, countryCode, buildTravelDaysForSave, requesterStaffId, uploadPendingFiles, handleSaveDraft, onSaved, onSubmitted, canSubmit, focusFirstMissing]);
 
