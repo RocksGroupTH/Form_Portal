@@ -19,6 +19,7 @@ import {
 import { queueEmail } from "@/lib/acc/email-queue";
 import { assertMayClearFor } from "@/lib/clr/clear-on-behalf-service";
 import { buildClearAdvanceEmail, type ClrEmailData } from "@/lib/clr/clear-advance-email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
 import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import {
@@ -1099,7 +1100,10 @@ export async function submitRequest(
       paymentDate: updated.clear?.paymentDate ?? null,
       stepLabel: CLR_STEP_LABEL_TH.MANAGER,
     };
-    const { subject, html: bodyHtml } = buildClearAdvanceEmail("Submitted", mailData);
+    // Read once — both this mail and the requester's acknowledgement below
+    // name the same form in one action.
+    const formName = await resolveMailFormName("AP-3");
+    const { subject, html: bodyHtml } = buildClearAdvanceEmail("Submitted", mailData, formName);
     // The manager, plus whoever filed the claim when it was raised on somebody
     // else's behalf. The requester is NOT on this one: it asks the reader to
     // approve, and the acknowledgement below is their copy.
@@ -1116,7 +1120,7 @@ export async function submitRequest(
 
     /* The requester's own receipt — see AP-2's copy of this. */
     if (updated.requesterEmail) {
-      const ack = buildClearAdvanceEmail("SubmittedAck", mailData);
+      const ack = buildClearAdvanceEmail("SubmittedAck", mailData, formName);
       await queueEmail({
         requestId: id,
         toEmail: updated.requesterEmail,

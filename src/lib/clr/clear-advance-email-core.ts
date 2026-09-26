@@ -97,6 +97,14 @@ export function buildClearAdvanceEmailHtml(
   d: ClrEmailData,
   /** Finished call-to-action HTML. Passed in so this module touches no env. */
   cta: string,
+  /**
+   * `ชื่อไทย (English)`, resolved by the caller at send time
+   * (`resolveMailFormName("AP-3")` in `@/lib/acc/mail-form-name-lookup`) from
+   * the admin-editable `AccFormMaster` pair. Falls back to the hardcoded
+   * `MAIL_FORM_NAMES["AP-3"]` label when omitted, which every caller that
+   * predates this still does.
+   */
+  formName?: string,
 ): { subject: string; html: string } {
   const stepSuffix = d.stepLabel ? ` (${d.stepLabel})` : "";
 
@@ -138,7 +146,7 @@ export function buildClearAdvanceEmailHtml(
       : "",
   ].join("");
 
-  const name = MAIL_FORM_NAMES["AP-3"];
+  const name = formName ?? MAIL_FORM_NAMES["AP-3"];
   const lead =
     trigger === "Submitted" ? submittedLead(name, d.requestNo)
     : trigger === "SubmittedAck" ? submittedAckLead(name, d.requestNo, d.stepLabel)

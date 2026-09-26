@@ -68,8 +68,8 @@ const STALE_CANCEL_LEAD =
  * one member with none, and deliberately: nothing has queued it since the mail
  * rules were cut to four events, so a sentence here would be copy nobody reads.
  */
-function leadFor(trigger: AccTrigger, req: AccRequest, note?: string): string {
-  const name = MAIL_FORM_NAMES["AP-1"];
+function leadFor(trigger: AccTrigger, req: AccRequest, note?: string, formName?: string): string {
+  const name = formName ?? MAIL_FORM_NAMES["AP-1"];
   switch (trigger) {
     case "Submitted":
       return submittedLead(name, req.requestNo);
@@ -90,6 +90,14 @@ export function buildEmail(
   trigger: AccTrigger,
   req: AccRequest,
   note?: string,
+  /**
+   * `ชื่อไทย (English)`, resolved by the caller at send time
+   * (`resolveMailFormName("AP-1")` in `mail-form-name-lookup.ts`) from the
+   * admin-editable `AccFormMaster` pair. Falls back to the hardcoded
+   * `MAIL_FORM_NAMES["AP-1"]` label when omitted, which every caller that
+   * predates this still does.
+   */
+  formName?: string,
 ): { subject: string; html: string } {
   const url = `${env.NEXT_PUBLIC_APP_URL ?? ""}/request/travel-expense/${req.id}`;
   const titles: Record<AccTrigger, string> = {
@@ -129,6 +137,6 @@ export function buildEmail(
   ].join("");
   return {
     subject: titles[trigger],
-    html: shell(titles[trigger], rows, url, leadFor(trigger, req, note)),
+    html: shell(titles[trigger], rows, url, leadFor(trigger, req, note, formName)),
   };
 }

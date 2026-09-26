@@ -59,6 +59,14 @@ export interface AdvEmailData {
 export function buildAdvanceEmail(
   trigger: AdvEmailTrigger,
   d: AdvEmailData,
+  /**
+   * `ชื่อไทย (English)`, resolved by the caller at send time
+   * (`resolveMailFormName("AP-2")` in `@/lib/acc/mail-form-name-lookup`) from
+   * the admin-editable `AccFormMaster` pair. Falls back to the hardcoded
+   * `MAIL_FORM_NAMES["AP-2"]` label when omitted, which every caller that
+   * predates this still does.
+   */
+  formName?: string,
 ): { subject: string; html: string } {
   const url = `${env.NEXT_PUBLIC_APP_URL ?? ""}/request/advance/${d.id}`;
 
@@ -100,7 +108,7 @@ export function buildAdvanceEmail(
      addresses whichever approver the tier puts first. The sentence asks them
      to act, which is true of any of them. `StepPending` gets none: nothing
      has queued it since the 2026-09-24 mail rules cut step-advance mail. */
-  const name = MAIL_FORM_NAMES["AP-2"];
+  const name = formName ?? MAIL_FORM_NAMES["AP-2"];
   const lead =
     trigger === "Submitted" ? submittedLead(name, d.requestNo)
     /* A different sentence, not a different recipient on the same one:

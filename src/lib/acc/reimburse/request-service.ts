@@ -40,6 +40,7 @@ import {
 } from "@/lib/uat-tester/guards";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { MAIL_FORM_NAMES, submittedLead } from "@/lib/acc/mail-copy";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { env } from "@/env";
@@ -701,7 +702,16 @@ function row(k: string, v: unknown): string {
  * (it reads `req.travel?.travelDate`), which `ReimburseDetail` does not have.
  * Its `esc()` helper is exported and reused here for the same XSS-safety.
  */
-function buildReimburseSubmittedEmail(req: ReimburseDetail): { subject: string; html: string } {
+function buildReimburseSubmittedEmail(
+  req: ReimburseDetail,
+  /**
+   * `ชื่อไทย (English)`, resolved by the caller at send time
+   * (`resolveMailFormName("AP-4")`) from the admin-editable `AccFormMaster`
+   * pair. Falls back to the hardcoded `MAIL_FORM_NAMES["AP-4"]` label when
+   * omitted.
+   */
+  formName?: string,
+): { subject: string; html: string } {
   const url = `${env.NEXT_PUBLIC_APP_URL ?? ""}/request/reimburse/${req.id}`;
   const subject = `ขออนุมัติเบิกเงินคืนพนักงาน ${req.requestNo ?? ""}`;
   const rows = [
@@ -712,7 +722,7 @@ function buildReimburseSubmittedEmail(req: ReimburseDetail): { subject: string; 
   ].join("");
   const html = `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:560px;margin:auto">
     <h2 style="color:#A3121B">${esc(subject)}</h2>
-    ${submittedLead(MAIL_FORM_NAMES["AP-4"], req.requestNo)}
+    ${submittedLead(formName ?? MAIL_FORM_NAMES["AP-4"], req.requestNo)}
     <table style="width:100%;border-collapse:collapse">${rows}</table>
     <p style="margin-top:16px"><a href="${esc(url)}"
       style="background:#A3121B;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">เปิดเอกสาร</a></p>
@@ -857,7 +867,8 @@ export async function submitReimburseRequest(id: number, userId: number): Promis
 
   const updated = await getReimburseRequest(id);
   if (updated) {
-    const mail = buildReimburseSubmittedEmail(updated);
+    const formName = await resolveMailFormName("AP-4");
+    const mail = buildReimburseSubmittedEmail(updated, formName);
     await queueEmail({
       requestId: id,
       toEmail: managerEmail,

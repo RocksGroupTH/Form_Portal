@@ -4,6 +4,7 @@ import type { Actor } from "@/lib/acc/approval-engine";
 import { listApprovers } from "@/lib/acc/settings-service";
 import { queueEmail, processQueue } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail, type TravelBookingTrigger } from "@/lib/acc/travel-booking/email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { payoutDateFor, payoutTripKind } from "@/lib/acc/travel-booking/payout-rule";
 import { getTravelBookingRequest } from "@/lib/acc/travel-booking/request-service";
 import { recomputeGroupPerDiem } from "@/lib/acc/travel-booking/perdiem-recompute";
@@ -74,7 +75,9 @@ async function notify(
     if (!req) return;
     const mgr = actorName ? req.approvals.find((a) => a.stepCode === "MANAGER") : undefined;
     const displayActor = mgr?.actionedByHrName?.trim() || actorName;
-    const mail = buildTravelBookingEmail(trigger, req, note, displayActor);
+    // Read once — `notify` builds exactly one mail per call.
+    const formName = await resolveMailFormName("AP-17");
+    const mail = buildTravelBookingEmail(trigger, req, note, displayActor, formName);
     await queueEmail({ requestId, toEmail, subject: mail.subject, bodyHtml: mail.html, triggerType: trigger });
   } catch {
     // Notification failures must never fail the approval action itself.

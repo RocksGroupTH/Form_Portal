@@ -3,6 +3,7 @@ import { getPaymentDates } from "@/lib/acc/payment-calendar";
 import { getRequest } from "@/lib/acc/request-service";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { buildEmail, type AccTrigger } from "@/lib/acc/email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import { AP1_FORM_CODE, type StepCode } from "@/features/accounting/constants";
 
@@ -30,7 +31,9 @@ async function notify(requestId: number, trigger: AccTrigger, toEmail: string | 
   if (!toEmail) return;
   const req = await getRequest(requestId);
   if (!req) return;
-  const mail = buildEmail(trigger, req, note);
+  // Read once for this one mail — `notify` is called at most once per action.
+  const formName = await resolveMailFormName("AP-1");
+  const mail = buildEmail(trigger, req, note, formName);
   await queueEmail({
     requestId, toEmail, subject: mail.subject, bodyHtml: mail.html, triggerType: trigger,
   });

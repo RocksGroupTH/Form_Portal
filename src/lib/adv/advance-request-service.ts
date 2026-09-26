@@ -13,6 +13,7 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
 import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import {
   AP2_FORM_CODE,
   AP2_SEQUENCE_PREFIX,
@@ -640,6 +641,9 @@ export async function submitRequest(
       approverEmails,
       await resolveOnBehalfPair(updated),
     );
+    // Read once — both the approver's mail and the requester's own
+    // acknowledgement below name the same form in one action.
+    const formName = await resolveMailFormName("AP-2");
     const { subject, html: bodyHtml } = buildAdvanceEmail("Submitted", {
       id,
       requestNo,
@@ -649,7 +653,7 @@ export async function submitRequest(
       totalAmount: updated.totalAmount,
       paymentDate: updated.paymentDate,
       stepLabel: STEP_LABEL[firstStep],
-    });
+    }, formName);
     for (const toEmail of notifyEmails) {
       await queueEmail({ requestId: id, toEmail, subject, bodyHtml, triggerType: "Submitted" });
     }
@@ -667,7 +671,7 @@ export async function submitRequest(
         totalAmount: updated.totalAmount,
         paymentDate: updated.paymentDate,
         stepLabel: STEP_LABEL[firstStep],
-      });
+      }, formName);
       await queueEmail({
         requestId: id,
         toEmail: updated.requesterEmail,

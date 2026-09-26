@@ -16,6 +16,7 @@ import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-erro
 import { allocateRequestNo } from "@/lib/acc/sequence";
 import { processQueue, queueEmail } from "@/lib/acc/email-queue";
 import { buildTravelBookingEmail } from "@/lib/acc/travel-booking/email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { computePerDiem } from "@/lib/acc/travel-booking/perdiem";
 import {
   IS_ROOM_SHARE_GUEST_COLUMN,
@@ -2032,9 +2033,12 @@ export async function submitTravelBookingGroup(
     if (updated) submitted.push(updated);
   }
 
+  // Read once for the whole group: a multi-row submit mails every tab, and
+  // they all name the same form.
+  const formName = submitted.length > 0 ? await resolveMailFormName("AP-17") : undefined;
   for (const req of submitted) {
     if (req.id == null) continue;
-    const mail = buildTravelBookingEmail("Submitted", req);
+    const mail = buildTravelBookingEmail("Submitted", req, undefined, undefined, formName);
     await queueEmail({
       requestId: req.id, toEmail: managerEmail,
       subject: mail.subject, bodyHtml: mail.html, triggerType: "Submitted",

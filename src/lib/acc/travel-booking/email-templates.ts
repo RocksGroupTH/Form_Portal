@@ -107,9 +107,17 @@ export function buildTravelBookingEmail(
    * rejections that reuse the `Rejected`/`Returned` cases pass none either.
    */
   actorName?: string | null,
+  /**
+   * `ชื่อไทย (English)`, resolved by the caller at send time
+   * (`resolveMailFormName("AP-17")`) from the admin-editable `AccFormMaster`
+   * pair. Falls back to the hardcoded `MAIL_FORM_NAMES["AP-17"]` label when
+   * omitted, which every caller that predates this still does.
+   */
+  formName?: string,
 ): { subject: string; html: string } {
   const url = `${env.NEXT_PUBLIC_APP_URL ?? ""}/request/travel-booking/${req.id ?? ""}`;
   const no = req.requestNo ?? "-";
+  const name = formName ?? MAIL_FORM_NAMES["AP-17"];
 
   switch (trigger) {
     case "Submitted": {
@@ -123,7 +131,7 @@ export function buildTravelBookingEmail(
       ].join("");
       return {
         subject,
-        html: shell(subject, rows, url, submittedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo)),
+        html: shell(subject, rows, url, submittedLead(name, req.requestNo)),
       };
     }
 
@@ -169,7 +177,7 @@ export function buildTravelBookingEmail(
       ].join("");
       return {
         subject,
-        html: shell(subject, rows, url, rejectedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo, note)),
+        html: shell(subject, rows, url, rejectedLead(name, req.requestNo, note)),
       };
     }
 
@@ -186,7 +194,7 @@ export function buildTravelBookingEmail(
       ].join("");
       return {
         subject,
-        html: shell(subject, rows, url, returnedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo, note)),
+        html: shell(subject, rows, url, returnedLead(name, req.requestNo, note)),
       };
     }
 
@@ -204,7 +212,7 @@ export function buildTravelBookingEmail(
          since the 2026-09-24 mail rules. */
       return {
         subject,
-        html: shell(subject, rows, url, approvedLead(MAIL_FORM_NAMES["AP-17"], req.requestNo)),
+        html: shell(subject, rows, url, approvedLead(name, req.requestNo)),
       };
     }
   }

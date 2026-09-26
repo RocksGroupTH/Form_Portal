@@ -4,6 +4,7 @@ import { queueEmail } from "@/lib/acc/email-queue";
 import { onBehalfNotifyList } from "@/lib/acc/on-behalf";
 import { resolveOnBehalfPair } from "@/lib/acc/on-behalf-pair";
 import { buildAdvanceEmail } from "@/lib/adv/advance-email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
 import type { Actor } from "@/lib/acc/approval-engine";
 import { getRequest } from "@/lib/adv/advance-request-service";
@@ -127,6 +128,7 @@ export async function approveCurrentStep(
        hop. Each of those rosters has its own queue page, which is where that
        work is found now. */
   } else if (req?.requesterEmail) {
+    const formName = await resolveMailFormName("AP-2");
     const { subject, html: bodyHtml } = buildAdvanceEmail("Approved", {
       id: requestId,
       requestNo: no,
@@ -135,7 +137,7 @@ export async function approveCurrentStep(
       payeeName: req.advance?.payeeName,
       totalAmount: req.totalAmount,
       paymentDate: req.paymentDate,
-    });
+    }, formName);
     // The filer too, when this was raised on somebody's behalf — they are the
     // one managing it. See advance-notify-recipients.
     for (const toEmail of onBehalfNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
@@ -167,6 +169,7 @@ export async function rejectCurrentStep(requestId: number, actor: Actor, comment
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
   const req = await getRequest(requestId);
   if (req?.requesterEmail) {
+    const formName = await resolveMailFormName("AP-2");
     const { subject, html: bodyHtml } = buildAdvanceEmail("Rejected", {
       id: requestId,
       requestNo: req.requestNo ?? `#${requestId}`,
@@ -176,7 +179,7 @@ export async function rejectCurrentStep(requestId: number, actor: Actor, comment
       totalAmount: req.totalAmount,
       paymentDate: req.paymentDate,
       note: comment,
-    });
+    }, formName);
     // The filer too, when this was raised on somebody's behalf — they are the
     // one managing it. See advance-notify-recipients.
     for (const toEmail of onBehalfNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {
@@ -280,6 +283,7 @@ export async function returnCurrentStep(requestId: number, actor: Actor, comment
   } catch (e) { await tx.rollback().catch(() => {}); throw e; }
   const req = await getRequest(requestId);
   if (req?.requesterEmail) {
+    const formName = await resolveMailFormName("AP-2");
     const { subject, html: bodyHtml } = buildAdvanceEmail("Returned", {
       id: requestId,
       requestNo: req.requestNo ?? `#${requestId}`,
@@ -289,7 +293,7 @@ export async function returnCurrentStep(requestId: number, actor: Actor, comment
       totalAmount: req.totalAmount,
       paymentDate: req.paymentDate,
       note: comment,
-    });
+    }, formName);
     // The filer too, when this was raised on somebody's behalf — they are the
     // one managing it. See advance-notify-recipients.
     for (const toEmail of onBehalfNotifyList([req.requesterEmail], await resolveOnBehalfPair(req))) {

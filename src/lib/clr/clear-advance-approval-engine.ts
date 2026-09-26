@@ -1,6 +1,7 @@
 import { env } from "@/env";
 import { documentButton, documentUrl } from "@/lib/acc/mail-link";
 import { buildClearAdvanceEmail, type ClrEmailData } from "@/lib/clr/clear-advance-email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { getAccPool, sql } from "@/lib/acc/pool";
 import { queueEmail } from "@/lib/acc/email-queue";
 import { requireActorStaffId } from "@/lib/acc/actor-context";
@@ -228,7 +229,8 @@ export async function approveCurrentStep(
      approver roster's own queue page is where that work is found. Only the
      final approval below still writes, and it writes to the requester. */
   if (!nextStep) {
-    const mail = buildClearAdvanceEmail("Approved", mailData(requestId, req));
+    const formName = await resolveMailFormName("AP-3");
+    const mail = buildClearAdvanceEmail("Approved", mailData(requestId, req), formName);
     await notifyRequesterAndFiler(requestId, mail.subject, mail.html, req, "Approved");
   }
 }
@@ -279,7 +281,8 @@ export async function reject(
     /* The comment reaches `rejectedLead` as data, never as markup — it was
        interpolated RAW here until 2026-09-24, free text from an approver
        straight into an HTML mail body. */
-    const mail = buildClearAdvanceEmail("Rejected", mailData(requestId, req, comment));
+    const formName = await resolveMailFormName("AP-3");
+    const mail = buildClearAdvanceEmail("Rejected", mailData(requestId, req, comment), formName);
     await notifyRequesterAndFiler(
       requestId,
       mail.subject,
@@ -333,7 +336,8 @@ export async function returnForEdit(requestId: number, actor: Actor, comment: st
   const req = await getRequest(requestId);
   if (req) {
     const no = req.requestNo ?? String(requestId);
-    const mail = buildClearAdvanceEmail("Returned", mailData(requestId, req, comment));
+    const formName = await resolveMailFormName("AP-3");
+    const mail = buildClearAdvanceEmail("Returned", mailData(requestId, req, comment), formName);
     await notifyRequesterAndFiler(
       requestId,
       mail.subject,

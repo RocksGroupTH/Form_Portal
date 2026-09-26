@@ -23,6 +23,7 @@ import {
 import { queueEmail } from "@/lib/acc/email-queue";
 import { AccConflictError, SUBMIT_ALREADY_CLAIMED } from "@/lib/acc/request-errors";
 import { buildEmail } from "@/lib/acc/email-templates";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { AP1_FORM_CODE } from "@/features/accounting/constants";
 import { isBaht, toBaht, THB, type BrandCurrencyEntry } from "@/lib/acc/currency";
 import { resolveRate, type ResolvedRate } from "@/lib/acc/fx";
@@ -1587,7 +1588,8 @@ export async function submitRequest(
 
   const updated = await getRequest(id);
   if (updated) {
-    const mail = buildEmail("Submitted", updated);
+    const formName = await resolveMailFormName("AP-1");
+    const mail = buildEmail("Submitted", updated, undefined, formName);
     await queueEmail({
       requestId: id, toEmail: managerEmail,
       subject: mail.subject, bodyHtml: mail.html, triggerType: "Submitted",

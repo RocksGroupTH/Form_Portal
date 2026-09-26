@@ -26,6 +26,8 @@ export function clearAdvanceDocumentButton(id: number): string {
 export function buildClearAdvanceEmail(
   trigger: ClrEmailTrigger,
   d: ClrEmailData,
+  /** Passed straight through to `buildClearAdvanceEmailHtml` — see its own doc. */
+  formName?: string,
 ): { subject: string; html: string } {
-  return buildClearAdvanceEmailHtml(trigger, d, clearAdvanceDocumentButton(d.id));
+  return buildClearAdvanceEmailHtml(trigger, d, clearAdvanceDocumentButton(d.id), formName);
 }

@@ -34,11 +34,11 @@ import { getAccPool, sql } from "@/lib/acc/pool";
 import { getHolidaySet, shiftPaymentDay, ymd } from "@/lib/acc/payment-calendar";
 import { queueEmail } from "@/lib/acc/email-queue";
 import {
-  MAIL_FORM_NAMES,
   approvedLead,
   rejectedLead,
   returnedLead,
 } from "@/lib/acc/mail-copy";
+import { resolveMailFormName } from "@/lib/acc/mail-form-name-lookup";
 import { esc } from "@/lib/acc/email-templates";
 import { AccConflictError, AccForbiddenError } from "@/lib/acc/request-errors";
 import { vendorStatusForEdit } from "@/lib/acc/reimburse/item-account-edits";
@@ -310,7 +310,7 @@ async function notify(
   /* `ACCOUNT` is terminal for AP-4 — `STATE_AFTER_APPROVE.ACCOUNT` has
      `nextStep: null` — so only ONE "Approved" mail can reach a requester per
      claim, however many places queue that trigger. */
-  const name = MAIL_FORM_NAMES["AP-4"];
+  const name = await resolveMailFormName("AP-4");
   const lead =
     trigger === "Approved" ? approvedLead(name, req.requestNo)
     : trigger === "Rejected" ? rejectedLead(name, req.requestNo, note)
